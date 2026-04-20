@@ -3452,7 +3452,7 @@ net.onKill((msg) => {
 
 function broadcastSession() {
   net.sendSession({ ...session });
-  lastSessionBroadcast = performance.now();
+  lastSessionBroadcast = Date.now();
 }
 
 // ---- Phase transition effects (local to this peer) ----
