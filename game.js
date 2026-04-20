@@ -1679,8 +1679,8 @@ function _gantzMockeryTick(nowMs, participants) {
   const peers = [...net.peers.values()];
   const allNames = [
     ...(localIsParticipant() ? [player.username] : []),
-    ...peers.filter(pr => !session.participants || session.participants.includes(pr.color))
-           .map(pr => pr.username || 'Hunter').filter(Boolean),
+    ...[...net.peers.entries()].filter(([id]) => !session.participants || session.participants.includes(id))
+           .map(([, pr]) => pr.username || 'Hunter').filter(Boolean),
   ];
 
   let line;
@@ -3546,15 +3546,15 @@ function enterPhase(newPhase) {
     _debriefDisplayDone = false;
     const localEarned = Math.max(0, player.points - (_missionStartPts.get('local') || 0));
     // Only include players who were mission participants (queued up before launch)
-    const parts = session.participants; // array of colors, or null = all
+    const parts = session.participants; // array of peer IDs, or null = all
     _debriefPlayers = [];
-    if (!parts || parts.includes(PLAYER_COLOR)) {
+    if (!parts || parts.includes(net.selfId)) {
       _debriefPlayers.push({ name: player.username, pts: localEarned, died: !player.alive,
         comment: _pickDebriefComment(localEarned, !player.alive) });
     }
     for (const [id, p] of net.peers) {
       if (!p.username) continue;
-      if (parts && !parts.includes(p.color)) continue; // skip non-participants
+      if (parts && !parts.includes(id)) continue; // skip non-participants
       const earned = Math.max(0, (p.points || 0) - (_missionStartPts.get(id) || 0));
       const pDied = p.alive === false;
       _debriefPlayers.push({ name: p.username, pts: earned, died: pDied,
@@ -3592,13 +3592,16 @@ function allHumansReady() {
 }
 
 function localIsParticipant() {
-  return !session.participants || session.participants.includes(PLAYER_COLOR);
+  // Use the peer's unique selfId — PLAYER_COLOR is the same constant for every player
+  // so color-based checks always pass for everyone once anyone readied up.
+  if (!player.ready) return false;
+  return !session.participants || session.participants.includes(net.selfId);
 }
 
 function collectParticipants() {
   const list = [];
-  if (player.ready) list.push(PLAYER_COLOR);
-  for (const pr of net.peers.values()) if (pr.ready) list.push(pr.color);
+  if (player.ready) list.push(net.selfId);
+  for (const [id, pr] of net.peers) if (pr.ready) list.push(id);
   return list;
 }
 
@@ -3737,8 +3740,8 @@ function hostTick(nowMs) {
     if (nowMs >= session.briefingEndsAt) hostStartMission(nowMs);
   } else if (p === Phase.MISSION) {
     const localDead = localIsParticipant() ? !player.alive : true;
-    const peersDead = [...net.peers.values()].every(pr => {
-      const inMission = !session.participants || session.participants.includes(pr.color);
+    const peersDead = [...net.peers.entries()].every(([id, pr]) => {
+      const inMission = !session.participants || session.participants.includes(id);
       return inMission ? pr.alive === false : true;
     });
     const allHumansDead = localDead && peersDead;
@@ -4340,7 +4343,7 @@ function render(dt) {
     if (p.x == null) continue;
     // Cross-zone cull: skip remotes who are in a different zone than the local player
     if (parts) {
-      const peerInMission = parts.includes(p.color);
+      const peerInMission = parts.includes(peerId);
       if (localInMission !== peerInMission) continue;
     }
     const bubble = _chatBubbles.get(peerId);
