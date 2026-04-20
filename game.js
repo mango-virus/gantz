@@ -2217,6 +2217,7 @@ function _drawBallMenu() {
     if (_buyResponsePending) {
       _buyResponsePending = false;
       _skipNextGreeting = true;
+      _shopResultPrev = null; // reset so timer starts fresh when shop redraws
       menu.openMenu();
       menu.handleAction('shop');
     }
@@ -2605,10 +2606,17 @@ function _drawBallMenu() {
     const vis = _computeVis(_mElapsed, shopRows);
     { let sr = -1; for (let i = 0; i < shopRows.length; i++) { if (shopRows[i].kind === 'type' && vis[i].chars >= 0 && vis[i].chars < shopRows[i].text.length) { sr = i; break; } } _typeTickSound(2000 + Math.max(0, sr), sr >= 0); }
 
-    // ── Shop result at top ──
+    // ── Title ──
+    if (vis[0].chars >= 0) {
+      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillText('100 POINT MENU'.slice(0, vis[0].chars), CX, y);
+    }
+    y += 22;
+
+    // ── "Not Enough Points" — appears just under title, types out then fades after 3s ──
     if (md.lastShopResult?.msg) {
       if (md.lastShopResult !== _shopResultPrev) { _shopResultPrev = md.lastShopResult; _shopResultTs = performance.now(); if (_lastTypePos === 4000) _lastTypePos = -1; }
-      const HOLD_MS = 1500, SFADE_MS = 3000;
+      const HOLD_MS = 3000, SFADE_MS = 800;
       const sElapsed = performance.now() - _shopResultTs;
       const msg = md.lastShopResult.msg;
       const chars = Math.min(msg.length, Math.floor(sElapsed / MENU_CHAR_MS));
@@ -2628,11 +2636,6 @@ function _drawBallMenu() {
       }
     }
 
-    if (vis[0].chars >= 0) {
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText('100 POINT MENU'.slice(0, vis[0].chars), CX, y);
-    }
-    y += 22;
     if (vis[1].chars >= 0) {
       ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillText(infoStr.slice(0, vis[1].chars), CX, y);
@@ -3017,7 +3020,7 @@ const menu = createGantzMenu({
       return { ok: false, msg: 'Shop is locked during briefing and mission.' };
     }
     if (player.points < cost) {
-      return { ok: false };
+      return { ok: false, msg: 'Not Enough Points.' };
     }
     player.points -= cost;
 
