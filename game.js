@@ -2798,16 +2798,51 @@ function _drawBallMenu() {
     const inMissionNow = md.phase === 'MISSION' || md.phase === 'BRIEFING';
     const canReady = md.phase === 'LOBBY' || md.phase === 'DEBRIEF';
     const canShop  = canReady;
+    const queueRunning = session.readyCountdownEnd >= 0 && canReady;
     const rlabel   = s.localReady ? '✓ READY — cancel' : 'Ready for Mission';
-    // During an active mission, hide the ready button for non-participants
-    const showReady = !inMissionNow;
-    const vis = _computeVis(_mElapsed, [
-      { text: showReady ? rlabel : '',  kind: 'fade' },
-      { text: '100 Point Menu',         kind: 'fade' },
-      { text: 'Point Totals',           kind: 'fade' },
-      { text: 'Close  [E]',             kind: 'fade' },
-    ]);
+    const qLabel   = s.localReady ? '✓ Leave Queue' : 'Join Queue';
+    // During a countdown show Join/Leave Queue; hide normal ready button to avoid clutter
+    // During an active mission hide the ready button entirely
+    const showReady = !inMissionNow && !queueRunning;
+    const showQueue = queueRunning;
+
+    // Build queued names to display above the button during countdown
+    const queuedNames = queueRunning ? [
+      ...(s.localReady ? [s.localName] : []),
+      ...(s.remotes || []).filter(r => r.ready).map(r => r.username || '?'),
+    ] : [];
+
+    const rows = [
+      { text: showReady ? rlabel : (showQueue ? qLabel : ''), kind: 'fade' },
+      { text: '100 Point Menu', kind: 'fade' },
+      { text: 'Point Totals',   kind: 'fade' },
+      { text: 'Close  [E]',     kind: 'fade' },
+    ];
+    const vis = _computeVis(_mElapsed, rows);
+
+    // Queue countdown + names shown above buttons when countdown is running
+    if (showQueue) {
+      const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
+      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillText('MISSION QUEUE', CX, y);
+      y += 20;
+      ctx.font = `22px ${_PF}`; ctx.fillStyle = B;
+      ctx.fillText(String(secs), CX, y);
+      y += 36;
+      ctx.font = `9px ${_PF}`; ctx.fillStyle = DL;
+      ctx.fillText('QUEUED', CX, y);
+      y += 16;
+      ctx.font = `10px ${_PF}`;
+      for (const name of queuedNames) {
+        ctx.fillStyle = name === s.localName ? B : G;
+        ctx.fillText(name, CX, y);
+        y += 18;
+      }
+      y += 8;
+    }
+
     if (showReady) y = _btn(ctx, CX, y, 370, 50, rlabel, canReady ? 'ready' : null, s.localReady ? B : G, !canReady, vis[0]);
+    if (showQueue) y = _btn(ctx, CX, y, 370, 50, qLabel, 'ready', s.localReady ? B : G, false, vis[0]);
     y = _btn(ctx, CX, y, 370, 50, '100 Point Menu', canShop ? 'shop' : null, G, !canShop, vis[1]);
     y = _btn(ctx, CX, y, 370, 50, 'Point Totals',   'points', G, false,                  vis[2]);
     y += 14; y += 18;
@@ -3737,53 +3772,6 @@ const overlayCount = document.getElementById('po-count');
 const missionHudEl = document.getElementById('mission-hud');
 const missionTimerEl = document.getElementById('mh-timer');
 const missionInfoEl = document.getElementById('mh-info');
-const mqOverlayEl  = document.getElementById('mission-queue-overlay');
-const mqTimerEl    = document.getElementById('mqo-timer');
-const mqNamesEl    = document.getElementById('mqo-names');
-const mqJoinBtn    = document.getElementById('mqo-join');
-
-mqJoinBtn.addEventListener('click', () => {
-  if (session.phase !== Phase.LOBBY && session.phase !== Phase.DEBRIEF) return;
-  player.ready = !player.ready;
-  if (!player.ready) player.afkReady = false;
-  net.broadcastPose();
-  updateMissionQueueOverlay();
-});
-
-function updateMissionQueueOverlay() {
-  const countdownActive = session.readyCountdownEnd >= 0
-    && session.phase !== Phase.BRIEFING
-    && session.phase !== Phase.MISSION;
-  if (!countdownActive) {
-    mqOverlayEl.style.display = 'none';
-    return;
-  }
-  mqOverlayEl.style.display = 'block';
-
-  // Timer
-  const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
-  mqTimerEl.textContent = String(secs);
-
-  // Queued player names
-  const queued = [];
-  if (player.ready) queued.push({ name: player.username, self: true });
-  for (const pr of net.peers.values()) {
-    if (pr.ready && pr.username) queued.push({ name: pr.username, self: false });
-  }
-  mqNamesEl.innerHTML = '<span class="mqo-label">QUEUED</span>'
-    + queued.map(q => `<span${q.self ? ' class="mqo-self"' : ''}>${q.name}</span>`).join('<br>');
-
-  // Join / Leave button
-  const canToggle = session.phase === Phase.LOBBY || session.phase === Phase.DEBRIEF;
-  mqJoinBtn.style.display = canToggle ? 'block' : 'none';
-  if (player.ready) {
-    mqJoinBtn.textContent = 'Leave Queue';
-    mqJoinBtn.classList.add('queued');
-  } else {
-    mqJoinBtn.textContent = 'Join Queue';
-    mqJoinBtn.classList.remove('queued');
-  }
-}
 
 function fmtMS(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -3882,7 +3870,6 @@ function updatePhaseTimers(nowMs) {
       missionTimerEl.classList.toggle('urgent', remain < 15000);
     }
   }
-  updateMissionQueueOverlay();
 }
 
 const _chatBubbles = new Map(); // peerId → { text, expiresAt }
@@ -3929,8 +3916,15 @@ function updateWorldHtmlOverlays() {
   if (!inMission) {
     const d = Math.hypot(player.x - GANTZ_BALL.x, player.y - GANTZ_BALL.y);
     const gantzTalking = (_introStartTime !== -1 && !_introDone) || (_namePromptPhase !== 'idle' && !_namePromptDone) || (!_gantzTalkDone && !!_gantzTalkLines) || (!_gantzExitDone && _gantzExitStart !== -1);
-    const near = d < INTERACT_RADIUS && !menu.isOpen() && !gantzTalking && !player.ready;
-    gantzPromptEl.style.display = near ? 'block' : 'none';
+    const countdownActive = session.readyCountdownEnd >= 0 && session.phase !== Phase.BRIEFING && session.phase !== Phase.MISSION;
+    const nearBall = d < INTERACT_RADIUS && !menu.isOpen() && !gantzTalking;
+    if (nearBall && countdownActive) {
+      gantzPromptEl.textContent = player.ready ? '[E] Leave Queue' : '[E] Join Queue';
+      gantzPromptEl.style.display = 'block';
+    } else {
+      gantzPromptEl.textContent = '[E] Talk to Gantz';
+      gantzPromptEl.style.display = (nearBall && !player.ready) ? 'block' : 'none';
+    }
   } else {
     gantzPromptEl.style.display = 'none';
   }
@@ -4284,7 +4278,9 @@ function update(dt) {
   if (inLobbyScene) {
     const dBall = Math.hypot(player.x - GANTZ_BALL.x, player.y - GANTZ_BALL.y);
     const gantzTalking = (_introStartTime !== -1 && !_introDone) || (_namePromptPhase !== 'idle' && !_namePromptDone) || (!_gantzTalkDone && !!_gantzTalkLines) || (!_gantzExitDone && _gantzExitStart !== -1);
-    if (dBall < INTERACT_RADIUS && wasPressed('e') && !menu.isOpen() && !chat.isOpen?.() && !gantzTalking && !player.ready && performance.now() - _menuClosedAt > 250) {
+    const _countdownNow = session.readyCountdownEnd >= 0 && session.phase !== Phase.BRIEFING && session.phase !== Phase.MISSION;
+    const _canInteract = !player.ready || _countdownNow; // ready players can still open menu during countdown to leave queue
+    if (dBall < INTERACT_RADIUS && wasPressed('e') && !menu.isOpen() && !chat.isOpen?.() && !gantzTalking && _canInteract && performance.now() - _menuClosedAt > 250) {
       menu.openMenu();
     }
   }
