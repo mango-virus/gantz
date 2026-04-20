@@ -4282,9 +4282,22 @@ function emitTracer(t) { _pendingTracers.push(t); }
 function render(dt) {
   const inMission = session.phase === Phase.MISSION;
   const _now = performance.now();
+
+  // During a mission, each player is in one of two distinct zones:
+  //   • mission zone  — session.participants includes their color
+  //   • lobby zone    — not in session.participants
+  // Don't render players from the other zone so they can't be seen across the boundary.
+  const localInMission = inMission && localIsParticipant();
+  const parts = inMission ? session.participants : null; // null = all in same space
+
   const remotes = [];
   for (const [peerId, p] of net.peers) {
     if (p.x == null) continue;
+    // Cross-zone cull: skip remotes who are in a different zone than the local player
+    if (parts) {
+      const peerInMission = parts.includes(p.color);
+      if (localInMission !== peerInMission) continue;
+    }
     const bubble = _chatBubbles.get(peerId);
     const bubbleAlive = bubble && _now < bubble.expiresAt;
     remotes.push({
