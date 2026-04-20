@@ -22,6 +22,37 @@ function disposeGroup(group) {
   });
 }
 
+// Creates a billboard sprite with the player's name drawn on a canvas texture.
+function makeNameLabel(text, hexColor) {
+  const CW = 256, CH = 52;
+  const c = document.createElement('canvas');
+  c.width = CW; c.height = CH;
+  const ctx = c.getContext('2d');
+
+  // Pill background
+  const pad = 5;
+  ctx.fillStyle = 'rgba(0,0,0,0.58)';
+  ctx.beginPath();
+  ctx.roundRect(pad, pad, CW - pad * 2, CH - pad * 2, 8);
+  ctx.fill();
+
+  // Name text
+  const color = hexColor ? '#' + hexColor.replace('#', '') : '#00e05a';
+  ctx.font = 'bold 20px ui-monospace,Menlo,Consolas,monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = color;
+  ctx.fillText(String(text || '?').slice(0, 18), CW / 2, CH / 2);
+
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.1, 0.22, 1);  // world-space size (metres)
+  sprite.position.set(0, 2.15, 0); // above head in group-local space
+  sprite.userData.isNameLabel = true;
+  return sprite;
+}
+
 export function createScene3d({ canvas }) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x04050a);
@@ -157,10 +188,29 @@ export function createScene3d({ canvas }) {
       if (entry) { scene.remove(entry.group); disposeGroup(entry.group); }
       const group = buildHumanMesh(spec, { suit });
       scene.add(group);
-      entry = { group, specSeed: spec.seed, suit };
+      entry = { group, specSeed: spec.seed, suit, labelText: null, labelColor: null };
       humans.set(id, entry);
     }
-    return entry.group;
+    return entry;
+  }
+
+  function updateNameLabel(entry, text, color, visible) {
+    const textStr = String(text || '');
+    const colorStr = String(color || '');
+    // Rebuild label if text/color changed
+    if (entry.labelText !== textStr || entry.labelColor !== colorStr) {
+      const old = entry.group.children.find(c => c.userData.isNameLabel);
+      if (old) { entry.group.remove(old); disposeGroup(old); }
+      if (textStr) {
+        const label = makeNameLabel(textStr, colorStr);
+        entry.group.add(label);
+      }
+      entry.labelText = textStr;
+      entry.labelColor = colorStr;
+    }
+    // Toggle visibility
+    const label = entry.group.children.find(c => c.userData.isNameLabel);
+    if (label) label.visible = !!visible;
   }
 
   function getOrCreateAlien(id, spec) {
@@ -457,8 +507,12 @@ export function createScene3d({ canvas }) {
     ];
     for (const h of humanEntries) {
       if (!h.spec) continue;
-      const g = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
-      updateEntityTransform(g, h);
+      const entry = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
+      updateEntityTransform(entry.group, h);
+      // Show name label for remotes and third-person local; hide for dead or local FP
+      const isLocalFP = h._id === '__player__' && state.firstPerson;
+      const showLabel = !isLocalFP && h.alive !== false && !!h.username;
+      updateNameLabel(entry, h.username, h.color, showLabel);
       keepHumans.add(h._id);
     }
     prune(humans, keepHumans);

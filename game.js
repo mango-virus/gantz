@@ -2396,7 +2396,7 @@ function _drawBallMenu() {
       ctx.fillText('HUNTER DESIGNATION', CX, labelY);
 
       // Input box
-      const boxW = S * 0.62, boxH = 44;
+      const boxW = S * 0.31, boxH = 44;
       const boxX = CX - boxW / 2, boxY = labelY + 28;
       ctx.strokeStyle = G;
       ctx.lineWidth = 2;
