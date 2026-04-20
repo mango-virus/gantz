@@ -3737,6 +3737,53 @@ const overlayCount = document.getElementById('po-count');
 const missionHudEl = document.getElementById('mission-hud');
 const missionTimerEl = document.getElementById('mh-timer');
 const missionInfoEl = document.getElementById('mh-info');
+const mqOverlayEl  = document.getElementById('mission-queue-overlay');
+const mqTimerEl    = document.getElementById('mqo-timer');
+const mqNamesEl    = document.getElementById('mqo-names');
+const mqJoinBtn    = document.getElementById('mqo-join');
+
+mqJoinBtn.addEventListener('click', () => {
+  if (session.phase !== Phase.LOBBY && session.phase !== Phase.DEBRIEF) return;
+  player.ready = !player.ready;
+  if (!player.ready) player.afkReady = false;
+  net.broadcastPose();
+  updateMissionQueueOverlay();
+});
+
+function updateMissionQueueOverlay() {
+  const countdownActive = session.readyCountdownEnd >= 0
+    && session.phase !== Phase.BRIEFING
+    && session.phase !== Phase.MISSION;
+  if (!countdownActive) {
+    mqOverlayEl.style.display = 'none';
+    return;
+  }
+  mqOverlayEl.style.display = 'block';
+
+  // Timer
+  const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
+  mqTimerEl.textContent = String(secs);
+
+  // Queued player names
+  const queued = [];
+  if (player.ready) queued.push({ name: player.username, self: true });
+  for (const pr of net.peers.values()) {
+    if (pr.ready && pr.username) queued.push({ name: pr.username, self: false });
+  }
+  mqNamesEl.innerHTML = '<span class="mqo-label">QUEUED</span>'
+    + queued.map(q => `<span${q.self ? ' class="mqo-self"' : ''}>${q.name}</span>`).join('<br>');
+
+  // Join / Leave button
+  const canToggle = session.phase === Phase.LOBBY || session.phase === Phase.DEBRIEF;
+  mqJoinBtn.style.display = canToggle ? 'block' : 'none';
+  if (player.ready) {
+    mqJoinBtn.textContent = 'Leave Queue';
+    mqJoinBtn.classList.add('queued');
+  } else {
+    mqJoinBtn.textContent = 'Join Queue';
+    mqJoinBtn.classList.remove('queued');
+  }
+}
 
 function fmtMS(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -3835,6 +3882,7 @@ function updatePhaseTimers(nowMs) {
       missionTimerEl.classList.toggle('urgent', remain < 15000);
     }
   }
+  updateMissionQueueOverlay();
 }
 
 const _chatBubbles = new Map(); // peerId → { text, expiresAt }

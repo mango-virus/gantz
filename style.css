@@ -675,3 +675,85 @@ html, body {
   from { opacity: 0; transform: translateY(-10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Mission Queue Overlay ─────────────────────────────────────── */
+#mission-queue-overlay {
+  position: fixed;
+  top: 50%;
+  right: 1.8rem;
+  transform: translateY(-50%);
+  z-index: 20;
+  pointer-events: none;
+}
+
+#mqo-box {
+  background: rgba(0, 10, 4, 0.88);
+  border: 1px solid #00e05a;
+  padding: 1rem 1.25rem;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'Press Start 2P', monospace;
+  pointer-events: auto;
+}
+
+#mqo-title {
+  font-size: 0.55rem;
+  color: #007030;
+  letter-spacing: 0.1em;
+}
+
+#mqo-timer {
+  font-size: 2rem;
+  color: #a0ffcc;
+  line-height: 1;
+  letter-spacing: 0.05em;
+}
+
+#mqo-names {
+  font-size: 0.55rem;
+  color: #00e05a;
+  text-align: center;
+  line-height: 1.9;
+  min-height: 0.8rem;
+}
+
+#mqo-names .mqo-self {
+  color: #a0ffcc;
+}
+
+#mqo-names .mqo-label {
+  color: #007030;
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+#mqo-join {
+  margin-top: 0.25rem;
+  background: none;
+  border: 1px solid #00e05a;
+  color: #00e05a;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.5rem;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  transition: background 120ms, color 120ms;
+}
+
+#mqo-join:hover {
+  background: #00e05a;
+  color: #000;
+}
+
+#mqo-join.queued {
+  border-color: #a0ffcc;
+  color: #a0ffcc;
+}
+
+#mqo-join.queued:hover {
+  background: #a0ffcc;
+  color: #000;
+}
