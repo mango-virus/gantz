@@ -3605,7 +3605,7 @@ function updatePhaseTimers(nowMs) {
 }
 
 const _chatBubbles = new Map(); // peerId → { text, expiresAt }
-const CHAT_BUBBLE_MS = 5000;
+const CHAT_BUBBLE_MS = 7000;
 
 net.onChat(msg => {
   chat.add(msg);
