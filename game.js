@@ -2668,10 +2668,10 @@ function _drawBallMenu() {
     { let pr = -1; for (let i = 0; i < ptRows.length; i++) { if (ptRows[i].kind === 'type' && vis[i].chars >= 0 && vis[i].chars < ptRows[i].text.length) { pr = i; break; } } _typeTickSound(3000 + Math.max(0, pr), pr >= 0); }
 
     if (vis[0].chars >= 0) {
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `14px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillText('POINT TOTALS'.slice(0, vis[0].chars), CX, y);
     }
-    y += 30;
+    y += 34;
 
     ctx.font = `12px ${_PF}`; ctx.textBaseline = 'top';
     for (let i = 0; i < allP.length; i++) {
@@ -2702,10 +2702,10 @@ function _drawBallMenu() {
     const vis = _computeVis(_mElapsed, ltRows);
 
     if (vis[0].chars >= 0) {
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `14px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillText('LIFETIME POINTS'.slice(0, vis[0].chars), CX, y);
     }
-    y += 30;
+    y += 34;
 
     ctx.font = `12px ${_PF}`; ctx.textBaseline = 'top';
     for (let i = 0; i < allP.length; i++) {
