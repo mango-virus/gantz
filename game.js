@@ -3601,7 +3601,15 @@ function updatePhaseTimers(nowMs) {
   }
 }
 
-net.onChat(msg => chat.add(msg));
+const _chatBubbles = new Map(); // peerId → { text, expiresAt }
+const CHAT_BUBBLE_MS = 5000;
+
+net.onChat(msg => {
+  chat.add(msg);
+  if (msg.peerId) {
+    _chatBubbles.set(msg.peerId, { text: msg.text, expiresAt: performance.now() + CHAT_BUBBLE_MS });
+  }
+});
 
 const peersEl = document.getElementById('peers');
 function refreshPeerCount() {
@@ -4037,9 +4045,12 @@ function emitTracer(t) { _pendingTracers.push(t); }
 
 function render(dt) {
   const inMission = session.phase === Phase.MISSION;
+  const _now = performance.now();
   const remotes = [];
   for (const [peerId, p] of net.peers) {
     if (p.x == null) continue;
+    const bubble = _chatBubbles.get(peerId);
+    const bubbleAlive = bubble && _now < bubble.expiresAt;
     remotes.push({
       peerId,
       spec: getRemoteSpec(peerId, p.specSeed),
@@ -4049,6 +4060,10 @@ function render(dt) {
       alive: p.alive !== false,
       username: p.username || '?',
       suit: p.loadout?.suit && p.loadout.suit !== 'basic',
+      jumpY: p.jumpY || 0,
+      sprinting: !!p.sprinting,
+      chatText:  bubbleAlive ? bubble.text : null,
+      chatAlpha: bubbleAlive ? Math.min(1, (bubble.expiresAt - _now) / 1000) : 0,
     });
   }
 

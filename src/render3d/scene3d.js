@@ -22,6 +22,58 @@ function disposeGroup(group) {
   });
 }
 
+// Creates a chat speech bubble sprite above the player's head.
+function makeChatBubble(text) {
+  const MAX_CHARS = 40;
+  const display = String(text || '').slice(0, MAX_CHARS) + (text.length > MAX_CHARS ? '…' : '');
+  const FONT = 'bold 18px ui-monospace,Menlo,Consolas,monospace';
+
+  // Measure text width
+  const measurer = document.createElement('canvas').getContext('2d');
+  measurer.font = FONT;
+  const textW = measurer.measureText(display).width;
+
+  const PAD = 14;
+  const TRI = 8; // pointer triangle height
+  const CW = Math.max(120, textW + PAD * 2);
+  const CH = 44 + TRI;
+
+  const c = document.createElement('canvas');
+  c.width = CW; c.height = CH;
+  const ctx = c.getContext('2d');
+
+  // Bubble body
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, CW, CH - TRI, 8);
+  ctx.fill();
+
+  // Pointer triangle (centered at bottom)
+  ctx.beginPath();
+  ctx.moveTo(CW / 2 - 8, CH - TRI);
+  ctx.lineTo(CW / 2 + 8, CH - TRI);
+  ctx.lineTo(CW / 2, CH);
+  ctx.closePath();
+  ctx.fill();
+
+  // Text
+  ctx.font = FONT;
+  ctx.fillStyle = '#111';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(display, CW / 2, (CH - TRI) / 2);
+
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  // Scale in world units — keep aspect ratio
+  const worldH = 0.28;
+  sprite.scale.set((CW / CH) * worldH, worldH, 1);
+  sprite.position.set(0, 2.55, 0);
+  sprite.userData.isChatBubble = true;
+  return sprite;
+}
+
 // Creates a billboard sprite with the player's name drawn on a canvas texture.
 function makeNameLabel(text, hexColor) {
   const CW = 256, CH = 52;
@@ -188,7 +240,7 @@ export function createScene3d({ canvas }) {
       if (entry) { scene.remove(entry.group); disposeGroup(entry.group); }
       const group = buildHumanMesh(spec, { suit });
       scene.add(group);
-      entry = { group, specSeed: spec.seed, suit, labelText: null, labelColor: null };
+      entry = { group, specSeed: spec.seed, suit, labelText: null, labelColor: null, bubbleText: null };
       humans.set(id, entry);
     }
     return entry;
@@ -211,6 +263,26 @@ export function createScene3d({ canvas }) {
     // Toggle visibility
     const label = entry.group.children.find(c => c.userData.isNameLabel);
     if (label) label.visible = !!visible;
+  }
+
+  function updateChatBubble(entry, text, alpha) {
+    const textStr = String(text || '');
+    // Remove stale bubble if text changed or cleared
+    if (entry.bubbleText !== textStr) {
+      const old = entry.group.children.find(c => c.userData.isChatBubble);
+      if (old) { entry.group.remove(old); disposeGroup(old); }
+      if (textStr) {
+        const bubble = makeChatBubble(textStr);
+        entry.group.add(bubble);
+      }
+      entry.bubbleText = textStr;
+    }
+    // Update opacity for fade-out
+    const bubble = entry.group.children.find(c => c.userData.isChatBubble);
+    if (bubble) {
+      bubble.visible = alpha > 0;
+      bubble.material.opacity = Math.min(1, alpha);
+    }
   }
 
   function getOrCreateAlien(id, spec) {
@@ -513,6 +585,7 @@ export function createScene3d({ canvas }) {
       const isLocalFP = h._id === '__player__' && state.firstPerson;
       const showLabel = !isLocalFP && h.alive !== false && !!h.username;
       updateNameLabel(entry, h.username, h.color, showLabel);
+      updateChatBubble(entry, h.alive !== false ? (h.chatText || '') : '', h.chatAlpha || 0);
       keepHumans.add(h._id);
     }
     prune(humans, keepHumans);
