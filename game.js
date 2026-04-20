@@ -2611,10 +2611,10 @@ function _drawBallMenu() {
 
     // ── Title ──
     if (vis[0].chars >= 0) {
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `14px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillText('100 POINT MENU'.slice(0, vis[0].chars), CX, y);
     }
-    y += 22;
+    y += 26;
 
     // ── "Not Enough Points" — appears just under title, types out then fades after 3s ──
     if (md.lastShopResult?.msg) {
@@ -2736,10 +2736,10 @@ function _drawBallMenu() {
     { let rr = -1; for (let i = 0; i < reviveRows.length; i++) { if (reviveRows[i].kind === 'type' && vis[i].chars >= 0 && vis[i].chars < reviveRows[i].text.length) { rr = i; break; } } _typeTickSound(5000 + Math.max(0, rr), rr >= 0); }
 
     if (vis[0].chars >= 0) {
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `14px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillText('REVIVE FROM MEMORY'.slice(0, vis[0].chars), CX, y);
     }
-    y += 26;
+    y += 30;
 
     if (deadList.length === 0) {
       const nvis = vis[1];
