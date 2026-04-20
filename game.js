@@ -1495,6 +1495,206 @@ const _GANTZ_IDLE_LINES = [
   ["The aliens are not waiting for you to feel ready.", "Neither am I.", "Neither is time.", "Nobody is waiting.", "Move."],
 ];
 
+// ── Gantz mission chat mockery ──────────────────────────────────────────────
+// General lines (no player name). Pick one at random each interval.
+const _GANTZ_MISSION_GENERAL = [
+  "Hurry up and die.",
+  "You guys are useless.",
+  "Waste of space.",
+  "I've seen corpses move faster.",
+  "This is embarrassing to watch.",
+  "You're all going to die and I'm going to feel nothing.",
+  "I didn't bring you back to life for this.",
+  "Pathetic.",
+  "I've had better hunters. They're dead. You're worse than dead.",
+  "Every second you waste is a second closer to me replacing you.",
+  "Are you trying? I can't tell.",
+  "The aliens aren't scared of you. Neither am I.",
+  "You call this fighting? I call it dying slowly.",
+  "I've watched things with no brain stem perform better.",
+  "You're an embarrassment to the concept of survival.",
+  "Do something. Anything. Please.",
+  "The mission timer doesn't care about your feelings.",
+  "If I wanted nothing done, I'd have sent no one.",
+  "You're failing in real time.",
+  "I've regretted selections before. Right now I'm setting a personal record.",
+  "None of you are impressing me.",
+  "You're moving like you want to die. Keep it up.",
+  "I have zero confidence in this group.",
+  "This is the worst mission performance I've logged.",
+  "Are you afraid of them? They should be afraid of you. Fix the direction.",
+  "You're wasting bullets. And oxygen. And my patience.",
+  "I'm watching this and I feel nothing. That's bad for you.",
+  "You're making the aliens look competent.",
+  "Kill something. One thing. Any thing.",
+  "This is taking too long.",
+  "I picked you because you seemed capable. I was wrong.",
+  "Your survival instinct is broken. Get it fixed.",
+  "If you all die I'm going to be mildly inconvenienced.",
+  "I've processed more impressive failures than this.",
+  "At least move like you mean it.",
+  "You're going to lose. I'm observing this as a neutral fact.",
+  "This group has achieved nothing I'm willing to acknowledge.",
+  "You're disappointing a sphere. Think about that.",
+  "I've watched rocks be more decisive.",
+  "You're not a team. You're a collection of poor decisions.",
+  "I don't know what strategy this is, but it isn't one.",
+  "If you die here, you die as someone who never did anything useful.",
+  "I feel no attachment to your survival.",
+  "The aliens don't have to work hard to beat you.",
+  "You're average in the worst possible situation to be average in.",
+  "I gave you weapons. Use them.",
+  "You're all going to end up back in the void. I'll leave you there next time.",
+  "Nothing about this is going well.",
+  "There is no version of this where I'm proud of you.",
+  "You're running out of time and I'm running out of patience.",
+  "Your performance today will be logged as a cautionary tale.",
+  "I've seen better teamwork from things that can't communicate.",
+  "You're all letting each other down simultaneously. It's almost impressive.",
+  "The mission briefing was simple. This is not a simple execution.",
+  "I don't understand what you're doing. I'm not sure you do either.",
+  "This is exactly what failure looks like.",
+  "You have weapons. They have vulnerabilities. Connect the two.",
+  "I'm not cheering for you. I never was. But especially not right now.",
+  "Even the civilians are judging you.",
+  "You're going to run out of time before you run out of excuses.",
+  "I've calculated your survival odds. I won't share the number.",
+  "Every one of you is underperforming.",
+  "I've had quieter disasters.",
+  "You have no idea how easy this was supposed to be.",
+  "You're all behaving like the first time is a practice round. It isn't.",
+  "I'm not going to step in. Watch what happens.",
+  "You look like you're trying to lose.",
+  "This mission has a timer. The timer is not your friend.",
+  "You could try harder. You're choosing not to.",
+  "I don't know what I'm watching, but it isn't hunting.",
+  "You're wasting the suit I gave you.",
+  "Dead would be a step up from this performance.",
+  "There are no points for effort. Finish it.",
+  "Something is very wrong with all of you.",
+  "I expected more. I always expect more. I'm always let down.",
+  "You're fighting like you want to be forgiven for it. You won't be.",
+  "The clock is moving faster than you are.",
+  "I'm going to remember this mission as an example of what not to do.",
+  "You're not hunters. You're obstacles the aliens have to walk around.",
+  "If this gets worse, I'll be impressed by how bad it is.",
+  "You've earned nothing. Change that.",
+  "This is a critical failure in slow motion.",
+  "I don't intervene. But I do judge.",
+  "Every decision you've made in the last sixty seconds was wrong.",
+  "I've seen better tactics from frightened animals.",
+  "You're not going to win by standing around looking at each other.",
+  "The mission doesn't care about your comfort level.",
+  "You're making this look complicated. It isn't.",
+  "I'm done being patient. Not that I was.",
+  "You would not survive without me. You're barely surviving with me.",
+  "Get it together. Or don't. I've logged the outcome either way.",
+  "Everything is going wrong and you're letting it.",
+  "The aliens are winning right now. I'm going to let you think about that.",
+  "I chose you. You're making me question my methodology.",
+  "You're burning time. The mission burns with it.",
+  "Somehow, you've managed to make this worse.",
+  "You are all terrible at this.",
+  "Fight back. Any one of you. Right now.",
+  "I'm running out of words for what I'm watching.",
+  "You're not a threat. You're barely a presence.",
+  "The alien you just let pass? That was a mistake.",
+  "I've seen better performance from my equipment. The inactive equipment.",
+  "You came all the way here to do nothing.",
+  "This is not a coordinated effort. This is chaos with a team count.",
+  "Get. The. Aliens.",
+];
+
+// Player-directed lines. {name} is replaced with the target player's username.
+const _GANTZ_MISSION_PERSONAL = [
+  "{name}. What are you doing.",
+  "{name} is doing absolutely nothing useful.",
+  "I'm looking at {name} right now and I'm concerned.",
+  "{name}, you're an embarrassment.",
+  "{name}, move. Now.",
+  "{name} is the reason this is going badly.",
+  "Everyone ignore {name}'s plan. It's not working.",
+  "{name}, that was the wrong move. There was only one move. You found a third option.",
+  "{name}. I have questions about your choices.",
+  "{name} is fighting like they want to lose.",
+  "I regret bringing {name} back.",
+  "{name}, you're dragging everyone down.",
+  "Whatever {name} is doing, do the opposite.",
+  "{name}. Stop. Think. Then do the thing I'm clearly asking for.",
+  "I've had better hunters than {name}. Most of them died faster, at least.",
+  "{name}'s decision-making is a problem.",
+  "{name}, you're below my expectations and my expectations were already low.",
+  "The weakest link right now is {name}. Fix it, {name}.",
+  "{name} is not contributing.",
+  "I'm watching {name} specifically and I'm not happy.",
+  "{name}, you're wasting resources I invested in you.",
+  "{name}, I gave you a weapon. Use the weapon.",
+  "{name} is standing still. During a mission. Remarkable.",
+  "{name}, whatever you're thinking right now, you're wrong.",
+  "{name} has potential. They're burying it effectively.",
+  "Does {name} understand the mission? I'm not sure {name} understands the mission.",
+  "{name}, you're not helping anyone, including yourself.",
+  "{name} is the reason I have to send this message.",
+  "I expected more from {name}. I don't know why.",
+  "{name}. Disappointing. Consistently.",
+  "{name}, you've made more bad calls today than I've logged in a week.",
+  "{name}, go do something. Anything. Contribute.",
+  "{name} is fighting defensively in a situation that requires offense.",
+  "I'm holding {name} personally responsible for the current state of this mission.",
+  "{name}, this is not a spectator mission.",
+  "{name}, your movement pattern makes no sense to me.",
+  "I've had quieter disasters than watching {name} perform.",
+  "{name}, you're slowing everything down.",
+  "{name} is making the aliens more confident. I can tell.",
+  "{name}. There are aliens. You have a gun. Close the gap.",
+  "Someone tell {name} what the objective is. Clearly they need a reminder.",
+  "{name}, I'm not angry. I'm analytically disappointed.",
+  "{name}, you are the problem I'm identifying.",
+  "{name}'s performance today is going in the record. Not positively.",
+  "{name}, the suit I gave you deserves better than this.",
+  "{name}, try harder. You're clearly not trying your hardest.",
+  "{name} has been alive this whole mission and has nothing to show for it.",
+  "{name}. You're better than this. Probably.",
+  "{name} is failing in a way that's affecting everyone else.",
+  "{name}, you survive or you don't. Right now you're choosing don't.",
+];
+
+let _gantzMockeryNextAt = -1;  // ms timestamp — when to fire next line
+let _gantzMockeryIndex  = -1;  // shuffled index into combined line pool
+
+function _gantzMockeryTick(nowMs, participants) {
+  if (!net.isHost) return;
+  if (session.phase !== Phase.MISSION) return;
+  if (_gantzMockeryNextAt < 0) {
+    // First message: 20–40s into the mission
+    _gantzMockeryNextAt = nowMs + 20000 + Math.random() * 20000;
+    return;
+  }
+  if (nowMs < _gantzMockeryNextAt) return;
+
+  // Schedule next: every 25–55s
+  _gantzMockeryNextAt = nowMs + 25000 + Math.random() * 30000;
+
+  // 35% chance: personal insult aimed at a random participant
+  const peers = [...net.peers.values()];
+  const allNames = [
+    ...(localIsParticipant() ? [player.username] : []),
+    ...peers.filter(pr => !session.participants || session.participants.includes(pr.color))
+           .map(pr => pr.username || 'Hunter').filter(Boolean),
+  ];
+
+  let line;
+  if (allNames.length > 1 && Math.random() < 0.35) {
+    const target = allNames[Math.floor(Math.random() * allNames.length)];
+    const tmpl = _GANTZ_MISSION_PERSONAL[Math.floor(Math.random() * _GANTZ_MISSION_PERSONAL.length)];
+    line = tmpl.replace(/\{name\}/g, target);
+  } else {
+    line = _GANTZ_MISSION_GENERAL[Math.floor(Math.random() * _GANTZ_MISSION_GENERAL.length)];
+  }
+
+  net.sendChat(line, 'GANTZ', '#00ff88');
+}
+
 const _TPROFILE_INTROS = [
   'Kill this guy.', 'Eliminate this one.', 'Take it out.', 'Not dangerous. Probably.',
   'Approach with caution. Or don\'t.', 'We don\'t know much. Go figure it out.',
@@ -3397,6 +3597,7 @@ function hostStartMission(nowMs) {
   session.missionEndsAt = nowMs + hostPickMissionDuration();
   session.phase = Phase.MISSION;
   session.version += 1;
+  _gantzMockeryNextAt = -1;  // reset so first line fires 20-40s in
   enterPhase(Phase.MISSION);
   broadcastSession();
 }
@@ -3495,6 +3696,7 @@ function hostTick(nowMs) {
         hostEndMission(nowMs, 'cleared');
       }
     }
+    _gantzMockeryTick(nowMs);
   }
 
   if (nowMs - lastSessionBroadcast > SESSION_REBROADCAST_MS) broadcastSession();
