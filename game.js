@@ -2247,7 +2247,7 @@ function _drawBallMenu() {
 
     // 15-second countdown fades in after briefing content fades away
     if (clockAlpha > 0) {
-      const remain = Math.max(0, session.briefingEndsAt - performance.now());
+      const remain = Math.max(0, session.briefingEndsAt - Date.now());
       const sec    = Math.ceil(remain / 1000);
       const segW = 36, segH = 68, segT = 7;
       const segY   = S * 0.28;
@@ -2759,7 +2759,7 @@ function _drawBallMenu() {
       const CLOCK_FADE_MS  = 1200;
       const sinceLabel = cElapsed - LABEL.length * CCHAR;
       const clockAlpha = Math.min(1, Math.max(0, (sinceLabel - CLOCK_DELAY_MS) / CLOCK_FADE_MS));
-      const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - performance.now()) / 1000));
+      const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
       ctx.save();
       ctx.globalAlpha = clockAlpha;
       _draw7SegClock(ctx, secs, CX, segY, segW, segH, segT, B, offCol);
@@ -3858,10 +3858,10 @@ net.onStatus(s => {
   else if (s === 'offline') { peersEl.textContent = 'multiplayer offline'; peersEl.classList.add('offline'); }
 });
 net.onPeerChange(refreshPeerCount);
-let hostSince = performance.now();
+let hostSince = Date.now();
 net.onHostChange((hostId) => {
   refreshPeerCount();
-  if (net.isHost) hostSince = performance.now();
+  if (net.isHost) hostSince = Date.now();
 });
 
 // ---- Frame ----
@@ -4242,7 +4242,7 @@ function update(dt) {
   }
 
 
-  const nowMs = performance.now();
+  const nowMs = Date.now(); // wall-clock ms — synchronized across peers unlike performance.now()
   hostTick(nowMs);
   updatePhaseTimers(nowMs);
   if (session.phase === Phase.MISSION) updateMissionTargetsHUD();
@@ -4442,7 +4442,7 @@ window.__gantz = {
     session.missionIndex = opts.missionIndex ?? 1;
     session.missionResult = opts.wiped ? 'wiped' : 'cleared';
     session.missionStats = { pointsEarned: opts.localPts ?? 150, civilianKills: opts.civKills ?? 0, bossKilled: opts.boss ?? false, playerDied: opts.died ?? false, npcDeaths: 0 };
-    session.debriefEndsAt = performance.now() + 25000;
+    session.debriefEndsAt = Date.now() + 25000;
     enterPhase('DEBRIEF');
   },
 };
