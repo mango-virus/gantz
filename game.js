@@ -3384,6 +3384,7 @@ net.onKill((msg) => {
       toast(`+${msg.points} · ${msg.archetypeName}`, 'kill');
     } else {
       const peer = net.peers.get(msg.killerId);
+      if (peer) peer.points = (peer.points || 0) + (msg.points || 0); // keep debrief accurate without waiting for pose
       const name = (peer && peer.username) || 'hunter';
       toast(`${name} killed ${msg.archetypeName} (+${msg.points})`, 'info');
     }
@@ -3392,6 +3393,9 @@ net.onKill((msg) => {
       player.points = Math.max(0, player.points - CIVILIAN_PENALTY);
       player.civiliansKilled += 1;
       toast(`-${CIVILIAN_PENALTY} · civilian killed`, 'warn');
+    } else {
+      const peer = net.peers.get(msg.shooterId);
+      if (peer) peer.points = Math.max(0, (peer.points || 0) - CIVILIAN_PENALTY);
     }
   }
   updateWeaponHUD();
