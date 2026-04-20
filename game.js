@@ -2599,7 +2599,7 @@ function _drawBallMenu() {
 
   } else if (md.activeTab === 'shop') {
     // ── Shop tab ──
-    const infoStr = `${s.localPoints} pt available  ·  100pt each`;
+    const infoStr = `${s.localPoints} pt available`;
     const shopRows = [
       { text: '100 POINT MENU', kind: 'type' },
       { text: infoStr,          kind: 'type' },
@@ -2640,7 +2640,7 @@ function _drawBallMenu() {
     }
 
     if (vis[1].chars >= 0) {
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `10px ${_PF}`; ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
       ctx.fillText(infoStr.slice(0, vis[1].chars), CX, y);
     }
     y += 16;
