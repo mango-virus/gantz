@@ -1872,7 +1872,10 @@ function _drawBallMenu() {
   ctx.textAlign = 'center';
 
   // ── Menu close fade (cosmetic only — menu is already closed) ──
-  if (justClosed) _menuFadeOutAt = performance.now();
+  if (justClosed) {
+    if (_skipNextMenuFadeOut) { _skipNextMenuFadeOut = false; _menuFadeOutAt = -1; }
+    else { _menuFadeOutAt = performance.now(); }
+  }
   if (!isOpen && _menuFadeOutAt >= 0) {
     const fadeElapsed = performance.now() - _menuFadeOutAt;
     const fadeAlpha = Math.max(0, 1 - fadeElapsed / MENU_FADE_OUT_MS);
@@ -2981,6 +2984,7 @@ let missionCivilianKills = 0;
 let spectateIndex = 0;
 let _menuClosedAt = -Infinity;
 let _menuFadeOutAt = -1;
+let _skipNextMenuFadeOut = false;
 const MENU_FADE_OUT_MS = 260;
 const menu = createGantzMenu({
   getGantzTalking: () => (_introStartTime !== -1 && !_introDone) || (_namePromptPhase !== 'idle' && !_namePromptDone) || (!_gantzTalkDone && !!_gantzTalkLines) || (!_gantzExitDone && _gantzExitStart !== -1),
@@ -3003,6 +3007,7 @@ const menu = createGantzMenu({
     _gantzTalkDone = false;
     _buyResponsePending = true;
     _skipNextExitLines = true;
+    _skipNextMenuFadeOut = true; // suppress main-menu flash when closing for buy result
     menu.closeMenu();
   },
   onReadyToggle: () => {
