@@ -2172,7 +2172,7 @@ function _drawBallMenu() {
     const headerText = `MISSION ${session.missionIndex}` +
       (targets.length > 1 ? `  ·  TARGET ${tIdx+1}/${targets.length}` : '');
     const nameText = tgt.name.toUpperCase() + (tgt.count > 1 ? `  x${tgt.count}` : '');
-    const hasModifier = session.modifier?.id && session.modifier.id !== 'clear';
+
 
     // Build typed content rows (isMug rows are graphical, no text timing)
     const rows = [];
@@ -2186,9 +2186,6 @@ function _drawBallMenu() {
     rows.push({ text: '',         font: `11px ${_PF}`, color: DL, charMs: 0,     gapAfter: 0,    lineH: 12 });
     rows.push({ text: 'FAVORITE THING', font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 200, lineH: 22 });
     rows.push({ text: fav, font: `11px ${_PF}`, color: B, charMs: BCHAR, gapAfter: 300, lineH: 30 });
-    if (hasModifier) {
-      rows.push({ text: session.modifier.label.toUpperCase(), font: `9px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 300, lineH: 24 });
-    }
 
     // Walk timeline
     let t = 0, activeRow = rows.length, activeChar = 0, typing = false;
