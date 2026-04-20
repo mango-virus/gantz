@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gantz · 3D Preview</title>
+<style>
+  :root { --accent: #c8142b; --ink: #e8e8ee; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #04050a; color: var(--ink); height: 100%; overflow: hidden; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  canvas { display: block; }
+  #hud3d {
+    position: fixed; top: 0.75rem; left: 0.75rem; z-index: 5; pointer-events: none;
+    font-size: 0.85rem; line-height: 1.45; max-width: 360px;
+  }
+  #hud3d .title {
+    font-weight: 900; letter-spacing: 0.4em; color: var(--accent); font-size: 1.1rem;
+    text-shadow: 0 0 10px rgba(200,20,43,0.6);
+  }
+  #hud3d .sub { opacity: 0.6; font-size: 0.72rem; letter-spacing: 0.2em; }
+  #hud3d .body { opacity: 0.75; font-size: 0.78rem; margin-top: 0.5rem; }
+  #hud3d .body .k { color: var(--accent); }
+  #back {
+    position: fixed; bottom: 0.75rem; left: 0.75rem; z-index: 5;
+    color: var(--accent); text-decoration: none;
+    font-size: 0.78rem; letter-spacing: 0.15em;
+    background: rgba(5,6,10,0.75); padding: 0.35rem 0.7rem; border: 1px solid var(--accent);
+  }
+  #back:hover { background: rgba(200,20,43,0.15); }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #04050a; z-index: 10; font-size: 0.85rem; color: var(--accent); letter-spacing: 0.3em;
+  }
+</style>
+</head>
+<body>
+<div id="loading">LOADING 3D PREVIEW…</div>
+<div id="hud3d">
+  <div class="title">GANTZ · 3D</div>
+  <div class="sub">RENDER-LAYER SWAP PREVIEW</div>
+  <div class="body">
+    Same <span class="k">humanSpec / propSpec</span> generators driving Three.js meshes instead of Canvas2D.
+    Proves the migration path — zero game-logic changes.<br><br>
+    <span class="k">drag</span> · orbit · <span class="k">wheel</span> · zoom · <span class="k">right-drag</span> · pan
+  </div>
+</div>
+<a id="back" href="/">← back to 2D game</a>
+<script type="module" src="./src/render3d/preview.js"></script>
+</body>
+</html>

@@ -3,16 +3,62 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>My Ordinary Game Jam Game</title>
+<title>Gantz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <div id="hud">
-  <div id="username">loading…</div>
-  <div id="peers">1 online</div>
-  <div id="hint">WASD / arrows to move — walk into a portal to travel</div>
+  <div id="username">—</div>
+  <div id="peers">connecting…</div>
+  <div id="phase">LOBBY</div>
 </div>
-<canvas id="game" width="960" height="540"></canvas>
+<div id="hint">WASD / arrows — walk · E — interact · T / Enter — chat · <a href="/3d.html" style="color:#c8142b;">[3D preview]</a></div>
+<div id="chat">
+  <div id="chat-log"></div>
+  <form id="chat-form" autocomplete="off" style="display: none;">
+    <input id="chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" />
+  </form>
+</div>
+<div id="gantz-menu" style="display: none;">
+  <div class="menu-box">
+    <div class="menu-logo">GANTZ</div>
+    <div class="menu-subtitle">the black sphere addresses you</div>
+    <div class="menu-options">
+      <button id="menu-ready" class="menu-btn">Ready for Mission</button>
+      <button id="menu-shop" class="menu-btn">Hundred Point Menu</button>
+      <button id="menu-points" class="menu-btn">View Points</button>
+    </div>
+    <div class="menu-panel" id="menu-panel"></div>
+    <div class="menu-footer">[ESC] or [E] to close</div>
+  </div>
+</div>
+<div id="phase-overlay" class="phase-overlay" style="display: none;">
+  <div class="po-box">
+    <div class="po-label" id="po-label">BRIEFING</div>
+    <div class="po-mission" id="po-mission">MISSION 1</div>
+    <div class="po-divider"></div>
+    <div class="po-content" id="po-content"></div>
+    <div class="po-count" id="po-count"></div>
+  </div>
+</div>
+<div id="mission-hud" style="display: none;">
+  <div class="mh-box">
+    <div class="mh-timer" id="mh-timer">00:00</div>
+    <div class="mh-info" id="mh-info">MISSION</div>
+    <div class="mh-targets" id="mh-targets"></div>
+  </div>
+</div>
+<div id="weapon-hud" style="display: none;">
+  <div class="wh-slot" id="wh-weapon">X-GUN</div>
+  <div class="wh-points" id="wh-points">0 pt</div>
+</div>
+<div id="toast-log"></div>
+<div id="crosshair"></div>
+<div id="gantz-prompt" class="world-prompt" style="display: none;">[E] Talk to Gantz</div>
+<div id="spectate-prompt" class="world-prompt spectate" style="display: none;"></div>
+<canvas id="game"></canvas>
 <script src="portal.js"></script>
 <script type="module" src="game.js"></script>
 </body>
