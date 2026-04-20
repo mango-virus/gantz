@@ -2176,16 +2176,18 @@ function _drawBallMenu() {
 
     // Build typed content rows (isMug rows are graphical, no text timing)
     const rows = [];
-    rows.push({ text: headerText, font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 300,  lineH: 24 });
+    rows.push({ text: headerText, font: `14px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 300,  lineH: 28 });
     rows.push({ text: nameText,   font: `18px ${_PF}`, color: B,  charMs: BCHAR, gapAfter: 400,  lineH: 36 });
     rows.push({ isMug: true,      gapAfter: 200, lineH: PH + 22 });
     rows.push({ text: intro,      font: `11px ${_PF}`, color: G,  charMs: BCHAR, gapAfter: 400,  lineH: 30 });
+    rows.push({ text: '',         font: `11px ${_PF}`, color: DL, charMs: 0,     gapAfter: 0,    lineH: 12 });
     rows.push({ text: 'CHARACTERISTIC', font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 200, lineH: 22 });
     rows.push({ text: charStr, font: `11px ${_PF}`, color: B, charMs: BCHAR, gapAfter: 200, lineH: 22 });
+    rows.push({ text: '',         font: `11px ${_PF}`, color: DL, charMs: 0,     gapAfter: 0,    lineH: 12 });
     rows.push({ text: 'FAVORITE THING', font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 200, lineH: 22 });
     rows.push({ text: fav, font: `11px ${_PF}`, color: B, charMs: BCHAR, gapAfter: 300, lineH: 30 });
     if (hasModifier) {
-      rows.push({ text: `CONDITIONS: ${session.modifier.label.toUpperCase()}`, font: `9px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 300, lineH: 24 });
+      rows.push({ text: session.modifier.label.toUpperCase(), font: `9px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 300, lineH: 24 });
     }
 
     // Walk timeline
