@@ -142,8 +142,8 @@ html, body {
   gap: 0.18rem;
   max-height: 35vh;
   overflow-y: auto;
-  font-size: 0.78rem;
-  line-height: 1.35;
+  font-size: 1rem;
+  line-height: 1.4;
   align-items: flex-start;
   pointer-events: auto;
   scrollbar-width: thin;
