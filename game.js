@@ -2752,7 +2752,7 @@ function _drawBallMenu() {
     _typeTickSound(6000, !labelDone);
 
     const segW = 36, segH = 68, segT = 7;
-    const segY = S * 0.28;
+    const segY = S * 0.22;
     const offCol = 'rgba(0,180,60,0.12)';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.font = `10px ${_PF}`; ctx.fillStyle = labelDone ? DL : G;
@@ -2766,6 +2766,20 @@ function _drawBallMenu() {
       ctx.save();
       ctx.globalAlpha = clockAlpha;
       _draw7SegClock(ctx, secs, CX, segY, segW, segH, segT, B, offCol);
+
+      // ── Queued player list ──
+      const queuedNames = [];
+      if (player.ready) queuedNames.push(player.username);
+      for (const pr of net.peers.values()) if (pr.ready && pr.username) queuedNames.push(pr.username);
+      const listY = segY + segH + 18;
+      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillText('QUEUED', CX, listY);
+      ctx.font = `11px ${_PF}`;
+      for (let i = 0; i < queuedNames.length; i++) {
+        ctx.fillStyle = queuedNames[i] === player.username ? B : G;
+        ctx.fillText(queuedNames[i], CX, listY + 18 + i * 20);
+      }
+
       ctx.restore();
     }
     bt.needsUpdate = true;
@@ -2784,18 +2798,21 @@ function _drawBallMenu() {
 
   if (!md.activeTab) {
     // ── Main menu ──
+    const inMissionNow = md.phase === 'MISSION' || md.phase === 'BRIEFING';
     const canReady = md.phase === 'LOBBY' || md.phase === 'DEBRIEF';
     const canShop  = canReady;
     const rlabel   = s.localReady ? '✓ READY — cancel' : 'Ready for Mission';
+    // During an active mission, hide the ready button for non-participants
+    const showReady = !inMissionNow;
     const vis = _computeVis(_mElapsed, [
-      { text: rlabel,           kind: 'fade' },
-      { text: '100 Point Menu', kind: 'fade' },
-      { text: 'Point Totals',   kind: 'fade' },
-      { text: 'Close  [E]',     kind: 'fade' },
+      { text: showReady ? rlabel : '',  kind: 'fade' },
+      { text: '100 Point Menu',         kind: 'fade' },
+      { text: 'Point Totals',           kind: 'fade' },
+      { text: 'Close  [E]',             kind: 'fade' },
     ]);
-    y = _btn(ctx, CX, y, 370, 50, rlabel,           canReady ? 'ready' : null, s.localReady ? B : G, !canReady, vis[0]);
-    y = _btn(ctx, CX, y, 370, 50, '100 Point Menu', canShop  ? 'shop'  : null, G, !canShop,           vis[1]);
-    y = _btn(ctx, CX, y, 370, 50, 'Point Totals',   'points', G, false,                               vis[2]);
+    if (showReady) y = _btn(ctx, CX, y, 370, 50, rlabel, canReady ? 'ready' : null, s.localReady ? B : G, !canReady, vis[0]);
+    y = _btn(ctx, CX, y, 370, 50, '100 Point Menu', canShop ? 'shop' : null, G, !canShop, vis[1]);
+    y = _btn(ctx, CX, y, 370, 50, 'Point Totals',   'points', G, false,                  vis[2]);
     y += 14; y += 18;
     _btn(ctx, CX, y, 220, 42, 'Close  [E]', 'close', DL, false, vis[3]);
 
@@ -3496,10 +3513,16 @@ function enterPhase(newPhase) {
     _debriefAllDoneAt = -1;
     _debriefDisplayDone = false;
     const localEarned = Math.max(0, player.points - (_missionStartPts.get('local') || 0));
-    _debriefPlayers = [{ name: player.username, pts: localEarned, died: !player.alive,
-      comment: _pickDebriefComment(localEarned, !player.alive) }];
+    // Only include players who were mission participants (queued up before launch)
+    const parts = session.participants; // array of colors, or null = all
+    _debriefPlayers = [];
+    if (!parts || parts.includes(PLAYER_COLOR)) {
+      _debriefPlayers.push({ name: player.username, pts: localEarned, died: !player.alive,
+        comment: _pickDebriefComment(localEarned, !player.alive) });
+    }
     for (const [id, p] of net.peers) {
       if (!p.username) continue;
+      if (parts && !parts.includes(p.color)) continue; // skip non-participants
       const earned = Math.max(0, (p.points || 0) - (_missionStartPts.get(id) || 0));
       const pDied = p.alive === false;
       _debriefPlayers.push({ name: p.username, pts: earned, died: pDied,
