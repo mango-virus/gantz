@@ -1692,7 +1692,7 @@ function _gantzMockeryTick(nowMs, participants) {
     line = _GANTZ_MISSION_GENERAL[Math.floor(Math.random() * _GANTZ_MISSION_GENERAL.length)];
   }
 
-  net.sendChat(line, 'GANTZ', '#00ff88');
+  net.sendChat(line, 'GANTZ', '00e05a');
 }
 
 const _TPROFILE_INTROS = [
