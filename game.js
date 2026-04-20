@@ -4281,6 +4281,7 @@ function update(dt) {
     const _countdownNow = session.readyCountdownEnd >= 0 && session.phase !== Phase.BRIEFING && session.phase !== Phase.MISSION;
     const _canInteract = !player.ready || _countdownNow; // ready players can still open menu during countdown to leave queue
     if (dBall < INTERACT_RADIUS && wasPressed('e') && !menu.isOpen() && !chat.isOpen?.() && !gantzTalking && _canInteract && performance.now() - _menuClosedAt > 250) {
+      if (_countdownNow) _skipNextGreeting = true; // skip greeting so queue UI shows immediately
       menu.openMenu();
     }
   }
