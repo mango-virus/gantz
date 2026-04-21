@@ -175,13 +175,13 @@ export function createScene3d({ canvas }) {
 
   // Dedicated gun lights — attached to viewWeapon, move with camera.
   // Intensities kept low so falloff doesn't visibly affect the game world.
-  const _gunKeyLight = new THREE.PointLight(0xe8f0ff, 2.8, 1.4, 2); // cool-white key, upper-left
+  const _gunKeyLight = new THREE.PointLight(0xffffff, 2.5, 1.4, 2); // neutral white key, upper-left
   _gunKeyLight.position.set(-0.30, 0.25, -0.05);
   viewWeapon.add(_gunKeyLight);
-  const _gunFillLight = new THREE.PointLight(0x8899bb, 0.7, 1.2, 2); // blue-grey fill, right
+  const _gunFillLight = new THREE.PointLight(0xddddcc, 0.8, 1.2, 2); // warm grey fill, right
   _gunFillLight.position.set(0.25, 0.0, -0.15);
   viewWeapon.add(_gunFillLight);
-  const _gunRimLight = new THREE.PointLight(0x445577, 0.5, 0.9, 2);  // dark-blue rim, below-back
+  const _gunRimLight = new THREE.PointLight(0xaaaaaa, 0.4, 0.9, 2);  // neutral dim rim, below-back
   _gunRimLight.position.set(0.10, -0.20, 0.20);
   viewWeapon.add(_gunRimLight);
 
