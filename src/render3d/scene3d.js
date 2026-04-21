@@ -145,7 +145,16 @@ export function createScene3d({ canvas }) {
   const _ACCENT_KEYS = ['glow', 'light', 'emit', 'led', 'neon', 'blue', 'ring',
                         'accent', 'lens', 'orb', 'circle', 'line', 'stripe'];
 
+  // DIAGNOSTIC placeholder — bright orange box, visible immediately.
+  // Replaced by GLB on success; turns green on failure.
+  const _diagMat = new THREE.MeshBasicMaterial({ color: 0xff6600 });
+  const _diagBox = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.38), _diagMat);
+  _diagBox.frustumCulled = false;
+  _diagBox.position.set(0, 0.06, -0.10);
+  viewWeapon.add(_diagBox);
+
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
+    viewWeapon.remove(_diagBox); // GLB loaded — remove placeholder
     const gun = gltf.scene;
     gun.scale.set(0.42, 0.42, 0.42);
     gun.rotation.set(0.08, -Math.PI / 2, -0.18);
@@ -154,16 +163,18 @@ export function createScene3d({ canvas }) {
       if (!node.isMesh) return;
       node.castShadow = false;
       node.receiveShadow = false;
-      node.frustumCulled = false; // viewmodel is always in view — never cull it
+      node.frustumCulled = false;
       const id = (node.name + '|' + (node.material?.name || '')).toLowerCase();
       node.material = _ACCENT_KEYS.some(k => id.includes(k)) ? _xgunAccentMat : _xgunBodyMat;
     });
-    // Bright fill light so the gun is visible even in dark mission environments
     const gunGlow = new THREE.PointLight(0xffffff, 1.8, 1.5, 2);
     gunGlow.position.set(0, 0.1, 0);
     gun.add(gunGlow);
     viewWeapon.add(gun);
+    console.log('[scene3d] X-Gun GLB loaded OK');
   }, undefined, err => {
+    // GLB failed — turn placeholder green so we can see it failed
+    _diagMat.color.set(0x00ff00);
     console.warn('[scene3d] X-Gun GLB failed to load:', err);
   });
 
