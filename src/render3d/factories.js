@@ -2247,18 +2247,24 @@ export function buildLobbyRoom() {
       sx.fillText('JAM LOBBY', 256, 64);
 
       const signTex = new THREE.CanvasTexture(sc);
-      // Backing plate (dark metal box, protrudes slightly from wall)
+      // Flip U so text reads correctly after the rotation.y = Math.PI UV-mirror
+      signTex.repeat.set(-1, 1);
+      signTex.offset.set(1, 0);
+
+      // Backing plate — protrudes INTO the room (toward -Z from wall face at PZ).
+      // Depth = 0.06 m, centre at PZ - 0.03 → back face at PZ (against wall),
+      // front face at PZ - 0.06. No wall clipping, no z-fighting with sign plane.
       const plateMat = new THREE.MeshStandardMaterial({ color: 0x05060e, roughness: 0.28, metalness: 0.90 });
       const plate = new THREE.Mesh(new THREE.BoxGeometry(SW + 0.05, SH + 0.05, 0.06), plateMat);
-      plate.position.set(0, SY, PZ + 0.03);
+      plate.position.set(0, SY, PZ - 0.03);
       group.add(plate);
-      // Sign face plane, flush with plate front face
+      // Sign face plane — 8 mm in front of the plate front face (PZ - 0.06)
       const signMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(SW, SH),
         new THREE.MeshBasicMaterial({ map: signTex, side: THREE.FrontSide }),
       );
       signMesh.rotation.y = Math.PI;  // face toward -Z (toward approaching player)
-      signMesh.position.set(0, SY, PZ);
+      signMesh.position.set(0, SY, PZ - 0.068);
       group.add(signMesh);
     }
   }
