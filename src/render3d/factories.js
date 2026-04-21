@@ -2247,9 +2247,7 @@ export function buildLobbyRoom() {
       sx.fillText('JAM LOBBY', 256, 64);
 
       const signTex = new THREE.CanvasTexture(sc);
-      // Flip U so text reads correctly after the rotation.y = Math.PI UV-mirror
-      signTex.repeat.set(-1, 1);
-      signTex.offset.set(1, 0);
+      // Note: rotation.y = Math.PI does NOT flip PlaneGeometry UVs — no repeat trick needed.
 
       // Backing plate — protrudes INTO the room (toward -Z from wall face at PZ).
       // Depth = 0.06 m, centre at PZ - 0.03 → back face at PZ (against wall),
