@@ -129,7 +129,7 @@ export function createScene3d({ canvas }) {
     new THREE.SphereGeometry(0.12, 10, 8),
     new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0 }),
   );
-  muzzle.position.set(0, 0.05, -0.52);
+  muzzle.position.set(-0.14, 0.24, -0.12);
   viewWeapon.add(muzzle);
   const muzzleLight = new THREE.PointLight(0x44aaff, 0, 4, 2);
   muzzleLight.position.copy(muzzle.position);
