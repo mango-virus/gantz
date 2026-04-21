@@ -135,15 +135,33 @@ export function createScene3d({ canvas }) {
   muzzleLight.position.copy(muzzle.position);
   viewWeapon.add(muzzleLight);
 
-  // X-Gun materials — unlit (MeshBasicMaterial) so scene lighting doesn't affect them.
+  // X-Gun materials.
   // GLB material names: M_01_base_negra (body), M_01_luz (lights), craneo_pantalla (screen).
-  const _xgunBodyMat   = new THREE.MeshBasicMaterial({ color: 0x1c1c28 }); // dark navy-black
+  // Body uses MeshStandardMaterial + dedicated gun lights for metallic sheen.
+  // Accents/screen use MeshBasicMaterial (unlit) so they always glow.
+  const _xgunBodyMat   = new THREE.MeshStandardMaterial({
+    color: 0x252830,   // dark charcoal-blue matching X-Gun reference
+    metalness: 0.65,
+    roughness: 0.30,   // satin finish
+  });
   const _xgunAccentMat = new THREE.MeshBasicMaterial({ color: 0x00ccff }); // bright cyan
-  const _xgunScreenMat = new THREE.MeshBasicMaterial({ color: 0x0077cc }); // deeper blue display
+  const _xgunScreenMat = new THREE.MeshBasicMaterial({ color: 0x0077cc }); // blue display
   // Accent/screen detection by original GLB material name (checked before replacement).
-  // 'luz' = light panels, 'pantalla'/'craneo' = targeting display.
   const _ACCENT_KEYS  = ['luz'];
   const _SCREEN_KEYS  = ['pantalla', 'craneo'];
+
+  // Dedicated gun lights — attached to viewWeapon so they move with camera.
+  // MeshStandardMaterial needs real lights; these are close enough that falloff
+  // keeps them from noticeably affecting the game world.
+  const _gunKeyLight = new THREE.PointLight(0xe8f0ff, 8.0, 1.4, 2); // cool-white key, upper-left
+  _gunKeyLight.position.set(-0.30, 0.25, -0.05);
+  viewWeapon.add(_gunKeyLight);
+  const _gunFillLight = new THREE.PointLight(0x8899bb, 2.0, 1.2, 2); // blue-grey fill, right
+  _gunFillLight.position.set(0.25, 0.0, -0.15);
+  viewWeapon.add(_gunFillLight);
+  const _gunRimLight = new THREE.PointLight(0x445577, 1.5, 0.9, 2);  // dark-blue rim, below-back
+  _gunRimLight.position.set(0.10, -0.20, 0.20);
+  viewWeapon.add(_gunRimLight);
 
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
     try {
