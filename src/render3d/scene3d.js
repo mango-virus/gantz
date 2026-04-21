@@ -117,11 +117,11 @@ export function createScene3d({ canvas }) {
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
-  // At z=-0.45: half-height≈0.33m, half-width≈0.58m (16:9).
-  // x=0.38 → right-of-centre; y=-0.30 → grip near bottom edge (partially off-screen).
-  // Scale 0.42 makes the gun fill the lower-right like a standard FPS hold.
+  // FPS viewmodel placement (camera space):
+  // x=+0.20 → right of centre; y=-0.22 → grip below centre; z=-0.55 → pushed back.
+  // Gun scale targets 0.22m longest axis so it fills ~25% of screen width — CS:GO style.
   const viewWeapon = new THREE.Group();
-  viewWeapon.position.set(0.38, -0.30, -0.45);
+  viewWeapon.position.set(0.20, -0.22, -0.55);
 
   // Muzzle flash — blue-white to match X-Gun energy.
   const muzzle = new THREE.Mesh(
@@ -165,7 +165,7 @@ export function createScene3d({ canvas }) {
       const _ct = _b.getCenter(new THREE.Vector3());
       const _sz = _b.getSize(new THREE.Vector3());
       const _md = Math.max(_sz.x, _sz.y, _sz.z);
-      const _s  = _md > 0 ? 0.45 / _md : 1;
+      const _s  = _md > 0 ? 0.22 / _md : 1;
       // Translate geometry vertices directly so centre lands at group origin.
       // This avoids the position-vs-rotation interaction that pushed geometry behind camera.
       gun.traverse(node => {
@@ -177,7 +177,8 @@ export function createScene3d({ canvas }) {
       });
       gun.scale.setScalar(_s);
       gun.position.set(0, 0, 0); // centre is now at origin — no offset needed
-      gun.rotation.set(0.08, -Math.PI / 2, -0.18);
+      // Tilt barrel slightly down and toward center for FPS hold angle.
+      gun.rotation.set(0.15, -Math.PI / 2 + 0.25, -0.12);
       gun.frustumCulled = false;
       console.log(`[scene3d] X-Gun size: ${_sz.x.toFixed(2)}x${_sz.y.toFixed(2)}x${_sz.z.toFixed(2)} scale:${_s.toFixed(3)} ctr:${_ct.x.toFixed(2)},${_ct.y.toFixed(2)},${_ct.z.toFixed(2)}`);
       viewWeapon.add(gun);
@@ -727,7 +728,7 @@ export function createScene3d({ canvas }) {
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
         muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 30);
         // Recoil ease
-        viewWeapon.position.z = -0.45 + (viewWeapon.userData.recoil || 0);
+        viewWeapon.position.z = -0.55 + (viewWeapon.userData.recoil || 0);
         viewWeapon.userData.recoil = Math.max(0, (viewWeapon.userData.recoil || 0) - dt * 3);
       } else {
         viewWeapon.visible = false;
