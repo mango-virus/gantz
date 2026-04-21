@@ -122,6 +122,162 @@ function _makePlasterTex() {
   return tex;
 }
 
+// ── Bedroom: short-pile carpet — muted slate-blue with woven grid ────────────
+function _makeCaretTex() {
+  const rng = _mkRng(0xc3d7e1);
+  const S = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = S; canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  // Base fill
+  ctx.fillStyle = '#5a6272';
+  ctx.fillRect(0, 0, S, S);
+  // Pixel-level fibre noise
+  const id = ctx.getImageData(0, 0, S, S);
+  const d = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = (rng() - 0.5) * 36;
+    d[i]     = Math.min(255, Math.max(0, 88  + v)) | 0;
+    d[i + 1] = Math.min(255, Math.max(0, 96  + v)) | 0;
+    d[i + 2] = Math.min(255, Math.max(0, 114 + v)) | 0;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(id, 0, 0);
+  // Woven loop-pile grid
+  for (let row = 0; row < S; row += 4) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.09)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(0, row); ctx.lineTo(S, row); ctx.stroke();
+  }
+  for (let col = 0; col < S; col += 4) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath(); ctx.moveTo(col, 0); ctx.lineTo(col, S); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+// ── Bathroom: small ceramic square tiles with grey grout lines ────────────────
+function _makeTileTex() {
+  const rng  = _mkRng(0x8f3c1a);
+  const S    = 512;
+  const TILE = 40;   // px per tile
+  const GROUT = 4;   // px grout width
+  const canvas = document.createElement('canvas');
+  canvas.width = S; canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  // Grout background
+  ctx.fillStyle = '#a0a0a0';
+  ctx.fillRect(0, 0, S, S);
+  // Tile faces
+  for (let ty = 0; ty < S; ty += TILE) {
+    for (let tx = 0; tx < S; tx += TILE) {
+      const x = tx + GROUT, y = ty + GROUT;
+      const w = TILE - GROUT * 2, h = TILE - GROUT * 2;
+      const v = (rng() - 0.5) * 14;
+      const c = Math.min(255, Math.max(210, 240 + v)) | 0;
+      ctx.fillStyle = `rgb(${c},${c},${c})`;
+      ctx.fillRect(x, y, w, h);
+      // Glazed sheen highlight
+      const gl = ctx.createLinearGradient(x, y, x + w, y + h);
+      gl.addColorStop(0,   'rgba(255,255,255,0.18)');
+      gl.addColorStop(0.4, 'rgba(255,255,255,0.04)');
+      gl.addColorStop(1,   'rgba(0,0,0,0.07)');
+      ctx.fillStyle = gl;
+      ctx.fillRect(x, y, w, h);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+// ── Kitchen: black-and-cream checkerboard vinyl ───────────────────────────────
+function _makeCheckerTex() {
+  const rng  = _mkRng(0x2f9e4b);
+  const S    = 512;
+  const TILE = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = S; canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  for (let ty = 0; ty < S; ty += TILE) {
+    for (let tx = 0; tx < S; tx += TILE) {
+      const light = ((tx / TILE + ty / TILE) % 2) === 0;
+      const v = (rng() - 0.5) * 10;
+      if (light) {
+        const c = Math.min(255, Math.max(205, 232 + v)) | 0;
+        ctx.fillStyle = `rgb(${c},${c - 2},${c - 6})`;
+      } else {
+        const c = Math.min(55, Math.max(0, 20 + v)) | 0;
+        ctx.fillStyle = `rgb(${c},${c},${c + 2})`;
+      }
+      ctx.fillRect(tx, ty, TILE, TILE);
+      // Subtle wear scuff
+      if (rng() < 0.18) {
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fillRect(tx + rng() * (TILE - 8), ty + rng() * (TILE - 4), 6 + rng() * 20, 2 + rng() * 5);
+      }
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+// ── Hallway: herringbone parquet — warm amber, different tone from lobby ───────
+function _makeParquetTex() {
+  const rng = _mkRng(0x77a340);
+  const S   = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = S; canvas.height = S;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#120800';
+  ctx.fillRect(0, 0, S, S);
+  const PW = 16, PL = 56; // plank width / length in px
+  const COLS = [[196, 128, 48], [212, 144, 60], [184, 116, 42], [206, 138, 54]];
+  // Draw pairs of perpendicular planks in herringbone arrangement
+  for (let row = -1; row < S / PW + 2; row++) {
+    for (let col = -1; col < S / PL + 2; col++) {
+      const ox = col * PL, oy = row * PW * 2;
+      const ci = ((row + col * 3) & 3);
+      const c  = COLS[ci];
+      const drawPlank = (x, y, w, h, vi) => {
+        const vv = (rng() - 0.5) * 20;
+        const r = Math.min(255, Math.max(0, c[0] + vv + vi)) | 0;
+        const g = Math.min(255, Math.max(0, c[1] + vv))      | 0;
+        const b = Math.min(255, Math.max(0, c[2] + vv - vi)) | 0;
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+        // Wood grain lines
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x + 1, y + 1, w - 2, h - 2); ctx.clip();
+        const grainAxis = w > h ? 'h' : 'v';
+        const count = (3 + rng() * 7) | 0;
+        for (let gi = 0; gi < count; gi++) {
+          const t  = rng();
+          const gx = grainAxis === 'v' ? x + t * w : x;
+          const gy = grainAxis === 'h' ? y + t * h : y;
+          const gx2 = grainAxis === 'v' ? gx + (rng() - 0.5) * 4 : x + w;
+          const gy2 = grainAxis === 'h' ? gy + (rng() - 0.5) * 4 : y + h;
+          ctx.strokeStyle = `rgba(0,0,0,${(0.05 + rng() * 0.12).toFixed(3)})`;
+          ctx.lineWidth = 0.4 + rng() * 1.2;
+          ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx2, gy2); ctx.stroke();
+        }
+        ctx.restore();
+      };
+      // Horizontal plank
+      drawPlank(ox, oy, PL, PW, 0);
+      // Vertical plank (shifted by PL/2 and rotated)
+      drawPlank(ox + PL / 2, oy + PW, PW, PL, 6);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
 function _makeBuildingTex(seed, floors, bldgWidth) {
   const rng  = _mkRng(seed);
   const style = (rng() * 5) | 0; // 0–4 architectural styles
@@ -1890,10 +2046,11 @@ export function buildLobbyRoom() {
   const RW_OUTER = W / 2 + WT;  // 5.15
   const RH_OUTER = H / 2 + WT;  // 8.15
 
-  function addAdjRoom(cx, cz, rw, rd, openSide) {
+  function addAdjRoom(cx, cz, rw, rd, openSide, floorMat) {
     // cx,cz = room centre in 3D world.
     // rw = room width (X), rd = room depth (Z).
     // openSide: 'maxX'|'minX'|'maxZ'|'minZ' — wall facing the lobby (not built).
+    // floorMat: MeshStandardMaterial for this room's floor (unique per room).
     // Floor and ceiling extend by WT on the open side so they reach the lobby
     // inner wall face, sealing the floor gap under the lobby wall thickness.
     // Shift floor/ceiling toward the lobby (open) side by WT so they cover the
@@ -1907,7 +2064,7 @@ export function buildLobbyRoom() {
 
     // Floor — top surface at y=0.001 to match lobby hardwood floor level
     const floorY = 0.001 - ADJ_FT / 2;
-    { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), adjFloorMat);
+    { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), floorMat || adjFloorMat);
       m.position.set(fx, floorY, fz); m.receiveShadow = true; group.add(m); }
     // Ceiling
     { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), ceilMat);
@@ -1928,25 +2085,91 @@ export function buildLobbyRoom() {
       group.add(m);
     }
 
+    // ---- Cap walls: close portions of the open face that extend beyond lobby ----
+    // The lobby wall covers the adj room's open face only within the lobby's own
+    // wall span.  If the room extends past the lobby extents (e.g. bedroom north
+    // end juts past the lobby back wall), that strip has no geometry — plug it.
+    const lobbyZMin = -H / 2 - WT / 2;  // -8.075
+    const lobbyZMax =  H / 2 + WT / 2;  //  +8.075
+    const lobbyXMin = -W / 2 - WT / 2;  // -5.075
+    const lobbyXMax =  W / 2 + WT / 2;  //  +5.075
+
+    // Helper: add a thin wall panel along Z (for openSide maxX/minX cases)
+    const capZ = (fx, z0, z1) => {
+      if (z1 - z0 < 0.001) return;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(WT, CEIL, z1 - z0), wallMat);
+      m.position.set(fx, CEIL / 2, (z0 + z1) / 2);
+      m.castShadow = true; m.receiveShadow = true; group.add(m);
+    };
+    // Helper: add a thin wall panel along X (for openSide maxZ/minZ cases)
+    const capX = (x0, x1, fz) => {
+      if (x1 - x0 < 0.001) return;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, CEIL, WT), wallMat);
+      m.position.set((x0 + x1) / 2, CEIL / 2, fz);
+      m.castShadow = true; m.receiveShadow = true; group.add(m);
+    };
+
+    const roomZMin = cz - rd / 2, roomZMax = cz + rd / 2;
+    const roomXMin = cx - rw / 2, roomXMax = cx + rw / 2;
+
+    if (openSide === 'maxX') {
+      const fx = cx + rw / 2;
+      capZ(fx, roomZMin, Math.min(roomZMax, lobbyZMin)); // south overhang (below lobby)
+      capZ(fx, Math.max(roomZMin, lobbyZMax), roomZMax); // north overhang (above lobby)
+    } else if (openSide === 'minX') {
+      const fx = cx - rw / 2;
+      capZ(fx, roomZMin, Math.min(roomZMax, lobbyZMin));
+      capZ(fx, Math.max(roomZMin, lobbyZMax), roomZMax);
+    } else if (openSide === 'maxZ') {
+      const fz = cz + rd / 2;
+      capX(roomXMin, Math.min(roomXMax, lobbyXMin), fz); // left overhang
+      capX(Math.max(roomXMin, lobbyXMax), roomXMax, fz); // right overhang
+    } else if (openSide === 'minZ') {
+      const fz = cz - rd / 2;
+      capX(roomXMin, Math.min(roomXMax, lobbyXMin), fz);
+      capX(Math.max(roomXMin, lobbyXMax), roomXMax, fz);
+    }
+
     // Warm pendant light
     const apl = new THREE.PointLight(0xfff5e0, 1.6, 8, 1.8);
     apl.position.set(cx, CEIL - 0.3, cz);
     group.add(apl);
   }
 
+  // ---- Per-room floor materials ------------------------------------------------
+  // Bedroom — short-pile carpet (slate-blue, woven grid)
+  const bedroomFloorTex = _makeCaretTex();
+  bedroomFloorTex.repeat.set(4.5, 5.5);   // ~0.6m per canvas repeat → fine carpet weave
+  const bedroomFloorMat = new THREE.MeshStandardMaterial({ map: bedroomFloorTex, roughness: 0.95 });
+
+  // Bathroom — small ceramic square tiles with grey grout
+  const bathroomFloorTex = _makeTileTex();
+  bathroomFloorTex.repeat.set(1.5, 1.5);  // ~26cm tiles across 5m room
+  const bathroomFloorMat = new THREE.MeshStandardMaterial({ map: bathroomFloorTex, roughness: 0.08, metalness: 0.05 });
+
+  // Kitchen — black-and-cream checkerboard vinyl
+  const kitchenFloorTex = _makeCheckerTex();
+  kitchenFloorTex.repeat.set(2.0, 1.5);   // ~31cm checker squares
+  const kitchenFloorMat = new THREE.MeshStandardMaterial({ map: kitchenFloorTex, roughness: 0.55 });
+
+  // Hallway — herringbone parquet (warm amber)
+  const hallwayFloorTex = _makeParquetTex();
+  hallwayFloorTex.repeat.set(2.5, 2.0);   // compact parquet planks
+  const hallwayFloorMat = new THREE.MeshStandardMaterial({ map: hallwayFloorTex, roughness: 0.80 });
+
   // Room sizes and positions — must match adj room colliders in lobby.js.
   // Bedroom  (door 0 at z=+5.5, left wall): rw=5.5, rd=7.0
   //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.75) = -7.9
-  addAdjRoom(-(RW_OUTER + 5.5 / 2),  5.5, 5.5, 7.0, 'maxX');
+  addAdjRoom(-(RW_OUTER + 5.5 / 2),  5.5, 5.5, 7.0, 'maxX', bedroomFloorMat);
   // Bathroom (door 1 at z=-1.5, left wall): rw=5.0, rd=5.0
   //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.5)  = -7.65
-  addAdjRoom(-(RW_OUTER + 5.0 / 2), -1.5, 5.0, 5.0, 'maxX');
+  addAdjRoom(-(RW_OUTER + 5.0 / 2), -1.5, 5.0, 5.0, 'maxX', bathroomFloorMat);
   // Kitchen  (door 2 at x=0, far wall): rw=5.0, rd=4.0
   //   cz = -(RH_OUTER + rd/2) = -(8.15 + 2.0)  = -10.15
-  addAdjRoom(0, -(RH_OUTER + 4.0 / 2), 5.0, 4.0, 'maxZ');
+  addAdjRoom(0, -(RH_OUTER + 4.0 / 2), 5.0, 4.0, 'maxZ', kitchenFloorMat);
   // Hallway  (door 3 at x=0, back wall): rw=5.0, rd=4.0
   //   cz =  (RH_OUTER + rd/2) =  (8.15 + 2.0)  = +10.15
-  addAdjRoom(0,  (RH_OUTER + 4.0 / 2), 5.0, 4.0, 'minZ');
+  addAdjRoom(0,  (RH_OUTER + 4.0 / 2), 5.0, 4.0, 'minZ', hallwayFloorMat);
 
   // ---- Structural RC pilasters ----
   // Rectangular columns protruding from walls — very visible in the reference photos.
