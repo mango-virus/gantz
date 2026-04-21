@@ -122,7 +122,7 @@ export function createScene3d({ canvas }) {
   // x=+0.48 → gun centre ≈ 84% right; y=-0.31 → grip near/below bottom edge.
   // Grip clips off-screen bottom-right; barrel faces upper-center — CS:GO style.
   const viewWeapon = new THREE.Group();
-  viewWeapon.position.set(0.48, -0.31, -0.55);
+  viewWeapon.position.set(0.56, -0.38, -0.55);
 
   // Muzzle flash — blue-white to match X-Gun energy.
   const muzzle = new THREE.Mesh(
