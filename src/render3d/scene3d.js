@@ -137,29 +137,49 @@ export function createScene3d({ canvas }) {
 
   // X-Gun materials.
   // GLB material names: M_01_base_negra (body), M_01_luz (lights), craneo_pantalla (screen).
-  // Body uses MeshStandardMaterial + dedicated gun lights for metallic sheen.
-  // Accents/screen use MeshBasicMaterial (unlit) so they always glow.
-  const _xgunBodyMat   = new THREE.MeshStandardMaterial({
-    color: 0x252830,   // dark charcoal-blue matching X-Gun reference
-    metalness: 0.65,
-    roughness: 0.30,   // satin finish
-  });
-  const _xgunAccentMat = new THREE.MeshBasicMaterial({ color: 0x00ccff }); // bright cyan
-  const _xgunScreenMat = new THREE.MeshBasicMaterial({ color: 0x0077cc }); // blue display
-  // Accent/screen detection by original GLB material name (checked before replacement).
-  const _ACCENT_KEYS  = ['luz'];
-  const _SCREEN_KEYS  = ['pantalla', 'craneo'];
+  // Body: full PBR texture set (colour/normal/metalness/roughness/ao).
+  // Accents/screen: MeshBasicMaterial (unlit) so they always glow.
+  const _xgunAccentMat = new THREE.MeshBasicMaterial({ color: 0x00ccff });
+  const _xgunScreenMat = new THREE.MeshBasicMaterial({ color: 0x0077cc });
+  const _ACCENT_KEYS   = ['luz'];
+  const _SCREEN_KEYS   = ['pantalla', 'craneo'];
 
-  // Dedicated gun lights — attached to viewWeapon so they move with camera.
-  // MeshStandardMaterial needs real lights; these are close enough that falloff
-  // keeps them from noticeably affecting the game world.
-  const _gunKeyLight = new THREE.PointLight(0xe8f0ff, 8.0, 1.4, 2); // cool-white key, upper-left
+  // Load PBR textures for the body then build the material.
+  const _tl = new THREE.TextureLoader();
+  const _xgunBodyMat = new THREE.MeshStandardMaterial({
+    color:    0x141518,   // dark tint over the colour map
+    metalness: 1.0,       // driven fully by metalnessMap
+    roughness: 1.0,       // driven fully by roughnessMap
+    aoMapIntensity: 2.5,
+  });
+  Promise.all([
+    _tl.loadAsync('assets/models/gun_color.jpg'),
+    _tl.loadAsync('assets/models/gun_normal.png'),
+    _tl.loadAsync('assets/models/gun_metalness.jpg'),
+    _tl.loadAsync('assets/models/gun_roughness.jpg'),
+    _tl.loadAsync('assets/models/gun_ao.jpg'),
+  ]).then(([colorMap, normalMap, metalnessMap, roughnessMap, aoMap]) => {
+    for (const t of [colorMap, normalMap, metalnessMap, roughnessMap, aoMap]) {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(1, 1);
+    }
+    _xgunBodyMat.map          = colorMap;
+    _xgunBodyMat.normalMap    = normalMap;
+    _xgunBodyMat.metalnessMap = metalnessMap;
+    _xgunBodyMat.roughnessMap = roughnessMap;
+    _xgunBodyMat.aoMap        = aoMap;
+    _xgunBodyMat.needsUpdate  = true;
+  });
+
+  // Dedicated gun lights — attached to viewWeapon, move with camera.
+  // Intensities kept low so falloff doesn't visibly affect the game world.
+  const _gunKeyLight = new THREE.PointLight(0xe8f0ff, 2.8, 1.4, 2); // cool-white key, upper-left
   _gunKeyLight.position.set(-0.30, 0.25, -0.05);
   viewWeapon.add(_gunKeyLight);
-  const _gunFillLight = new THREE.PointLight(0x8899bb, 2.0, 1.2, 2); // blue-grey fill, right
+  const _gunFillLight = new THREE.PointLight(0x8899bb, 0.7, 1.2, 2); // blue-grey fill, right
   _gunFillLight.position.set(0.25, 0.0, -0.15);
   viewWeapon.add(_gunFillLight);
-  const _gunRimLight = new THREE.PointLight(0x445577, 1.5, 0.9, 2);  // dark-blue rim, below-back
+  const _gunRimLight = new THREE.PointLight(0x445577, 0.5, 0.9, 2);  // dark-blue rim, below-back
   _gunRimLight.position.set(0.10, -0.20, 0.20);
   viewWeapon.add(_gunRimLight);
 
