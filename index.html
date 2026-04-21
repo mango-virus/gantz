@@ -16,9 +16,23 @@
 </div>
 <div id="hint">WASD / arrows — walk · E — interact · T / Enter — chat · <a href="/3d.html" style="color:#c8142b;">[3D preview]</a></div>
 <div id="chat">
-  <div id="chat-log"></div>
+  <div id="chat-header">
+    <span id="chat-title">◈ CHATBOX</span>
+    <span id="chat-hunters-count"></span>
+    <span id="chat-esc-hint">ESC</span>
+  </div>
+  <div id="chat-body">
+    <div id="chat-log-wrap">
+      <div id="chat-log"></div>
+    </div>
+    <div id="chat-hunters">
+      <div id="chat-hunters-hdr">HUNTERS</div>
+      <div id="chat-hunters-list"></div>
+    </div>
+  </div>
   <form id="chat-form" autocomplete="off" style="display: none;">
-    <input id="chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" />
+    <input id="chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Send a message…" />
+    <button type="submit" id="chat-send-btn">SEND</button>
   </form>
 </div>
 <div id="gantz-menu" style="display: none;">

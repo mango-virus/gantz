@@ -1,11 +1,15 @@
 import { isInputSuspended } from '../engine/input.js';
 
 export function createChatUI({ onSend, onSuspendInput }) {
-  const chatEl  = document.getElementById('chat');
-  const logEl   = document.getElementById('chat-log');
-  const formEl  = document.getElementById('chat-form');
-  const inputEl = document.getElementById('chat-input');
-  const MAX = 20;
+  const chatEl      = document.getElementById('chat');
+  const logWrapEl   = document.getElementById('chat-log-wrap');
+  const logEl       = document.getElementById('chat-log');
+  const formEl      = document.getElementById('chat-form');
+  const inputEl     = document.getElementById('chat-input');
+  const huntersEl   = document.getElementById('chat-hunters-list');
+  const countEl     = document.getElementById('chat-hunters-count');
+
+  const MAX = 40;
   let open = false;
   let userScrolled = false;
   let fadeTimer = null;
@@ -21,26 +25,42 @@ export function createChatUI({ onSend, onSuspendInput }) {
     chatEl.style.opacity = '1';
   }
 
-  // Start faded until first message
+  // Start hidden
   chatEl.style.opacity = '0';
 
-  logEl.addEventListener('scroll', () => {
-    const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 10;
+  // Track manual scroll so auto-scroll to bottom doesn't fight the user
+  logWrapEl.addEventListener('scroll', () => {
+    const atBottom = logWrapEl.scrollHeight - logWrapEl.scrollTop - logWrapEl.clientHeight < 10;
     userScrolled = !atBottom;
   });
+
+  // Mouse-wheel scrolling through history (active whenever chat is open)
+  logWrapEl.addEventListener('wheel', e => {
+    if (!open) return;
+    e.stopPropagation();
+  }, { passive: true });
+
+  function scrollToBottom() {
+    logWrapEl.scrollTop = logWrapEl.scrollHeight;
+  }
 
   function openChat() {
     if (open) return;
     open = true;
     showChat();
-    formEl.style.display = 'block';
+    chatEl.classList.add('chat-open');
+    formEl.style.display = 'flex';
     inputEl.focus();
     onSuspendInput(true);
+    // Jump to latest messages on open
+    userScrolled = false;
+    scrollToBottom();
   }
 
   function closeChat() {
     if (!open) return;
     open = false;
+    chatEl.classList.remove('chat-open');
     formEl.style.display = 'none';
     inputEl.value = '';
     inputEl.blur();
@@ -59,10 +79,7 @@ export function createChatUI({ onSend, onSuspendInput }) {
   });
 
   inputEl.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeChat();
-    }
+    if (e.key === 'Escape') { e.preventDefault(); closeChat(); }
   });
 
   formEl.addEventListener('submit', e => {
@@ -72,45 +89,67 @@ export function createChatUI({ onSend, onSuspendInput }) {
     closeChat();
   });
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    })[c]);
+  function timestamp() {
+    const d = new Date();
+    const h = String(d.getHours()).padStart(2, '0');
+    const m = String(d.getMinutes()).padStart(2, '0');
+    return `[${h}:${m}]`;
+  }
+
+  function appendMsg(el) {
+    logEl.appendChild(el);
+    while (logEl.children.length > MAX) logEl.removeChild(logEl.firstChild);
+    if (!userScrolled) scrollToBottom();
+    showChat();
+    if (!open) scheduleFade();
   }
 
   function add(msg) {
-    const div = document.createElement('div');
-    div.className = 'chat-msg';
+    const row = document.createElement('div');
+    row.className = 'chat-msg';
+
+    const ts = document.createElement('span');
+    ts.className = 'chat-ts';
+    ts.textContent = timestamp();
+
     const u = document.createElement('span');
-    u.className = 'u';
-    u.style.color = '#' + (msg.color || 'c8142b');
-    u.textContent = msg.username;
-    div.appendChild(u);
-    div.appendChild(document.createTextNode(': '));
-    div.appendChild(document.createTextNode(msg.text));
-    logEl.appendChild(div);
+    u.className = 'chat-u';
+    u.style.color = '#' + String(msg.color || 'c8142b').replace('#', '');
+    u.textContent = msg.username || 'Hunter';
 
-    while (logEl.children.length > MAX) logEl.removeChild(logEl.firstChild);
-
-    if (!userScrolled) logEl.scrollTop = logEl.scrollHeight;
-
-    showChat();
-    scheduleFade();
+    row.appendChild(ts);
+    row.appendChild(u);
+    row.appendChild(document.createTextNode(': ' + (msg.text || '')));
+    appendMsg(row);
   }
 
   function addSystem(text) {
-    const div = document.createElement('div');
-    div.className = 'chat-msg chat-system';
-    div.textContent = text;
-    logEl.appendChild(div);
-
-    while (logEl.children.length > MAX) logEl.removeChild(logEl.firstChild);
-
-    if (!userScrolled) logEl.scrollTop = logEl.scrollHeight;
-
-    showChat();
-    scheduleFade();
+    const row = document.createElement('div');
+    row.className = 'chat-msg chat-system';
+    const ts = document.createElement('span');
+    ts.className = 'chat-ts';
+    ts.textContent = timestamp();
+    row.appendChild(ts);
+    row.appendChild(document.createTextNode(text || ''));
+    appendMsg(row);
   }
 
-  return { add, addSystem, openChat, closeChat, isOpen: () => open };
+  // hunters: array of { name, color, local }
+  function updateHunters(hunters) {
+    huntersEl.innerHTML = '';
+    for (const h of hunters) {
+      const div = document.createElement('div');
+      div.className = 'chat-hunter' + (h.local ? ' chat-hunter-local' : '');
+      div.style.color = '#' + String(h.color || '00e05a').replace('#', '');
+      div.textContent = '▸ ' + (h.name || 'Hunter');
+      div.title = h.name || 'Hunter';
+      huntersEl.appendChild(div);
+    }
+    if (countEl) {
+      const n = hunters.length;
+      countEl.textContent = n + (n === 1 ? ' HUNTER' : ' HUNTERS');
+    }
+  }
+
+  return { add, addSystem, openChat, closeChat, isOpen: () => open, updateHunters };
 }

@@ -121,80 +121,203 @@ html, body {
   50%      { opacity: 1; }
 }
 
+/* ── Chat box — MMORPG panel ─────────────────────────────────────── */
 #chat {
   position: fixed;
-  bottom: 0.75rem;
-  left: 0.75rem;
-  width: min(360px, 40vw);
+  bottom: 1rem;
+  left: 1rem;
+  width: 360px;
   z-index: 10;
   pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.35rem;
-  opacity: 1;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.80rem;
+  line-height: 1.45;
   transition: opacity 1.5s ease;
+  position: relative;  /* needed for scanline pseudo-element */
+  position: fixed;
 }
+
+/* Panel chrome — hidden when chat is closed */
+#chat-header { display: none; }
+#chat-hunters { display: none; }
+
+#chat-body {
+  display: flex;
+  flex-direction: row;
+}
+
+/* Scrollable message area */
+#chat-log-wrap {
+  flex: 1;
+  max-height: 28vh;
+  overflow-y: auto;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,224,90,0.35) rgba(0,0,0,0.4);
+}
+#chat-log-wrap::-webkit-scrollbar { width: 4px; }
+#chat-log-wrap::-webkit-scrollbar-track { background: rgba(0,0,0,0.4); }
+#chat-log-wrap::-webkit-scrollbar-thumb { background: rgba(0,224,90,0.4); border-radius: 2px; }
 
 #chat-log {
   display: flex;
   flex-direction: column;
-  gap: 0.18rem;
-  max-height: 35vh;
-  overflow-y: auto;
-  font-size: 1rem;
-  line-height: 1.4;
-  align-items: flex-start;
-  pointer-events: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(200,20,43,0.4) transparent;
+  gap: 0.10rem;
+  padding: 0.3rem 0.4rem;
 }
 
-#chat-log::-webkit-scrollbar { width: 3px; }
-#chat-log::-webkit-scrollbar-track { background: transparent; }
-#chat-log::-webkit-scrollbar-thumb { background: rgba(200,20,43,0.4); border-radius: 2px; }
-
+/* Individual messages */
 .chat-msg {
-  background: rgba(8, 10, 18, 0.78);
+  color: var(--ink);
+  padding: 0.14rem 0.35rem;
   border-left: 2px solid var(--accent);
-  padding: 0.22rem 0.55rem;
-  border-radius: 0 4px 4px 0;
-  word-wrap: break-word;
-  max-width: 100%;
+  background: rgba(4, 6, 14, 0.82);
+  word-break: break-word;
 }
-
-.chat-msg .u {
+.chat-ts {
+  color: #445544;
+  font-size: 0.75em;
+  margin-right: 0.3rem;
+}
+.chat-u {
   font-weight: 700;
-  margin-right: 0.25rem;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
 }
-
 .chat-msg.chat-system {
-  border-left-color: #555;
-  color: #aaa;
+  border-left-color: var(--g-dim);
+  color: var(--g-dim);
   font-style: italic;
 }
 
+/* ── Open state ─────────────────────────────────────────────────── */
+#chat.chat-open {
+  width: 500px;
+  background: rgba(0, 3, 10, 0.96);
+  border: 1px solid var(--g);
+  box-shadow: 0 0 28px var(--g-glow), inset 0 0 50px rgba(0,0,0,0.65);
+  pointer-events: auto;
+  opacity: 1 !important;
+  transition: opacity 0s;
+}
+
+/* CRT scanlines overlay when open */
+#chat.chat-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent, transparent 3px,
+    rgba(0,0,0,0.13) 3px, rgba(0,0,0,0.13) 4px
+  );
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* Header bar */
+#chat.chat-open #chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.28rem 0.65rem;
+  border-bottom: 1px solid var(--g-dim);
+  background: rgba(0, 35, 15, 0.5);
+  color: var(--g-bright);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  position: relative;
+  z-index: 1;
+}
+#chat-hunters-count { color: var(--g); }
+#chat-esc-hint      { color: var(--g-dim); font-size: 0.68em; }
+
+/* Body: log + hunters sidebar */
+#chat.chat-open #chat-body {
+  position: relative;
+  z-index: 1;
+}
+#chat.chat-open #chat-log-wrap {
+  max-height: 36vh;
+  min-height: 120px;
+}
+
+/* Hunters sidebar */
+#chat.chat-open #chat-hunters {
+  display: flex;
+  flex-direction: column;
+  width: 138px;
+  min-width: 138px;
+  border-left: 1px solid var(--g-dim);
+}
+#chat-hunters-hdr {
+  padding: 0.28rem 0.5rem;
+  border-bottom: 1px solid var(--g-dim);
+  color: var(--g-bright);
+  font-size: 0.70rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  background: rgba(0, 35, 15, 0.5);
+}
+#chat-hunters-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.3rem 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.20rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,224,90,0.3) transparent;
+}
+.chat-hunter {
+  font-size: 0.73rem;
+  padding: 0.10rem 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-hunter-local {
+  color: var(--g-bright) !important;
+  font-weight: 700;
+}
+
+/* Input form */
 #chat-form {
   pointer-events: auto;
   margin: 0;
+  display: none;
+  flex-direction: row;
+  border-top: 1px solid var(--g-dim);
+  position: relative;
+  z-index: 1;
 }
-
 #chat-input {
-  width: 100%;
-  background: rgba(5, 6, 10, 0.92);
-  border: 1px solid var(--accent);
-  color: var(--ink);
+  flex: 1;
+  background: rgba(0, 8, 4, 0.97);
+  border: none;
+  border-right: 1px solid var(--g-dim);
+  color: var(--g);
   font-family: inherit;
-  font-size: 0.85rem;
-  padding: 0.4rem 0.6rem;
+  font-size: 0.78rem;
+  padding: 0.38rem 0.6rem;
   outline: none;
-  border-radius: 2px;
+  caret-color: var(--g);
 }
-
-#chat-input:focus {
-  box-shadow: 0 0 10px rgba(200,20,43,0.55);
+#chat-input::placeholder { color: var(--g-dim); opacity: 1; }
+#chat-input:focus        { background: rgba(0, 14, 7, 0.97); }
+#chat-send-btn {
+  background: transparent;
+  border: none;
+  color: var(--g);
+  font-family: inherit;
+  font-size: 0.70rem;
+  letter-spacing: 0.14em;
+  padding: 0.38rem 0.75rem;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background 80ms, color 80ms;
 }
+#chat-send-btn:hover { background: var(--g); color: #000; }
 
 
 /* ── Gantz menu — CRT terminal aesthetic ─────────────────────────── */

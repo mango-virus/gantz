@@ -4014,6 +4014,15 @@ function updateWorldHtmlOverlays() {
   } else {
     spectatePromptEl.style.display = 'none';
   }
+
+  // Hunters list — local player first, then connected peers
+  const _hunters = [
+    { name: player.username || 'Hunter', color: String(player.color || 'c8142b').replace('#', ''), local: true },
+    ...[...net.peers.values()]
+      .filter(p => p.username)
+      .map(p => ({ name: p.username, color: String(p.color || 'c8142b').replace('#', ''), local: false })),
+  ];
+  chat.updateHunters(_hunters);
 }
 
 const toastEl = document.getElementById('toast-log');
