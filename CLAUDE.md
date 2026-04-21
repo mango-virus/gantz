@@ -158,6 +158,12 @@ don't stack or lock up.
 - **Mouse aim in 3D = camera forward vector projected to XZ** (`getCameraForwardXZ`).
   `tryFire` uses this, not ground raycast.
 - **Movement in 3D is camera-relative** — W=forward, A/D strafe, based on yaw.
+- **Viewmodel (scene3d.js)**: `viewWeapon` group is `camera.add`'d. Hip→ADS lerp driven
+  by `_adsT` (smoothstepped → `_adsE`). `triggerMuzzleFlash()` sets `_barrelExtend = 1`
+  for the panel fire spike. Panel mesh refs (`_panelL/R/B` = Object_7/8/6) are lazily
+  resolved in the render loop after the GLB loads. Muzzle flash sphere radius 0.09.
+- **Gantz HUD screen** (`_scrCanvas` 256×128): drawn each frame in `_drawGantzScreen`.
+  Safe UV region: X 59–211, Y 4–31. `_scrTex.needsUpdate = true` every frame.
 - **Local player mesh is hidden** in first-person mode (scene3d checks
   `state.firstPerson`). Other players still see you.
 - **Room switching**: scene3d tracks `currentRoomKind` ('lobby' | 'mission') and
@@ -219,6 +225,15 @@ location.reload();
 - Randomized alien names (65-name pool, seeded per mission, deterministic across peers)
 - Detailed canvas portrait system in briefing (`drawAlienPortrait` — 5 body plans,
   dossier aesthetic with Gantz scan UI, threat bar, per-spec colors/features)
+- First-person X-Gun viewmodel: ADS transition, head bob, muzzle flash, recoil spring
+- ADS muzzle flash centred at barrel tip (local X −0.188); FOV narrows 72°→55° in ADS
+- ADS recoil scaled 50% at full aim (`adsScale = 1 − 0.5 * _adsT`)
+- Barrel panel fire animation: Object_7/8/6 splay open on shoot (smoothstep spike,
+  spring-decays at dt×6); panel refs resolved lazily after GLB load
+- Gantz HUD canvas texture on `craneo_pantalla` mesh: TARGETS / POINTS / WEAPON
+  readout, neon glow (`shadowBlur`), sweep line gradient, glitch flicker effect
+  (safe draw region X 59–211, Y 4–31 derived from UV bounds U 0.204–0.839)
+- Shot tracers removed (local + network); new shooting effect TBD
 
 **Disabled (re-enable when ready):**
 - NPC recruits (Mika/Rina/Nori/Hiro) — `const npcs = []` in game.js; roster
@@ -234,6 +249,8 @@ location.reload();
 - Audio (user is providing files).
 - Additional mission themes beyond shopping street (residential, park, subway, etc).
 - Dedicated crosshair + damage indicator + reload animations.
+- New shooting effect to replace removed tracers.
+- Remove gun viewmodel from lobby once all gun work is done (currently visible for testing).
 
 ---
 
