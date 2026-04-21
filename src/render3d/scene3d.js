@@ -156,19 +156,29 @@ export function createScene3d({ canvas }) {
     try {
       const gun = gltf.scene;
       // Minimal setup — no bounding box, no rotation, just add it and see
-      gun.scale.setScalar(0.5);
+      // Compute bounding box at natural scale (scale=1, no offset, no rotation)
+      // so we can auto-fit regardless of where the Blender origin is.
+      gun.scale.setScalar(1);
+      gun.position.set(0, 0, 0);
+      gun.rotation.set(0, 0, 0);
+      gun.updateMatrixWorld(true);
+      const _b  = new THREE.Box3().setFromObject(gun);
+      const _ct = _b.getCenter(new THREE.Vector3());
+      const _sz = _b.getSize(new THREE.Vector3());
+      const _md = Math.max(_sz.x, _sz.y, _sz.z);
+      const _s  = _md > 0 ? 0.45 / _md : 1; // fit longest axis to 0.45 m
+      gun.scale.setScalar(_s);
+      gun.position.set(-_ct.x * _s, -_ct.y * _s, -_ct.z * _s);
+      gun.rotation.set(0.08, -Math.PI / 2, -0.18);
       gun.frustumCulled = false;
-      let _meshCount = 0;
+      console.log(`[scene3d] X-Gun natural size: ${_sz.x.toFixed(1)} x ${_sz.y.toFixed(1)} x ${_sz.z.toFixed(1)}, autoScale: ${_s.toFixed(5)}, centre: ${_ct.x.toFixed(1)},${_ct.y.toFixed(1)},${_ct.z.toFixed(1)}`);
       gun.traverse(node => {
-        console.log('[scene3d] node:', node.type, '|', node.name, '| isMesh:', node.isMesh);
         if (!node.isMesh) return;
-        _meshCount++;
         node.frustumCulled = false;
         node.material = _xgunBodyMat;
       });
       viewWeapon.add(gun);
       viewWeapon.remove(_diagBox);
-      console.log('[scene3d] X-Gun added. meshCount:', _meshCount);
     } catch (e) {
       console.error('[scene3d] X-Gun setup error:', e);
       // placeholder stays orange so we know setup failed
