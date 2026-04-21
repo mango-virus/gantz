@@ -135,28 +135,26 @@ export function createScene3d({ canvas }) {
   muzzleLight.position.copy(muzzle.position);
   viewWeapon.add(muzzleLight);
 
-  // X-Gun GLB — bright test colours while diagnosing visibility
-  const _xgunBodyMat = new THREE.MeshBasicMaterial({
-    color: 0xff6600, side: THREE.DoubleSide,
+  // X-Gun final materials — gloss-black body, glowing cyan accents.
+  const _xgunBodyMat = new THREE.MeshStandardMaterial({
+    color: 0x0d0d14,
+    metalness: 0.85,
+    roughness: 0.15,
   });
-  const _xgunAccentMat = new THREE.MeshBasicMaterial({
-    color: 0x00eeff, side: THREE.DoubleSide,
+  const _xgunAccentMat = new THREE.MeshStandardMaterial({
+    color: 0x001a33,
+    emissive: new THREE.Color(0x00aaff),
+    emissiveIntensity: 2.2,
+    metalness: 0.5,
+    roughness: 0.3,
   });
+  // Accent detection: check original GLB material name or non-zero emissive.
   const _ACCENT_KEYS = ['glow', 'light', 'emit', 'led', 'neon', 'blue', 'ring',
                         'accent', 'lens', 'orb', 'circle', 'line', 'stripe'];
-
-  // DIAGNOSTIC placeholder — bright orange box, visible immediately.
-  // Replaced by GLB on success; turns green on failure.
-  const _diagMat = new THREE.MeshBasicMaterial({ color: 0xff6600 });
-  const _diagBox = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.38), _diagMat);
-  _diagBox.frustumCulled = false;
-  _diagBox.position.set(0, 0.06, -0.10);
-  viewWeapon.add(_diagBox);
 
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
     try {
       const gun = gltf.scene;
-      // Minimal setup — no bounding box, no rotation, just add it and see
       // Compute bbox at natural scale/rotation to find geometry centre & size.
       gun.scale.setScalar(1);
       gun.position.set(0, 0, 0);
@@ -167,14 +165,17 @@ export function createScene3d({ canvas }) {
       const _sz = _b.getSize(new THREE.Vector3());
       const _md = Math.max(_sz.x, _sz.y, _sz.z);
       const _s  = _md > 0 ? 0.32 / _md : 1;
-      // Translate geometry vertices directly so centre lands at group origin.
-      // This avoids the position-vs-rotation interaction that pushed geometry behind camera.
+      // Translate geometry vertices so centre is at origin (avoids position+rotation interaction).
       gun.traverse(node => {
         if (!node.isMesh || !node.geometry) return;
         node.geometry = node.geometry.clone();
         node.geometry.translate(-_ct.x, -_ct.y, -_ct.z);
         node.frustumCulled = false;
-        node.material = _xgunBodyMat;
+        // Use original GLB material name or emissive to pick accent vs body mat.
+        const matName = (node.material?.name || '').toLowerCase();
+        const hasEmissive = node.material?.emissive && node.material.emissive.getHex() > 0x050505;
+        const isAccent = hasEmissive || _ACCENT_KEYS.some(k => matName.includes(k));
+        node.material = isAccent ? _xgunAccentMat : _xgunBodyMat;
       });
       gun.scale.setScalar(_s);
       gun.position.set(0, 0, 0); // centre is now at origin — no offset needed
@@ -183,13 +184,10 @@ export function createScene3d({ canvas }) {
       gun.frustumCulled = false;
       console.log(`[scene3d] X-Gun size: ${_sz.x.toFixed(2)}x${_sz.y.toFixed(2)}x${_sz.z.toFixed(2)} scale:${_s.toFixed(3)} ctr:${_ct.x.toFixed(2)},${_ct.y.toFixed(2)},${_ct.z.toFixed(2)}`);
       viewWeapon.add(gun);
-      viewWeapon.remove(_diagBox);
     } catch (e) {
       console.error('[scene3d] X-Gun setup error:', e);
-      // placeholder stays orange so we know setup failed
     }
   }, undefined, err => {
-    _diagMat.color.set(0x00ff00);
     console.warn('[scene3d] X-Gun GLB failed to load:', err);
   });
 
