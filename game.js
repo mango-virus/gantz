@@ -60,7 +60,7 @@ const _doorOpen = [false, false, false, false];  // toggled by E
 // Trigger position in game coords (x=3D-x, y=3D-z): hallway far wall at y≈12.15.
 const _PORTAL_POS    = { x: 0, y: 11.6 };
 const _PORTAL_RADIUS = 1.6;
-let   _portalBusy    = false; // prevent double-trigger while redirect loads
+let   _portalBusy    = false; // prevent double-trigger before redirect navigates away
 
 // Door colliders — mutable AABBs, tier toggled hard/decorative with door state.
 // Wall AABB centre positions: left wall x = B.minX - t/2 = -5.25,
@@ -4408,22 +4408,10 @@ function update(dt) {
     const dp = Math.hypot(player.x - _PORTAL_POS.x, player.y - _PORTAL_POS.y);
     if (dp < _PORTAL_RADIUS && wasPressed('e')) {
       _portalBusy = true;
-      portalPromptEl.textContent = '[E] Connecting…';
-      Portal.pickPortalTarget().then(target => {
-        if (target) {
-          Portal.sendPlayerThroughPortal(target.url, {
-            username: player.username || 'Hunter',
-            color:    (player.color || 'c8142b').replace('#', ''),
-            speed:    5,
-          });
-        } else {
-          // No other games found — reset so player can try again
-          _portalBusy = false;
-          toast('No other jam games found in registry', 'warn');
-        }
-      }).catch(() => {
-        _portalBusy = false;
-        toast('Portal connection failed', 'warn');
+      Portal.sendPlayerThroughPortal('https://callumhyoung.github.io/gamejam/', {
+        username: player.username || 'Hunter',
+        color:    (player.color || 'c8142b').replace('#', ''),
+        speed:    5,
       });
     }
   }
