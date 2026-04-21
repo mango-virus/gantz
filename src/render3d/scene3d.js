@@ -117,8 +117,9 @@ export function createScene3d({ canvas }) {
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
+  // Position: right of centre, low (grip off-screen), pushed back so it feels held not floating.
   const viewWeapon = new THREE.Group();
-  viewWeapon.position.set(0.28, -0.28, -0.55);
+  viewWeapon.position.set(0.46, -0.38, -0.42);
 
   // Muzzle flash — blue-white to match X-Gun energy. Positioned at barrel tip.
   const muzzle = new THREE.Mesh(
@@ -151,9 +152,9 @@ export function createScene3d({ canvas }) {
     const gun = gltf.scene;
     // Scale to hand-held size; rotate so barrel faces -Z (into screen = forward).
     // Adjust rotation.y if the gun appears backwards in-game.
-    gun.scale.set(0.22, 0.22, 0.22);
-    gun.rotation.y = Math.PI;
-    gun.position.set(0, 0, 0.1);
+    gun.scale.set(0.14, 0.14, 0.14);
+    gun.rotation.set(0.08, Math.PI, -0.18); // slight downward pitch + roll so it reads as held
+    gun.position.set(0, 0, 0.05);
 
     gun.traverse(node => {
       if (!node.isMesh) return;
@@ -717,7 +718,7 @@ export function createScene3d({ canvas }) {
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
         muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 30);
         // Recoil ease
-        viewWeapon.position.z = -0.55 + (viewWeapon.userData.recoil || 0);
+        viewWeapon.position.z = -0.42 + (viewWeapon.userData.recoil || 0);
         viewWeapon.userData.recoil = Math.max(0, (viewWeapon.userData.recoil || 0) - dt * 3);
       } else {
         viewWeapon.visible = false;
