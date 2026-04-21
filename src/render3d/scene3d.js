@@ -156,8 +156,7 @@ export function createScene3d({ canvas }) {
     try {
       const gun = gltf.scene;
       // Minimal setup — no bounding box, no rotation, just add it and see
-      // Compute bounding box at natural scale (scale=1, no offset, no rotation)
-      // so we can auto-fit regardless of where the Blender origin is.
+      // Compute bbox at natural scale/rotation to find geometry centre & size.
       gun.scale.setScalar(1);
       gun.position.set(0, 0, 0);
       gun.rotation.set(0, 0, 0);
@@ -166,17 +165,21 @@ export function createScene3d({ canvas }) {
       const _ct = _b.getCenter(new THREE.Vector3());
       const _sz = _b.getSize(new THREE.Vector3());
       const _md = Math.max(_sz.x, _sz.y, _sz.z);
-      const _s  = _md > 0 ? 0.45 / _md : 1; // fit longest axis to 0.45 m
-      gun.scale.setScalar(_s);
-      gun.position.set(-_ct.x * _s, -_ct.y * _s, -_ct.z * _s);
-      gun.rotation.set(0.08, -Math.PI / 2, -0.18);
-      gun.frustumCulled = false;
-      console.log(`[scene3d] X-Gun natural size: ${_sz.x.toFixed(1)} x ${_sz.y.toFixed(1)} x ${_sz.z.toFixed(1)}, autoScale: ${_s.toFixed(5)}, centre: ${_ct.x.toFixed(1)},${_ct.y.toFixed(1)},${_ct.z.toFixed(1)}`);
+      const _s  = _md > 0 ? 0.45 / _md : 1;
+      // Translate geometry vertices directly so centre lands at group origin.
+      // This avoids the position-vs-rotation interaction that pushed geometry behind camera.
       gun.traverse(node => {
-        if (!node.isMesh) return;
+        if (!node.isMesh || !node.geometry) return;
+        node.geometry = node.geometry.clone();
+        node.geometry.translate(-_ct.x, -_ct.y, -_ct.z);
         node.frustumCulled = false;
         node.material = _xgunBodyMat;
       });
+      gun.scale.setScalar(_s);
+      gun.position.set(0, 0, 0); // centre is now at origin — no offset needed
+      gun.rotation.set(0.08, -Math.PI / 2, -0.18);
+      gun.frustumCulled = false;
+      console.log(`[scene3d] X-Gun size: ${_sz.x.toFixed(2)}x${_sz.y.toFixed(2)}x${_sz.z.toFixed(2)} scale:${_s.toFixed(3)} ctr:${_ct.x.toFixed(2)},${_ct.y.toFixed(2)},${_ct.z.toFixed(2)}`);
       viewWeapon.add(gun);
       viewWeapon.remove(_diagBox);
     } catch (e) {
