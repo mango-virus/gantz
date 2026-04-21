@@ -3512,7 +3512,9 @@ function enterPhase(newPhase) {
       player.civiliansKilled = 0;
       teleportToMission();
     } else {
-      // Non-participant: stay in lobby, just track mission state passively
+      // Non-participant: stay in lobby, just track mission state passively.
+      // Host still spawns + broadcasts aliens so participants receive them,
+      // but the non-participant player sees the lobby room and can't interact with mission.
       if (net.isHost) {
         const comp = session.composition || ['patroller'];
         aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp);
@@ -3521,8 +3523,9 @@ function enterPhase(newPhase) {
       } else {
         aliens = [];
       }
+      civilians = []; // Non-participants don't simulate mission civilians
       tracers = [];
-      // Keep lobby colliders and position
+      // Keep lobby colliders and position — player stays where they are
       activeColliders = lobbyColliders;
     }
   } else {
@@ -3592,10 +3595,10 @@ function allHumansReady() {
 }
 
 function localIsParticipant() {
-  // Use the peer's unique selfId — PLAYER_COLOR is the same constant for every player
-  // so color-based checks always pass for everyone once anyone readied up.
-  if (!player.ready) return false;
-  return !session.participants || session.participants.includes(net.selfId);
+  // player.ready is the authoritative local gate: set when the player joins the queue,
+  // cleared on every LOBBY/DEBRIEF transition.  Avoids net.selfId race conditions
+  // (selfId can be 'local-xxx' before Trystero connects).
+  return !!player.ready;
 }
 
 function collectParticipants() {
@@ -3915,8 +3918,10 @@ const gantzPromptEl = document.getElementById('gantz-prompt');
 const spectatePromptEl = document.getElementById('spectate-prompt');
 
 function updateWorldHtmlOverlays() {
-  const inMission = session.phase === Phase.MISSION;
-  if (!inMission) {
+  // localInMission: true only when the player is physically present in the mission.
+  // Non-participants remain in the lobby even while session.phase === MISSION.
+  const localInMission = session.phase === Phase.MISSION && localIsParticipant();
+  if (!localInMission) {
     const d = Math.hypot(player.x - GANTZ_BALL.x, player.y - GANTZ_BALL.y);
     const gantzTalking = (_introStartTime !== -1 && !_introDone) || (_namePromptPhase !== 'idle' && !_namePromptDone) || (!_gantzTalkDone && !!_gantzTalkLines) || (!_gantzExitDone && _gantzExitStart !== -1);
     const countdownActive = session.readyCountdownEnd >= 0 && session.phase !== Phase.BRIEFING && session.phase !== Phase.MISSION;
@@ -3932,7 +3937,7 @@ function updateWorldHtmlOverlays() {
     gantzPromptEl.style.display = 'none';
   }
 
-  if (inMission && !player.alive) {
+  if (localInMission && !player.alive) {
     const targets = spectateTargets();
     if (targets.length > 0) {
       const t = targets[spectateIndex % targets.length];
@@ -3961,7 +3966,7 @@ const weaponHudEl = document.getElementById('weapon-hud');
 const weaponSlotEl = document.getElementById('wh-weapon');
 const weaponPointsEl = document.getElementById('wh-points');
 function updateWeaponHUD() {
-  const inMission = session.phase === Phase.MISSION;
+  const inMission = session.phase === Phase.MISSION && localIsParticipant();
   weaponHudEl.style.display = inMission ? 'flex' : 'none';
   if (inMission) {
     const slots = [player.loadout.weapon1, player.loadout.weapon2];
@@ -4027,7 +4032,7 @@ function fireRay(originX, originY, dirX, dirY, w, shooterId = net.selfId) {
 }
 
 function tryFire() {
-  if (session.phase !== Phase.MISSION || !player.alive) return;
+  if (session.phase !== Phase.MISSION || !player.alive || !localIsParticipant()) return;
   if (world.lobbyDisarmed && session.phase !== Phase.MISSION) return;
   if (fireCooldown > 0) return;
   const wid = activeWeaponId();
@@ -4092,7 +4097,7 @@ addEventListener('mousedown', (e) => {
   if (!pointerLocked) requestLockIfAllowed();
   if (menu.isOpen()) return;
   // Spectate cycling if dead in mission — cursor is visible, no lock needed
-  if (session.phase === Phase.MISSION && !player.alive) {
+  if (session.phase === Phase.MISSION && localIsParticipant() && !player.alive) {
     const targets = spectateTargets();
     if (targets.length > 0) {
       if (e.button === 0) spectateIndex = (spectateIndex + 1) % targets.length;
@@ -4164,9 +4169,14 @@ function update(dt) {
     // Alien AI (host authoritative)
     if (net.isHost && aliens.length > 0) {
       const humanTargets = [
-        player,
+        // Only include local player if they are in the mission (not a lobby spectator)
+        ...(localIsParticipant() ? [player] : []),
         ...[...net.peers.entries()]
-          .filter(([, p]) => p.alive !== false && p.x != null)
+          .filter(([id, p]) => {
+            // Only peer IDs that are mission participants
+            if (session.participants && !session.participants.includes(id)) return false;
+            return p.alive !== false && p.x != null;
+          })
           .map(([peerId, p]) => ({ id: peerId, x: p.renderX, y: p.renderY, alive: p.alive !== false })),
       ].filter(t => t.alive !== false);
       for (const a of aliens) {
@@ -4209,13 +4219,18 @@ function update(dt) {
   // advance fire cooldown
   if (fireCooldown > 0) fireCooldown -= dt;
 
+  // Only include mission entities in movers when the local player is physically in the mission.
+  // Non-participants stay in the lobby (civilians=[], aliens may exist on host but shouldn't
+  // push the lobby-positioned player).
+  const localInMissionNow = session.phase === Phase.MISSION && localIsParticipant();
   const movers = [
     player,
-    ...(session.phase === Phase.MISSION ? civilians : []),
-    ...(session.phase === Phase.MISSION ? aliens.filter(a => a.alive) : []),
+    ...(localInMissionNow ? civilians : []),
+    ...(localInMissionNow ? aliens.filter(a => a.alive) : []),
   ];
-  // Sync Gantz panel colliders with the current open progress (lobby only)
-  if (session.phase !== Phase.MISSION) {
+  // Sync Gantz panel colliders with the current open progress (lobby only — including
+  // non-participants who stay in the lobby while the mission runs elsewhere).
+  if (!localInMissionNow) {
     const t = _gantzOpenProgress > 0 ? 1 - Math.pow(1 - _gantzOpenProgress, 2) : 0;
     if (t > 0.08) {
       const d = _PANEL_SLIDE * t;
@@ -4273,10 +4288,13 @@ function update(dt) {
     }
   }
 
+  // Non-participants remain physically in the lobby even while phase === MISSION,
+  // so they should be able to interact with the Gantz ball as normal.
   const inLobbyScene =
     session.phase === Phase.LOBBY ||
     session.phase === Phase.DEBRIEF ||
-    session.phase === Phase.BRIEFING;
+    session.phase === Phase.BRIEFING ||
+    (session.phase === Phase.MISSION && !localIsParticipant());
 
   if (inLobbyScene) {
     const dBall = Math.hypot(player.x - GANTZ_BALL.x, player.y - GANTZ_BALL.y);
@@ -4293,14 +4311,14 @@ function update(dt) {
   const nowMs = Date.now(); // wall-clock ms — synchronized across peers unlike performance.now()
   hostTick(nowMs);
   updatePhaseTimers(nowMs);
-  if (session.phase === Phase.MISSION) updateMissionTargetsHUD();
+  if (session.phase === Phase.MISSION && localIsParticipant()) updateMissionTargetsHUD();
 
   net.tick(dt);
 
   const cam = renderer.getCamera();
   const k = Math.min(1, dt * 8);
   let focusX = player.x, focusY = player.y;
-  if (session.phase === Phase.MISSION && !player.alive) {
+  if (session.phase === Phase.MISSION && localIsParticipant() && !player.alive) {
     const targets = spectateTargets();
     if (targets.length > 0) {
       const t = targets[spectateIndex % targets.length];
@@ -4331,11 +4349,12 @@ function render(dt) {
   const inMission = session.phase === Phase.MISSION;
   const _now = performance.now();
 
-  // During a mission, each player is in one of two distinct zones:
-  //   • mission zone  — session.participants includes their color
-  //   • lobby zone    — not in session.participants
-  // Don't render players from the other zone so they can't be seen across the boundary.
+  // localInMission: true only when this player physically entered the mission.
+  // Non-participants keep their lobby position + lobby room even while phase === MISSION.
   const localInMission = inMission && localIsParticipant();
+
+  // Cross-zone cull: hide players who are in a different zone than the local player.
+  // If the local player is in the lobby (non-participant), hide mission players; vice versa.
   const parts = inMission ? session.participants : null; // null = all in same space
 
   const remotes = [];
@@ -4364,7 +4383,7 @@ function render(dt) {
     });
   }
 
-  const focus = (!player.alive && inMission) ? (() => {
+  const focus = (!player.alive && localInMission) ? (() => {
     const targets = spectateTargets();
     return targets[spectateIndex % Math.max(1, targets.length)] || player;
   })() : player;
@@ -4401,18 +4420,20 @@ function render(dt) {
   }
 
   scene3d.render({
-    phase: session.phase,
+    // Non-participants stay in the lobby room even while phase===MISSION globally.
+    // Pass Phase.LOBBY for them so scene3d doesn't switch to the mission room/props/weapon.
+    phase: localInMission ? session.phase : (inMission ? Phase.LOBBY : session.phase),
     missionSeed: session.missionSeed,
     missionMap,
     missionProps,
     lobbyProps: props,
-    gantzBallPos: inMission ? null : GANTZ_BALL,
+    gantzBallPos: localInMission ? null : GANTZ_BALL,
     gantzOpenProgress: _gantzOpenProgress,
     player: {
       ...player,
       suit: player.loadout?.suit && player.loadout.suit !== 'basic',
     },
-    civilians: inMission ? civilians : [],
+    civilians: localInMission ? civilians : [],
     aliens,
     remotes,
     newTracers,
