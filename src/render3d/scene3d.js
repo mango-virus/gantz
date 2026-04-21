@@ -117,9 +117,10 @@ export function createScene3d({ canvas }) {
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
-  // Position: bottom-right corner like a standard FPS hold.
+  // z=-0.65: frustum half-height ≈ 0.47m, half-width ≈ 0.84m → x=0.50, y=-0.35 sit
+  // comfortably in the lower-right quadrant without clipping outside the screen.
   const viewWeapon = new THREE.Group();
-  viewWeapon.position.set(0.46, -0.38, -0.42);
+  viewWeapon.position.set(0.50, -0.35, -0.65);
 
   // Muzzle flash — blue-white to match X-Gun energy.
   const muzzle = new THREE.Mesh(
@@ -155,8 +156,9 @@ export function createScene3d({ canvas }) {
       const id = (node.name + '|' + (node.material?.name || '')).toLowerCase();
       node.material = _ACCENT_KEYS.some(k => id.includes(k)) ? _xgunAccentMat : _xgunBodyMat;
     });
-    const gunGlow = new THREE.PointLight(0x0066ff, 0.35, 0.9, 2);
-    gunGlow.position.set(0, 0.05, -0.1);
+    // Bright fill light so the gun is visible even in dark mission environments
+    const gunGlow = new THREE.PointLight(0xffffff, 1.8, 1.5, 2);
+    gunGlow.position.set(0, 0.1, 0);
     gun.add(gunGlow);
     viewWeapon.add(gun);
   }, undefined, err => {
@@ -699,7 +701,7 @@ export function createScene3d({ canvas }) {
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
         muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 30);
         // Recoil ease
-        viewWeapon.position.z = -0.42 + (viewWeapon.userData.recoil || 0);
+        viewWeapon.position.z = -0.65 + (viewWeapon.userData.recoil || 0);
         viewWeapon.userData.recoil = Math.max(0, (viewWeapon.userData.recoil || 0) - dt * 3);
       } else {
         viewWeapon.visible = false;
