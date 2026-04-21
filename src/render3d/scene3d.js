@@ -158,14 +158,17 @@ export function createScene3d({ canvas }) {
       // Minimal setup — no bounding box, no rotation, just add it and see
       gun.scale.setScalar(0.5);
       gun.frustumCulled = false;
+      let _meshCount = 0;
       gun.traverse(node => {
+        console.log('[scene3d] node:', node.type, '|', node.name, '| isMesh:', node.isMesh);
         if (!node.isMesh) return;
+        _meshCount++;
         node.frustumCulled = false;
-        node.material = _xgunBodyMat; // bright orange MeshBasicMaterial
+        node.material = _xgunBodyMat;
       });
       viewWeapon.add(gun);
-      viewWeapon.remove(_diagBox); // remove placeholder only AFTER gun is added
-      console.log('[scene3d] X-Gun added. Children:', gun.children.length);
+      viewWeapon.remove(_diagBox);
+      console.log('[scene3d] X-Gun added. meshCount:', _meshCount);
     } catch (e) {
       console.error('[scene3d] X-Gun setup error:', e);
       // placeholder stays orange so we know setup failed
