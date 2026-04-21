@@ -229,6 +229,13 @@ export function createScene3d({ canvas }) {
   scene.add(camera); // camera must be in scene graph for child meshes to render
   viewWeapon.visible = false;
 
+  // ── ADS (Aim Down Sights) ─────────────────────────────────────────────────
+  let _adsActive = false;
+  let _adsT = 0; // 0 = hip fire, 1 = fully ADS (smoothstepped)
+  canvas.addEventListener('mousedown', e => { if (e.button === 2) _adsActive = true; });
+  canvas.addEventListener('mouseup',   e => { if (e.button === 2) _adsActive = false; });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
@@ -761,6 +768,11 @@ export function createScene3d({ canvas }) {
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
         muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 30);
 
+        // ── ADS transition ────────────────────────────────────────────────
+        _adsT += (_adsActive && viewWeapon.visible ? 1 : -1) * dt * 8;
+        _adsT = Math.max(0, Math.min(1, _adsT));
+        const _adsE = _adsT * _adsT * (3 - 2 * _adsT); // smoothstep
+
         // ── Viewmodel animation ──────────────────────────────────────────
         const wd = viewWeapon.userData;
         wd.idleTime = (wd.idleTime || 0) + dt;
@@ -772,24 +784,30 @@ export function createScene3d({ canvas }) {
         wd.recoilRot  = Math.max(0, (wd.recoilRot  || 0) - sp);
         wd.recoilRoll = (wd.recoilRoll || 0) * Math.max(0, 1 - sp * 1.2);
 
-        // Idle sway — subtle breathing motion
-        const swayX = Math.sin(wd.idleTime * 0.7) * 0.004;
-        const swayY = Math.sin(wd.idleTime * 0.4) * 0.003;
+        // Idle sway + walk bob — suppressed during ADS
+        const hipAmt  = 1 - _adsE;
+        const swayX   = Math.sin(wd.idleTime * 0.7) * 0.004 * hipAmt;
+        const swayY   = Math.sin(wd.idleTime * 0.4) * 0.003 * hipAmt;
+        const walkBob = (state.bob || 0) * 0.4 * hipAmt;
 
-        // Walk bob — piggyback on camera head-bob (state.bob is vertical amplitude)
-        const walkBob = (state.bob || 0) * 0.4;
-
+        // Lerp between hip-fire and ADS position
+        // ADS target: barrel centred on screen, raised to eye level, pulled slightly closer
         viewWeapon.position.set(
-          0.46 + swayX,
-          -0.38 + swayY + walkBob - (wd.recoilY || 0),
-          -0.55 + (wd.recoil || 0),
+          0.46 + (0.08 - 0.46) * _adsE + swayX,
+          -0.38 + (-0.18 - -0.38) * _adsE + swayY + walkBob - (wd.recoilY || 0),
+          -0.55 + (-0.42 - -0.55) * _adsE + (wd.recoil || 0),
         );
-        // Pitch barrel up + slight roll on fire, spring back to neutral
+        // Rotate gun slightly to align barrel with crosshair during ADS
         viewWeapon.rotation.set(
           -(wd.recoilRot  || 0),
-           0,
-           (wd.recoilRoll || 0),
+          -0.30 * _adsE,
+          (wd.recoilRoll || 0) * hipAmt,
         );
+
+        // FOV narrows from 72° → 50° during ADS (zoom effect)
+        const fovTarget = 72 - 22 * _adsE;
+        camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 10);
+        camera.updateProjectionMatrix();
       } else {
         viewWeapon.visible = false;
         const desired = new THREE.Vector3(focus.x, 10, focus.y + 9);
