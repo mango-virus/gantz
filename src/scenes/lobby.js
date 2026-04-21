@@ -36,14 +36,83 @@ export function buildLobbyWalls() {
   const B = LOBBY_BOUNDS;
   const t = 0.5;
   const cx = (B.minX + B.maxX) / 2;
-  const cy = (B.minY + B.maxY) / 2;
   const W = B.maxX - B.minX + 2 * t;
-  const H = B.maxY - B.minY;
+
+  // Door positions and width (must match addDoor calls in factories.js)
+  const DW  = 1.25;  // door width
+  const DH  = DW / 2;
+  // Left wall doors: game-Y positions (3D Z maps to game Y)
+  const D0Y = 5.5, D1Y = -1.5;
+  // Far/back wall doors: game-X position
+  const D2X = 0;
+
+  // Helper: create AABB segments for a wall with one or more door gaps.
+  // wallX/wallY is the wall's constant axis value (with t/2 offset already applied).
+  // isHoriz: true = wall runs along X (h is thin dimension), false = runs along Y (w is thin).
+  // segments: array of [spanStart, spanEnd] ranges for the continuous axis.
+  // Returns an array of AABB colliders with gaps cut for each door.
+  function segmentsAlongY(wallX, wallY_ignored, wallW, spanMin, spanMax, gaps) {
+    // gaps = sorted array of [gapLo, gapHi]
+    const walls = [];
+    let cursor = spanMin;
+    for (const [lo, hi] of gaps) {
+      if (cursor < lo) {
+        const h = lo - cursor;
+        walls.push({ kind: 'aabb', x: wallX, y: cursor + h / 2, w: wallW, h, tier: 'hard' });
+      }
+      cursor = hi;
+    }
+    if (cursor < spanMax) {
+      const h = spanMax - cursor;
+      walls.push({ kind: 'aabb', x: wallX, y: cursor + h / 2, w: wallW, h, tier: 'hard' });
+    }
+    return walls;
+  }
+
+  function segmentsAlongX(wallX_ignored, wallY, wallH, spanMin, spanMax, gaps) {
+    const walls = [];
+    let cursor = spanMin;
+    for (const [lo, hi] of gaps) {
+      if (cursor < lo) {
+        const w = lo - cursor;
+        walls.push({ kind: 'aabb', x: cursor + w / 2, y: wallY, w, h: wallH, tier: 'hard' });
+      }
+      cursor = hi;
+    }
+    if (cursor < spanMax) {
+      const w = spanMax - cursor;
+      walls.push({ kind: 'aabb', x: cursor + w / 2, y: wallY, w, h: wallH, tier: 'hard' });
+    }
+    return walls;
+  }
+
   return [
-    { kind: 'aabb', x: cx,             y: B.minY - t / 2, w: W, h: t, tier: 'hard' },
-    { kind: 'aabb', x: cx,             y: B.maxY + t / 2, w: W, h: t, tier: 'hard' },
-    { kind: 'aabb', x: B.minX - t / 2, y: cy,             w: t, h: H, tier: 'hard' },
-    { kind: 'aabb', x: B.maxX + t / 2, y: cy,             w: t, h: H, tier: 'hard' },
+    // Right wall — no doors, stays solid
+    { kind: 'aabb', x: B.maxX + t / 2, y: 0, w: t, h: B.maxY - B.minY, tier: 'hard' },
+
+    // Left wall — two door gaps (Door 0 at y=5.5, Door 1 at y=-1.5)
+    ...segmentsAlongY(
+      B.minX - t / 2, 0, t,
+      B.minY, B.maxY,
+      [
+        [D1Y - DH, D1Y + DH],   // Door 1 gap
+        [D0Y - DH, D0Y + DH],   // Door 0 gap
+      ],
+    ),
+
+    // Far wall (minY) — one door gap at x=0 (Door 2)
+    ...segmentsAlongX(
+      0, B.minY - t / 2, t,
+      B.minX - t, B.maxX + t,
+      [[D2X - DH, D2X + DH]],
+    ),
+
+    // Back wall (maxY) — one door gap at x=0 (Door 3)
+    ...segmentsAlongX(
+      0, B.maxY + t / 2, t,
+      B.minX - t, B.maxX + t,
+      [[D2X - DH, D2X + DH]],
+    ),
   ];
 }
 

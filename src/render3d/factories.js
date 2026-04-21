@@ -1863,15 +1863,18 @@ export function buildLobbyRoom() {
   }
 
   // Left wall (-X = -5): two doors
-  //   rotY = π/2  → door faces into the room along +X.  Open = swing inward (-Z).
+  //   rotY = π/2  → local +x = world -z; slab hinge on far-Z side.
+  //   openAngle < 0 → slab swings toward world +x (into lobby). ✓
   addDoor(-W / 2, +5.5,  Math.PI / 2, -Math.PI * 0.8);  // door 0 (Bedroom)
   addDoor(-W / 2, -1.5,  Math.PI / 2, -Math.PI * 0.8);  // door 1 (Bathroom)
 
-  // Far wall (-Z = -8): one centered door
-  addDoor(0, -H / 2, 0, Math.PI * 0.8);           // door 2 (Kitchen)
+  // Far wall (-Z = -8): rotY=0 → local = world.
+  //   openAngle < 0 → slab right side swings toward world +z (into lobby). ✓
+  addDoor(0, -H / 2, 0, -Math.PI * 0.8);          // door 2 (Kitchen)
 
-  // Back wall (+Z = +8): one door
-  addDoor(0,  H / 2, Math.PI, Math.PI * 0.8);     // door 3 (Hallway)
+  // Back wall (+Z = +8): rotY=π → local +x = world -x.
+  //   openAngle < 0 → slab right side swings toward world -z (into lobby). ✓
+  addDoor(0,  H / 2, Math.PI, -Math.PI * 0.8);    // door 3 (Hallway)
 
   // Expose door pivot array for scene3d
   group.userData.doors = _lobbyDoors;
@@ -1913,15 +1916,18 @@ export function buildLobbyRoom() {
     group.add(apl);
   }
 
-  // Adjacent rooms positioned just outside each door opening
-  //   Door 0 @ (-5, 5.5, rotY=π/2): room to the left (-X side)
-  addAdjRoom(-W / 2 - 2.0,  5.5, 4.0, 3.0, 'maxX');   // Bedroom
-  //   Door 1 @ (-5, -1.5, rotY=π/2): room to the left (-X side)
-  addAdjRoom(-W / 2 - 1.75, -1.5, 3.5, 2.5, 'maxX');   // Bathroom
-  //   Door 2 @ (0, -8, rotY=0): room beyond far wall (-Z side)
-  addAdjRoom(0, -H / 2 - 2.0, 5.0, 4.0, 'maxZ');        // Kitchen
-  //   Door 3 @ (0, +8, rotY=π): room beyond back wall (+Z side)
-  addAdjRoom(0,  H / 2 + 2.0, 5.0, 4.0, 'minZ');        // Hallway
+  // Adjacent rooms — open face must align with the lobby wall OUTER face to avoid
+  // the adj room geometry clipping into / through the lobby wall.
+  // Left wall outer X = -W/2 - WT = -5.15.  Far/back wall outer Z = ±(H/2 + WT) = ±8.15.
+  // For left-wall rooms (openSide='maxX'): cx + rw/2 = -(W/2 + WT) → cx = -(W/2 + WT) - rw/2
+  // For far-wall room  (openSide='maxZ'): cz + rd/2 = -(H/2 + WT) → cz = -(H/2 + WT) - rd/2
+  // For back-wall room (openSide='minZ'): cz - rd/2 =  (H/2 + WT) → cz =  (H/2 + WT) + rd/2
+  const RW_OUTER = W / 2 + WT;   // 5.15
+  const RH_OUTER = H / 2 + WT;   // 8.15
+  addAdjRoom(-(RW_OUTER + 2.0),  5.5, 4.0, 3.0, 'maxX');   // Bedroom  (door 0)
+  addAdjRoom(-(RW_OUTER + 1.75), -1.5, 3.5, 2.5, 'maxX');  // Bathroom (door 1)
+  addAdjRoom(0, -(RH_OUTER + 2.0), 5.0, 4.0, 'maxZ');       // Kitchen  (door 2)
+  addAdjRoom(0,  (RH_OUTER + 2.0), 5.0, 4.0, 'minZ');       // Hallway  (door 3)
 
   // ---- Structural RC pilasters ----
   // Rectangular columns protruding from walls — very visible in the reference photos.
