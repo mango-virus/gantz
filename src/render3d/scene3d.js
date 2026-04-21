@@ -510,6 +510,23 @@ export function createScene3d({ canvas }) {
       }
     }
 
+    // Animate Jam Portal shimmer (hallway back wall)
+    if (currentRoomKind === 'lobby') {
+      const ps = currentRoomGroup?.userData.portalSurface;
+      const pl = currentRoomGroup?.userData.portalLight;
+      if (ps && pl) {
+        const t  = performance.now() * 0.001;
+        // Cycle hue: cyan → violet → blue → cyan
+        const r  = 0.30 * (1 + Math.sin(t * 0.80));
+        const g  = 0.70 + 0.25 * Math.sin(t * 0.55 + 1.0);
+        const b  = 0.90 + 0.10 * Math.sin(t * 0.70 + 2.5);
+        ps.material.color.setRGB(r, g, b);
+        ps.material.opacity = 0.70 + 0.14 * Math.sin(t * 2.3);
+        pl.color.setRGB(r, g, b);
+        pl.intensity = 1.8 + 0.6 * Math.sin(t * 2.3);
+      }
+    }
+
     // Gantz ball visible when not in mission
     ensureGantzBall(state.phase !== 'MISSION');
     if (gantzBall && state.gantzBallPos) {

@@ -56,6 +56,12 @@ const _LOBBY_DOORS = [
 ];
 const _doorOpen = [false, false, false, false];  // toggled by E
 
+// Jam Portal — inside the Hallway room (door 3, back wall).
+// Trigger position in game coords (x=3D-x, y=3D-z): hallway far wall at y≈12.15.
+const _PORTAL_POS    = { x: 0, y: 11.6 };
+const _PORTAL_RADIUS = 1.6;
+let   _portalBusy    = false; // prevent double-trigger while redirect loads
+
 // Door colliders — mutable AABBs, tier toggled hard/decorative with door state.
 // Wall AABB centre positions: left wall x = B.minX - t/2 = -5.25,
 //   far wall y = B.minY - t/2 = -8.25, back wall y = B.maxY + t/2 = 8.25.
@@ -3946,6 +3952,7 @@ addEventListener('mousedown', noteActivity);
 // --- Toast log ---
 const gantzPromptEl  = document.getElementById('gantz-prompt');
 const doorPromptEl   = document.getElementById('door-prompt');
+const portalPromptEl = document.getElementById('portal-prompt');
 const spectatePromptEl = document.getElementById('spectate-prompt');
 
 function updateWorldHtmlOverlays() {
@@ -3985,6 +3992,14 @@ function updateWorldHtmlOverlays() {
     }
   } else {
     doorPromptEl.style.display = 'none';
+  }
+
+  // Portal prompt — show when near the Jam Portal in the hallway room
+  if (!localInMission && !menu.isOpen()) {
+    const dp = Math.hypot(player.x - _PORTAL_POS.x, player.y - _PORTAL_POS.y);
+    portalPromptEl.style.display = (dp < _PORTAL_RADIUS && !_portalBusy) ? 'block' : 'none';
+  } else {
+    portalPromptEl.style.display = 'none';
   }
 
   if (localInMission && !player.alive) {
@@ -4385,6 +4400,31 @@ function update(dt) {
         _doorOpen[di] = !_doorOpen[di];
         break; // consume E for this frame
       }
+    }
+  }
+
+  // ── Jam Portal interaction ───────────────────────────────────────────────────
+  if (inLobbyScene && !menu.isOpen() && !chat.isOpen?.() && !_portalBusy) {
+    const dp = Math.hypot(player.x - _PORTAL_POS.x, player.y - _PORTAL_POS.y);
+    if (dp < _PORTAL_RADIUS && wasPressed('e')) {
+      _portalBusy = true;
+      portalPromptEl.textContent = '[E] Connecting…';
+      Portal.pickPortalTarget().then(target => {
+        if (target) {
+          Portal.sendPlayerThroughPortal(target.url, {
+            username: player.username || 'Hunter',
+            color:    (player.color || 'c8142b').replace('#', ''),
+            speed:    5,
+          });
+        } else {
+          // No other games found — reset so player can try again
+          _portalBusy = false;
+          toast('No other jam games found in registry', 'warn');
+        }
+      }).catch(() => {
+        _portalBusy = false;
+        toast('Portal connection failed', 'warn');
+      });
     }
   }
 

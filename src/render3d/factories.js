@@ -2171,6 +2171,55 @@ export function buildLobbyRoom() {
   //   cz =  (RH_OUTER + rd/2) =  (8.15 + 2.0)  = +10.15
   addAdjRoom(0,  (RH_OUTER + 4.0 / 2), 5.0, 4.0, 'minZ', hallwayFloorMat);
 
+  // ---- Jam Portal (hallway back wall) ----------------------------------------
+  // Positioned on the inner face of the hallway's far (+Z) wall, centred on X.
+  // The hallway far wall is at z = RH_OUTER + 4.0 - WT/2 = 12.075 (inner face).
+  {
+    const HW_CZ   = RH_OUTER + 4.0 / 2;   // hallway centre z = 10.15
+    const HW_BZ   = HW_CZ + 4.0 / 2;      // hallway far-wall centre z = 12.15
+    const PZ      = HW_BZ - WT / 2 - 0.01; // portal plane: just inside the inner wall face
+    const PW_W    = 1.8;   // portal opening width
+    const PW_H    = 2.8;   // portal opening height
+    const PW_BOT  = 0.0;   // bottom Y (flush with floor)
+    const PW_MID  = PW_BOT + PW_H / 2;    // 1.4
+
+    // Frame — dark gunmetal bars flush against the wall
+    const FT = 0.06;  // bar thickness
+    const FD = 0.08;  // bar depth (protrusion from wall)
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x080810, roughness: 0.25, metalness: 0.92 });
+    // Horizontal bars
+    const hBar = (y) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(PW_W + FT * 2, FT, FD), frameMat);
+      m.position.set(0, y, PZ); m.castShadow = true; group.add(m);
+    };
+    hBar(PW_BOT + FT / 2);          // bottom
+    hBar(PW_BOT + PW_H - FT / 2);   // top
+    // Vertical bars
+    const vBar = (x) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(FT, PW_H, FD), frameMat);
+      m.position.set(x, PW_MID, PZ); m.castShadow = true; group.add(m);
+    };
+    vBar(-PW_W / 2 - FT / 2);  // left
+    vBar( PW_W / 2 + FT / 2);  // right
+
+    // Portal surface — animated shimmer plane; faces -Z (toward player approaching)
+    const portalSurface = new THREE.Mesh(
+      new THREE.PlaneGeometry(PW_W, PW_H),
+      new THREE.MeshBasicMaterial({ color: 0x00eeff, transparent: true, opacity: 0.82, side: THREE.FrontSide }),
+    );
+    portalSurface.rotation.y = Math.PI;   // face toward -Z (lobby direction)
+    portalSurface.position.set(0, PW_MID, PZ);
+    group.add(portalSurface);
+
+    // Glow light — pulses with portal animation
+    const portalLight = new THREE.PointLight(0x00eeff, 2.2, 7, 2);
+    portalLight.position.set(0, PW_MID, PZ - 0.5);
+    group.add(portalLight);
+
+    group.userData.portalSurface = portalSurface;
+    group.userData.portalLight   = portalLight;
+  }
+
   // ---- Structural RC pilasters ----
   // Rectangular columns protruding from walls — very visible in the reference photos.
   const pilMat = new THREE.MeshStandardMaterial({ color: WALL_C, roughness: 0.94 });
