@@ -4434,7 +4434,7 @@ function render(dt) {
       suit: player.loadout?.suit && player.loadout.suit !== 'basic',
     },
     civilians: localInMission ? civilians : [],
-    aliens,
+    aliens: localInMission ? aliens : [],
     remotes,
     newTracers,
     focus: { x: focus.x, y: focus.y },
