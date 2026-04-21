@@ -791,17 +791,16 @@ export function createScene3d({ canvas }) {
         const walkBob = (state.bob || 0) * 0.4 * hipAmt;
 
         // Lerp between hip-fire and ADS position.
-        // ADS: pull gun back (further z), raise and slightly right so barrel lines up.
+        // ADS: side-profile centred on screen, barrel aligned with crosshair.
         viewWeapon.position.set(
-          0.46 + (0.14 - 0.46) * _adsE + swayX,
-          -0.38 + (-0.22 - -0.38) * _adsE + swayY + walkBob - (wd.recoilY || 0),
-          -0.55 + (-0.62 - -0.55) * _adsE + (wd.recoil || 0),
+          0.46 + (0.1265 - 0.46) * _adsE + swayX,
+          -0.38 + (-0.31 - -0.38) * _adsE + swayY + walkBob - (wd.recoilY || 0),
+          -0.55 + (-0.45 - -0.55) * _adsE + (wd.recoil || 0),
         );
-        // Gentle rotation to bring barrel in line — less aggressive than before
         viewWeapon.rotation.set(
-          -(wd.recoilRot  || 0),
-          -0.10 * _adsE,
-          (wd.recoilRoll || 0) * hipAmt,
+          -0.15 * _adsE - (wd.recoilRot  || 0),
+          -0.35 * _adsE,
+          -0.04 * _adsE + (wd.recoilRoll || 0) * hipAmt,
         );
 
         // FOV narrows from 72° → 55° during ADS (subtle zoom)
