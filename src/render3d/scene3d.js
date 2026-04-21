@@ -755,7 +755,7 @@ export function createScene3d({ canvas }) {
         camera.rotation.y = state.yaw || 0;
         camera.rotation.x = state.pitch || 0;
         camera.rotation.z = 0;
-        viewWeapon.visible = (state.phase === 'MISSION' || state.phase === 'LOBBY') && (state.playerAlive !== false);
+        viewWeapon.visible = state.phase === 'MISSION' && (state.playerAlive !== false);
         // Muzzle flash decays every frame
         const mMat = muzzle.material;
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
