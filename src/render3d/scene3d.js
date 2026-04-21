@@ -135,22 +135,15 @@ export function createScene3d({ canvas }) {
   muzzleLight.position.copy(muzzle.position);
   viewWeapon.add(muzzleLight);
 
-  // X-Gun final materials — gloss-black body, glowing cyan accents.
-  const _xgunBodyMat = new THREE.MeshStandardMaterial({
-    color: 0x0d0d14,
-    metalness: 0.85,
-    roughness: 0.15,
-  });
-  const _xgunAccentMat = new THREE.MeshStandardMaterial({
-    color: 0x001a33,
-    emissive: new THREE.Color(0x00aaff),
-    emissiveIntensity: 2.2,
-    metalness: 0.5,
-    roughness: 0.3,
-  });
-  // Accent detection: check original GLB material name or non-zero emissive.
-  const _ACCENT_KEYS = ['glow', 'light', 'emit', 'led', 'neon', 'blue', 'ring',
-                        'accent', 'lens', 'orb', 'circle', 'line', 'stripe'];
+  // X-Gun materials — unlit (MeshBasicMaterial) so scene lighting doesn't affect them.
+  // GLB material names: M_01_base_negra (body), M_01_luz (lights), craneo_pantalla (screen).
+  const _xgunBodyMat   = new THREE.MeshBasicMaterial({ color: 0x1c1c28 }); // dark navy-black
+  const _xgunAccentMat = new THREE.MeshBasicMaterial({ color: 0x00ccff }); // bright cyan
+  const _xgunScreenMat = new THREE.MeshBasicMaterial({ color: 0x0077cc }); // deeper blue display
+  // Accent/screen detection by original GLB material name (checked before replacement).
+  // 'luz' = light panels, 'pantalla'/'craneo' = targeting display.
+  const _ACCENT_KEYS  = ['luz'];
+  const _SCREEN_KEYS  = ['pantalla', 'craneo'];
 
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
     try {
@@ -171,11 +164,11 @@ export function createScene3d({ canvas }) {
         node.geometry = node.geometry.clone();
         node.geometry.translate(-_ct.x, -_ct.y, -_ct.z);
         node.frustumCulled = false;
-        // Use original GLB material name or emissive to pick accent vs body mat.
+        // Read original GLB material name before replacing it.
         const matName = (node.material?.name || '').toLowerCase();
-        const hasEmissive = node.material?.emissive && node.material.emissive.getHex() > 0x050505;
-        const isAccent = hasEmissive || _ACCENT_KEYS.some(k => matName.includes(k));
-        node.material = isAccent ? _xgunAccentMat : _xgunBodyMat;
+        if (_ACCENT_KEYS.some(k => matName.includes(k)))       node.material = _xgunAccentMat;
+        else if (_SCREEN_KEYS.some(k => matName.includes(k)))  node.material = _xgunScreenMat;
+        else                                                    node.material = _xgunBodyMat;
       });
       gun.scale.setScalar(_s);
       gun.position.set(0, 0, 0); // centre is now at origin — no offset needed
