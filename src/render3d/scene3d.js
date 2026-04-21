@@ -153,36 +153,24 @@ export function createScene3d({ canvas }) {
   viewWeapon.add(_diagBox);
 
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
-    viewWeapon.remove(_diagBox); // GLB loaded — remove placeholder
-    const gun = gltf.scene;
-    // Auto-center: model origin may be far from geometry (Blender export issue).
-    // Compute bounding box at natural scale, then offset so geometry centre = group origin.
-    gun.updateMatrixWorld(true);
-    const _bbox = new THREE.Box3().setFromObject(gun);
-    const _bsize = _bbox.getSize(new THREE.Vector3());
-    const _bctr  = _bbox.getCenter(new THREE.Vector3());
-    const _maxDim = Math.max(_bsize.x, _bsize.y, _bsize.z);
-    const _s = _maxDim > 0 ? 0.42 / _maxDim : 1;  // scale so longest axis = 0.42 m
-    gun.scale.setScalar(_s);
-    gun.position.set(-_bctr.x * _s, -_bctr.y * _s, -_bctr.z * _s);
-    gun.rotation.set(0.08, -Math.PI / 2, -0.18);
-    gun.frustumCulled = false;
-    console.log(`[scene3d] X-Gun bbox size=${_bsize.x.toFixed(1)},${_bsize.y.toFixed(1)},${_bsize.z.toFixed(1)} scale=${_s.toFixed(4)}`);
-    gun.traverse(node => {
-      if (!node.isMesh) return;
-      node.castShadow = false;
-      node.receiveShadow = false;
-      node.frustumCulled = false;
-      const id = (node.name + '|' + (node.material?.name || '')).toLowerCase();
-      node.material = _ACCENT_KEYS.some(k => id.includes(k)) ? _xgunAccentMat : _xgunBodyMat;
-    });
-    const gunGlow = new THREE.PointLight(0xffffff, 1.8, 1.5, 2);
-    gunGlow.position.set(0, 0.1, 0);
-    gun.add(gunGlow);
-    viewWeapon.add(gun);
-    console.log('[scene3d] X-Gun GLB loaded OK');
+    try {
+      const gun = gltf.scene;
+      // Minimal setup — no bounding box, no rotation, just add it and see
+      gun.scale.setScalar(0.5);
+      gun.frustumCulled = false;
+      gun.traverse(node => {
+        if (!node.isMesh) return;
+        node.frustumCulled = false;
+        node.material = _xgunBodyMat; // bright orange MeshBasicMaterial
+      });
+      viewWeapon.add(gun);
+      viewWeapon.remove(_diagBox); // remove placeholder only AFTER gun is added
+      console.log('[scene3d] X-Gun added. Children:', gun.children.length);
+    } catch (e) {
+      console.error('[scene3d] X-Gun setup error:', e);
+      // placeholder stays orange so we know setup failed
+    }
   }, undefined, err => {
-    // GLB failed — turn placeholder green so we can see it failed
     _diagMat.color.set(0x00ff00);
     console.warn('[scene3d] X-Gun GLB failed to load:', err);
   });
