@@ -1,4 +1,5 @@
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { GLTFLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 import {
   buildHumanMesh, buildAlienMesh, buildPropMesh, buildBuildingMesh,
   buildLobbyRoom, buildMissionRoom, buildGantzBallMesh, buildTracerMesh,
@@ -116,16 +117,9 @@ export function createScene3d({ canvas }) {
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
+  // Position: bottom-right corner like a standard FPS hold.
   const viewWeapon = new THREE.Group();
-  // Dead-centre of view, close to camera — impossible to miss if rendering at all
-  viewWeapon.position.set(0, 0, -0.5);
-
-  // DEBUG: bright red box to confirm viewWeapon renders. Replace with GLB once confirmed.
-  const _debugBox = new THREE.Mesh(
-    new THREE.BoxGeometry(0.25, 0.15, 0.45),
-    new THREE.MeshBasicMaterial({ color: 0xff2200 }),
-  );
-  viewWeapon.add(_debugBox);
+  viewWeapon.position.set(0.46, -0.38, -0.42);
 
   // Muzzle flash — blue-white to match X-Gun energy.
   const muzzle = new THREE.Mesh(
@@ -137,6 +131,37 @@ export function createScene3d({ canvas }) {
   const muzzleLight = new THREE.PointLight(0x44aaff, 0, 4, 2);
   muzzleLight.position.copy(muzzle.position);
   viewWeapon.add(muzzleLight);
+
+  // X-Gun GLB — coloring: dark gloss-black body, cyan emissive accents
+  const _xgunBodyMat = new THREE.MeshStandardMaterial({
+    color: 0x0d0d14, roughness: 0.38, metalness: 0.90,
+  });
+  const _xgunAccentMat = new THREE.MeshStandardMaterial({
+    color: 0x001a33, emissive: new THREE.Color(0x00aaff),
+    emissiveIntensity: 2.4, roughness: 0.15, metalness: 0.95,
+  });
+  const _ACCENT_KEYS = ['glow', 'light', 'emit', 'led', 'neon', 'blue', 'ring',
+                        'accent', 'lens', 'orb', 'circle', 'line', 'stripe'];
+
+  new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
+    const gun = gltf.scene;
+    gun.scale.set(0.14, 0.14, 0.14);
+    gun.rotation.set(0.08, Math.PI, -0.18);
+    gun.position.set(0, 0, 0.05);
+    gun.traverse(node => {
+      if (!node.isMesh) return;
+      node.castShadow = false;
+      node.receiveShadow = false;
+      const id = (node.name + '|' + (node.material?.name || '')).toLowerCase();
+      node.material = _ACCENT_KEYS.some(k => id.includes(k)) ? _xgunAccentMat : _xgunBodyMat;
+    });
+    const gunGlow = new THREE.PointLight(0x0066ff, 0.35, 0.9, 2);
+    gunGlow.position.set(0, 0.05, -0.1);
+    gun.add(gunGlow);
+    viewWeapon.add(gun);
+  }, undefined, err => {
+    console.warn('[scene3d] X-Gun GLB failed to load:', err);
+  });
 
   camera.add(viewWeapon);
   scene.add(camera); // camera must be in scene graph for child meshes to render
