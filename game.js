@@ -3401,6 +3401,8 @@ net.onAliens((incoming) => {
 
 // --- Fire / hit / kill ---
 net.onShot((msg, peerId) => {
+  // Non-participants stay in the lobby — don't show mission tracers to them.
+  if (!localIsParticipant()) return;
   emitTracer({
     x1: msg.x1, y1: msg.y1, x2: msg.x2, y2: msg.y2,
     color: msg.color || '#ff2030', ttl: 0.18,
