@@ -117,11 +117,12 @@ export function createScene3d({ canvas }) {
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
-  // FPS viewmodel placement (camera space):
-  // x=+0.20 → right of centre; y=-0.22 → grip below centre; z=-0.55 → pushed back.
-  // Gun scale targets 0.22m longest axis so it fills ~25% of screen width — CS:GO style.
+  // FPS viewmodel placement (camera space, vertical FOV=72°):
+  // At z=-0.55: screen half-height≈0.40m, screen half-width≈0.71m (16:9).
+  // x=+0.48 → gun centre ≈ 84% right; y=-0.31 → grip near/below bottom edge.
+  // Grip clips off-screen bottom-right; barrel faces upper-center — CS:GO style.
   const viewWeapon = new THREE.Group();
-  viewWeapon.position.set(0.20, -0.22, -0.55);
+  viewWeapon.position.set(0.48, -0.31, -0.55);
 
   // Muzzle flash — blue-white to match X-Gun energy.
   const muzzle = new THREE.Mesh(
@@ -177,8 +178,8 @@ export function createScene3d({ canvas }) {
       });
       gun.scale.setScalar(_s);
       gun.position.set(0, 0, 0); // centre is now at origin — no offset needed
-      // Tilt barrel slightly down and toward center for FPS hold angle.
-      gun.rotation.set(0.15, -Math.PI / 2 + 0.25, -0.12);
+      // Barrel forward (-Z), grip hangs bottom-right. Roll slight CW so top of gun faces left.
+      gun.rotation.set(0.10, -Math.PI / 2 + 0.35, -0.20);
       gun.frustumCulled = false;
       console.log(`[scene3d] X-Gun size: ${_sz.x.toFixed(2)}x${_sz.y.toFixed(2)}x${_sz.z.toFixed(2)} scale:${_s.toFixed(3)} ctr:${_ct.x.toFixed(2)},${_ct.y.toFixed(2)},${_ct.z.toFixed(2)}`);
       viewWeapon.add(gun);
