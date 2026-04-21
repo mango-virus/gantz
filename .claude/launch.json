@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gantz",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8766", "--directory", "D:/Documents/Game Jam Code/gantz"],
+      "port": 8766
+    }
+  ]
+}
