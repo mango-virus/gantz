@@ -1864,7 +1864,7 @@ export function buildLobbyRoom() {
 
   // Left wall (-X = -5): two doors
   //   rotY = π/2  → local +x = world -z; slab hinge on far-Z side.
-  //   openAngle < 0 → slab swings toward world +x (into lobby). ✓
+  //   openAngle = -0.8π → slab swings 144° toward world +x (into lobby). ✓
   addDoor(-W / 2, +5.5,  Math.PI / 2, -Math.PI * 0.8);  // door 0 (Bedroom)
   addDoor(-W / 2, -1.5,  Math.PI / 2, -Math.PI * 0.8);  // door 1 (Bathroom)
 
@@ -1880,54 +1880,69 @@ export function buildLobbyRoom() {
   group.userData.doors = _lobbyDoors;
 
   // ---- Adjacent rooms --------------------------------------------------------
-  // Small boxed rooms visible through each doorway.
-  const adjRoomMat = new THREE.MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.95 });
-  const adjFloorMat = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.9 });
-  const adjCeilMat  = new THREE.MeshStandardMaterial({ color: 0xe0dbd2, roughness: 0.9 });
-  const WT2 = 0.12; // thin wall thickness for adjacent rooms
+  // Rooms use the same lobby materials (wallMat = cream plaster, ceilMat).
+  // Floor: warm hardwood tone matching the lobby floor colour.
+  const adjFloorMat = new THREE.MeshStandardMaterial({ color: 0xc09060, roughness: 0.84 });
+  const ADJ_FT = 0.12; // floor/ceiling slab thickness
+
+  // Open-face must sit at the lobby wall OUTER face so no room geometry clips
+  // into the lobby.  Outer faces: left X = -(W/2+WT) = -5.15, far/back Z = ±(H/2+WT) = ±8.15.
+  const RW_OUTER = W / 2 + WT;  // 5.15
+  const RH_OUTER = H / 2 + WT;  // 8.15
 
   function addAdjRoom(cx, cz, rw, rd, openSide) {
-    // cx,cz = room centre; rw = room width (X); rd = room depth (Z)
-    // openSide: 'maxX' | 'minX' | 'maxZ' | 'minZ' — which wall is open (faces lobby)
-    const ry = CEIL;
+    // cx,cz = room centre in 3D world.
+    // rw = room width (X), rd = room depth (Z).
+    // openSide: 'maxX'|'minX'|'maxZ'|'minZ' — wall facing the lobby (not built).
+    // Floor and ceiling extend by WT on the open side so they reach the lobby
+    // inner wall face, sealing the floor gap under the lobby wall thickness.
+    let fx = cx, fz = cz, frw = rw, frd = rd;
+    if (openSide === 'maxX') { frw += WT; fx -= WT / 2; }
+    if (openSide === 'minX') { frw += WT; fx += WT / 2; }
+    if (openSide === 'maxZ') { frd += WT; fz -= WT / 2; }
+    if (openSide === 'minZ') { frd += WT; fz += WT / 2; }
+
     // Floor
-    { const m = new THREE.Mesh(new THREE.BoxGeometry(rw, WT2, rd), adjFloorMat);
-      m.position.set(cx, -WT2 / 2, cz); m.receiveShadow = true; group.add(m); }
+    { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), adjFloorMat);
+      m.position.set(fx, -ADJ_FT / 2, fz); m.receiveShadow = true; group.add(m); }
     // Ceiling
-    { const m = new THREE.Mesh(new THREE.BoxGeometry(rw, WT2, rd), adjCeilMat);
-      m.position.set(cx, ry + WT2 / 2, cz); group.add(m); }
-    // Four walls — skip the open side
-    const walls = [
+    { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), ceilMat);
+      m.position.set(fx, CEIL + ADJ_FT / 2, fz); group.add(m); }
+
+    // Walls — match lobby: same wallMat (cream plaster with texture), skip open side
+    const wdefs = [
       // [geom_w, geom_h, geom_d, px, py, pz, skip_if]
-      [WT2, ry, rd, cx - rw / 2, ry / 2, cz, 'minX'],
-      [WT2, ry, rd, cx + rw / 2, ry / 2, cz, 'maxX'],
-      [rw,  ry, WT2, cx, ry / 2, cz - rd / 2, 'minZ'],
-      [rw,  ry, WT2, cx, ry / 2, cz + rd / 2, 'maxZ'],
+      [WT, CEIL, rd, cx - rw / 2, CEIL / 2, cz,        'minX'],
+      [WT, CEIL, rd, cx + rw / 2, CEIL / 2, cz,        'maxX'],
+      [rw, CEIL, WT, cx,          CEIL / 2, cz - rd / 2, 'minZ'],
+      [rw, CEIL, WT, cx,          CEIL / 2, cz + rd / 2, 'maxZ'],
     ];
-    for (const [gw, gh, gd, px, py, pz, skip] of walls) {
+    for (const [gw, gh, gd, px, py, pz, skip] of wdefs) {
       if (skip === openSide) continue;
-      const m = new THREE.Mesh(new THREE.BoxGeometry(gw, gh, gd), adjRoomMat);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(gw, gh, gd), wallMat);
       m.position.set(px, py, pz); m.castShadow = true; m.receiveShadow = true;
       group.add(m);
     }
-    // Simple pendant light
-    const apl = new THREE.PointLight(0xfff5e0, 1.4, 6, 1.8);
-    apl.position.set(cx, ry - 0.3, cz);
+
+    // Warm pendant light
+    const apl = new THREE.PointLight(0xfff5e0, 1.6, 8, 1.8);
+    apl.position.set(cx, CEIL - 0.3, cz);
     group.add(apl);
   }
 
-  // Adjacent rooms — open face must align with the lobby wall OUTER face to avoid
-  // the adj room geometry clipping into / through the lobby wall.
-  // Left wall outer X = -W/2 - WT = -5.15.  Far/back wall outer Z = ±(H/2 + WT) = ±8.15.
-  // For left-wall rooms (openSide='maxX'): cx + rw/2 = -(W/2 + WT) → cx = -(W/2 + WT) - rw/2
-  // For far-wall room  (openSide='maxZ'): cz + rd/2 = -(H/2 + WT) → cz = -(H/2 + WT) - rd/2
-  // For back-wall room (openSide='minZ'): cz - rd/2 =  (H/2 + WT) → cz =  (H/2 + WT) + rd/2
-  const RW_OUTER = W / 2 + WT;   // 5.15
-  const RH_OUTER = H / 2 + WT;   // 8.15
-  addAdjRoom(-(RW_OUTER + 2.0),  5.5, 4.0, 3.0, 'maxX');   // Bedroom  (door 0)
-  addAdjRoom(-(RW_OUTER + 1.75), -1.5, 3.5, 2.5, 'maxX');  // Bathroom (door 1)
-  addAdjRoom(0, -(RH_OUTER + 2.0), 5.0, 4.0, 'maxZ');       // Kitchen  (door 2)
-  addAdjRoom(0,  (RH_OUTER + 2.0), 5.0, 4.0, 'minZ');       // Hallway  (door 3)
+  // Room sizes and positions — must match adj room colliders in lobby.js.
+  // Bedroom  (door 0 at z=+5.5, left wall): rw=5.5, rd=3.0
+  //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.75) = -7.9
+  addAdjRoom(-(RW_OUTER + 5.5 / 2),  5.5, 5.5, 3.0, 'maxX');
+  // Bathroom (door 1 at z=-1.5, left wall): rw=5.0, rd=2.5
+  //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.5)  = -7.65
+  addAdjRoom(-(RW_OUTER + 5.0 / 2), -1.5, 5.0, 2.5, 'maxX');
+  // Kitchen  (door 2 at x=0, far wall): rw=5.0, rd=4.0
+  //   cz = -(RH_OUTER + rd/2) = -(8.15 + 2.0)  = -10.15
+  addAdjRoom(0, -(RH_OUTER + 4.0 / 2), 5.0, 4.0, 'maxZ');
+  // Hallway  (door 3 at x=0, back wall): rw=5.0, rd=4.0
+  //   cz =  (RH_OUTER + rd/2) =  (8.15 + 2.0)  = +10.15
+  addAdjRoom(0,  (RH_OUTER + 4.0 / 2), 5.0, 4.0, 'minZ');
 
   // ---- Structural RC pilasters ----
   // Rectangular columns protruding from walls — very visible in the reference photos.

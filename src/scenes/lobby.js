@@ -86,6 +86,36 @@ export function buildLobbyWalls() {
     return walls;
   }
 
+  // Adjacent room wall positions — must match addAdjRoom calls in factories.js.
+  // Game coords: x = 3D x, y = 3D z.  WT3D = lobby 3D wall thickness (0.15 m).
+  const WT3D   = 0.15;
+  const LW_OUT = B.minX - WT3D;  // left wall outer face  (-5.15)
+  const FW_OUT = B.minY - WT3D;  // far  wall outer face  (-8.15)
+  const BW_OUT = B.maxY + WT3D;  // back wall outer face  (+8.15)
+  const WA     = 0.3;            // adj-room wall AABB thickness
+
+  // Bedroom (door 0, rw=5.5, rd=3.0, cz=5.5):  x∈[-10.65, -5.15]  y∈[4.0, 7.0]
+  const D0_cx = LW_OUT - 5.5 / 2;   // -7.9
+  const D0_xf = D0_cx - 5.5 / 2;    // -10.65 (far wall x)
+  const D0_cx_lat = (D0_xf + B.minX) / 2;  // lateral wall centre x, extended to lobby inner face
+  const D0_lat_w  = B.minX - D0_xf;         // lateral wall width
+
+  // Bathroom (door 1, rw=5.0, rd=2.5, cz=-1.5): x∈[-10.15, -5.15]  y∈[-2.75, -0.25]
+  const D1_cx = LW_OUT - 5.0 / 2;   // -7.65
+  const D1_xf = D1_cx - 5.0 / 2;    // -10.15
+  const D1_cx_lat = (D1_xf + B.minX) / 2;
+  const D1_lat_w  = B.minX - D1_xf;
+
+  // Kitchen (door 2, rw=5.0, rd=4.0, cx=0):    x∈[-2.5, 2.5]   y∈[-12.15, -8.15]
+  const D2_zf = FW_OUT - 4.0 / 2;   // -10.15 (far wall z = game-y)
+  const D2_cy_lat = (D2_zf - 4.0 / 2 + B.minY) / 2;  // lateral wall centre y
+  const D2_lat_h  = B.minY - (D2_zf - 4.0 / 2);
+
+  // Hallway  (door 3, rw=5.0, rd=4.0, cx=0):   x∈[-2.5, 2.5]   y∈[+8.15, +12.15]
+  const D3_zf = BW_OUT + 4.0 / 2;   // +10.15 (far wall z)
+  const D3_cy_lat = (D3_zf + 4.0 / 2 + B.maxY) / 2;
+  const D3_lat_h  = (D3_zf + 4.0 / 2) - B.maxY;
+
   return [
     // Right wall — no doors, stays solid
     { kind: 'aabb', x: B.maxX + t / 2, y: 0, w: t, h: B.maxY - B.minY, tier: 'hard' },
@@ -113,6 +143,27 @@ export function buildLobbyWalls() {
       B.minX - t, B.maxX + t,
       [[D2X - DH, D2X + DH]],
     ),
+
+    // ── Adjacent room walls (3 enclosed sides each) ──────────────────────────
+    // Bedroom (door 0)
+    { kind: 'aabb', x: D0_xf,      y: D0Y,      w: WA,         h: 3.0,       tier: 'hard' },  // far wall
+    { kind: 'aabb', x: D0_cx_lat,  y: D0Y - 1.5, w: D0_lat_w, h: WA,        tier: 'hard' },  // south wall
+    { kind: 'aabb', x: D0_cx_lat,  y: D0Y + 1.5, w: D0_lat_w, h: WA,        tier: 'hard' },  // north wall
+
+    // Bathroom (door 1)
+    { kind: 'aabb', x: D1_xf,      y: D1Y,       w: WA,        h: 2.5,       tier: 'hard' },  // far wall
+    { kind: 'aabb', x: D1_cx_lat,  y: D1Y - 1.25, w: D1_lat_w, h: WA,       tier: 'hard' },  // south wall
+    { kind: 'aabb', x: D1_cx_lat,  y: D1Y + 1.25, w: D1_lat_w, h: WA,       tier: 'hard' },  // north wall
+
+    // Kitchen (door 2)
+    { kind: 'aabb', x: 0,          y: D2_zf - 2.0, w: 5.0,     h: WA,        tier: 'hard' },  // far wall
+    { kind: 'aabb', x: -2.5,       y: D2_cy_lat,   w: WA,       h: D2_lat_h, tier: 'hard' },  // left wall
+    { kind: 'aabb', x:  2.5,       y: D2_cy_lat,   w: WA,       h: D2_lat_h, tier: 'hard' },  // right wall
+
+    // Hallway (door 3)
+    { kind: 'aabb', x: 0,          y: D3_zf + 2.0, w: 5.0,     h: WA,        tier: 'hard' },  // far wall
+    { kind: 'aabb', x: -2.5,       y: D3_cy_lat,   w: WA,       h: D3_lat_h, tier: 'hard' },  // left wall
+    { kind: 'aabb', x:  2.5,       y: D3_cy_lat,   w: WA,       h: D3_lat_h, tier: 'hard' },  // right wall
   ];
 }
 
