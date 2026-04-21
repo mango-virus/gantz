@@ -126,7 +126,7 @@ export function createScene3d({ canvas }) {
 
   // Muzzle flash — blue-white to match X-Gun energy.
   const muzzle = new THREE.Mesh(
-    new THREE.SphereGeometry(0.12, 10, 8),
+    new THREE.SphereGeometry(0.09, 10, 8),
     new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0 }),
   );
   muzzle.position.set(-0.14, 0.24, -0.12);
@@ -966,7 +966,7 @@ export function createScene3d({ canvas }) {
         // Lerp between hip-fire and ADS position.
         // ADS: side-profile centred on screen, barrel aligned with crosshair.
         viewWeapon.position.set(
-          0.46 + (0.1265 - 0.46) * _adsE + swayX,
+          0.46 + (0.128 - 0.46) * _adsE + swayX,
           -0.38 + (-0.31 - -0.38) * _adsE + swayY + walkBob - (wd.recoilY || 0),
           -0.55 + (-0.45 - -0.55) * _adsE + (wd.recoil || 0),
         );
@@ -975,6 +975,10 @@ export function createScene3d({ canvas }) {
           -0.35 * _adsE,
           -0.04 * _adsE + (wd.recoilRoll || 0) * hipAmt,
         );
+
+        // Muzzle lerps to dead-centre in ADS (measured via UV world-pos)
+        muzzle.position.x = -0.14 + (-0.188 - -0.14) * _adsE;
+        muzzleLight.position.x = muzzle.position.x;
 
         // FOV narrows from 72° → 55° during ADS (subtle zoom)
         const fovTarget = 72 - 17 * _adsE;
@@ -995,11 +999,12 @@ export function createScene3d({ canvas }) {
   function triggerMuzzleFlash() {
     muzzle.material.opacity = 0.9;
     muzzleLight.intensity = 4.0;
-    // Full recoil kick — z push back, y rise, pitch barrel up, slight roll
-    viewWeapon.userData.recoil    = 0.08;   // z kick back
-    viewWeapon.userData.recoilY   = 0.035;  // gun rises on fire
-    viewWeapon.userData.recoilRot = 0.22;   // barrel pitches up
-    viewWeapon.userData.recoilRoll = -0.07; // slight CCW roll
+    // ADS tightens recoil — scale down to 50% at full ADS
+    const adsScale = 1 - 0.5 * _adsT;
+    viewWeapon.userData.recoil     = 0.08  * adsScale;  // z kick back
+    viewWeapon.userData.recoilY    = 0.035 * adsScale;  // gun rises on fire
+    viewWeapon.userData.recoilRot  = 0.22  * adsScale;  // barrel pitches up
+    viewWeapon.userData.recoilRoll = -0.07;              // roll suppressed by hipAmt anyway
   }
 
   // Camera forward vector projected to the XZ (game) plane.
