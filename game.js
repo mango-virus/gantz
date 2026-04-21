@@ -56,6 +56,17 @@ const _LOBBY_DOORS = [
 ];
 const _doorOpen = [false, false, false, false];  // toggled by E
 
+// Door colliders — mutable AABBs, tier toggled hard/decorative with door state.
+// Wall AABB centre positions: left wall x = B.minX - t/2 = -5.25,
+//   far wall y = B.minY - t/2 = -8.25, back wall y = B.maxY + t/2 = 8.25.
+// DW = 1.25 (door width), t = 0.5 (wall thickness) — must match lobby.js / factories.js.
+const _doorColliders = [
+  { kind: 'aabb', x: -5.25, y:  5.5, w: 0.5,  h: 1.25, tier: 'hard' }, // 0 Bedroom
+  { kind: 'aabb', x: -5.25, y: -1.5, w: 0.5,  h: 1.25, tier: 'hard' }, // 1 Bathroom
+  { kind: 'aabb', x:  0,    y: -8.25, w: 1.25, h: 0.5,  tier: 'hard' }, // 2 Kitchen
+  { kind: 'aabb', x:  0,    y:  8.25, w: 1.25, h: 0.5,  tier: 'hard' }, // 3 Hallway
+];
+
 // Phase timings (chunk 5 values; mission duration scales per alien load in Chunk 7)
 const BRIEFING_MS = 30000;
 const MISSION_BASE_MS = 30000;
@@ -3164,6 +3175,7 @@ const lobbyColliders = [
   gantzRodLeftA,  gantzRodLeftB,  gantzSlabLeft,
   gantzRodRightA, gantzRodRightB, gantzSlabRight,
   gantzRodBackA,  gantzRodBackB,  gantzSlabBack,
+  ..._doorColliders,
 ];
 const missionBoundaryWalls = buildMissionWalls();
 
@@ -4326,6 +4338,11 @@ function update(dt) {
       gantzRodLeftA.tier  = gantzRodLeftB.tier  = gantzSlabLeft.tier  = 'decorative';
       gantzRodRightA.tier = gantzRodRightB.tier = gantzSlabRight.tier = 'decorative';
       gantzRodBackA.tier  = gantzRodBackB.tier  = gantzSlabBack.tier  = 'decorative';
+    }
+
+    // Sync door colliders — hard when closed, decorative (ignored) when open.
+    for (let i = 0; i < _doorColliders.length; i++) {
+      _doorColliders[i].tier = _doorOpen[i] ? 'decorative' : 'hard';
     }
   }
 
