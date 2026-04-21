@@ -145,15 +145,15 @@ export function buildLobbyWalls() {
     ),
 
     // ── Adjacent room walls (3 enclosed sides each) ──────────────────────────
-    // Bedroom (door 0)
-    { kind: 'aabb', x: D0_xf,      y: D0Y,      w: WA,         h: 3.0,       tier: 'hard' },  // far wall
-    { kind: 'aabb', x: D0_cx_lat,  y: D0Y - 1.5, w: D0_lat_w, h: WA,        tier: 'hard' },  // south wall
-    { kind: 'aabb', x: D0_cx_lat,  y: D0Y + 1.5, w: D0_lat_w, h: WA,        tier: 'hard' },  // north wall
+    // Bedroom (door 0) — rd=7.0, spans y∈[D0Y-3.5, D0Y+3.5]=[2.0, 9.0]
+    { kind: 'aabb', x: D0_xf,      y: D0Y,       w: WA,        h: 7.0,       tier: 'hard' },  // far wall
+    { kind: 'aabb', x: D0_cx_lat,  y: D0Y - 3.5, w: D0_lat_w, h: WA,        tier: 'hard' },  // south wall
+    { kind: 'aabb', x: D0_cx_lat,  y: D0Y + 3.5, w: D0_lat_w, h: WA,        tier: 'hard' },  // north wall
 
-    // Bathroom (door 1)
-    { kind: 'aabb', x: D1_xf,      y: D1Y,       w: WA,        h: 2.5,       tier: 'hard' },  // far wall
-    { kind: 'aabb', x: D1_cx_lat,  y: D1Y - 1.25, w: D1_lat_w, h: WA,       tier: 'hard' },  // south wall
-    { kind: 'aabb', x: D1_cx_lat,  y: D1Y + 1.25, w: D1_lat_w, h: WA,       tier: 'hard' },  // north wall
+    // Bathroom (door 1) — rd=5.0, spans y∈[D1Y-2.5, D1Y+2.5]=[-4.0, 1.0]
+    { kind: 'aabb', x: D1_xf,      y: D1Y,       w: WA,        h: 5.0,       tier: 'hard' },  // far wall
+    { kind: 'aabb', x: D1_cx_lat,  y: D1Y - 2.5, w: D1_lat_w, h: WA,        tier: 'hard' },  // south wall
+    { kind: 'aabb', x: D1_cx_lat,  y: D1Y + 2.5, w: D1_lat_w, h: WA,        tier: 'hard' },  // north wall
 
     // Kitchen (door 2)
     { kind: 'aabb', x: 0,          y: D2_zf - 2.0, w: 5.0,     h: WA,        tier: 'hard' },  // far wall

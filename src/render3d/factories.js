@@ -1935,12 +1935,12 @@ export function buildLobbyRoom() {
   }
 
   // Room sizes and positions — must match adj room colliders in lobby.js.
-  // Bedroom  (door 0 at z=+5.5, left wall): rw=5.5, rd=3.0
+  // Bedroom  (door 0 at z=+5.5, left wall): rw=5.5, rd=7.0
   //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.75) = -7.9
-  addAdjRoom(-(RW_OUTER + 5.5 / 2),  5.5, 5.5, 3.0, 'maxX');
-  // Bathroom (door 1 at z=-1.5, left wall): rw=5.0, rd=2.5
+  addAdjRoom(-(RW_OUTER + 5.5 / 2),  5.5, 5.5, 7.0, 'maxX');
+  // Bathroom (door 1 at z=-1.5, left wall): rw=5.0, rd=5.0
   //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.5)  = -7.65
-  addAdjRoom(-(RW_OUTER + 5.0 / 2), -1.5, 5.0, 2.5, 'maxX');
+  addAdjRoom(-(RW_OUTER + 5.0 / 2), -1.5, 5.0, 5.0, 'maxX');
   // Kitchen  (door 2 at x=0, far wall): rw=5.0, rd=4.0
   //   cz = -(RH_OUTER + rd/2) = -(8.15 + 2.0)  = -10.15
   addAdjRoom(0, -(RH_OUTER + 4.0 / 2), 5.0, 4.0, 'maxZ');
