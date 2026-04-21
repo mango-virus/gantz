@@ -166,7 +166,7 @@ export function createScene3d({ canvas }) {
       const _ct = _b.getCenter(new THREE.Vector3());
       const _sz = _b.getSize(new THREE.Vector3());
       const _md = Math.max(_sz.x, _sz.y, _sz.z);
-      const _s  = _md > 0 ? 0.22 / _md : 1;
+      const _s  = _md > 0 ? 0.32 / _md : 1;
       // Translate geometry vertices directly so centre lands at group origin.
       // This avoids the position-vs-rotation interaction that pushed geometry behind camera.
       gun.traverse(node => {
