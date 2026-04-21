@@ -4408,7 +4408,7 @@ function update(dt) {
     const dp = Math.hypot(player.x - _PORTAL_POS.x, player.y - _PORTAL_POS.y);
     if (dp < _PORTAL_RADIUS && wasPressed('e')) {
       _portalBusy = true;
-      Portal.sendPlayerThroughPortal('https://callumhyoung.github.io/gamejam/', {
+      Portal.sendPlayerThroughPortal('https://callumhyoung.github.io/gamejam1-lobby/', {
         username: player.username || 'Hunter',
         color:    (player.color || 'c8142b').replace('#', ''),
         speed:    5,
