@@ -757,9 +757,36 @@ export function createScene3d({ canvas }) {
         const mMat = muzzle.material;
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
         muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 30);
-        // Recoil ease
-        viewWeapon.position.z = -0.55 + (viewWeapon.userData.recoil || 0);
-        viewWeapon.userData.recoil = Math.max(0, (viewWeapon.userData.recoil || 0) - dt * 3);
+
+        // ── Viewmodel animation ──────────────────────────────────────────
+        const wd = viewWeapon.userData;
+        wd.idleTime = (wd.idleTime || 0) + dt;
+
+        // Spring-decay all recoil axes
+        const sp = dt * 9;
+        wd.recoil     = Math.max(0, (wd.recoil     || 0) - sp * 0.7);
+        wd.recoilY    = Math.max(0, (wd.recoilY    || 0) - sp);
+        wd.recoilRot  = Math.max(0, (wd.recoilRot  || 0) - sp);
+        wd.recoilRoll = (wd.recoilRoll || 0) * Math.max(0, 1 - sp * 1.2);
+
+        // Idle sway — subtle breathing motion
+        const swayX = Math.sin(wd.idleTime * 0.7) * 0.004;
+        const swayY = Math.sin(wd.idleTime * 0.4) * 0.003;
+
+        // Walk bob — piggyback on camera head-bob (state.bob is vertical amplitude)
+        const walkBob = (state.bob || 0) * 0.4;
+
+        viewWeapon.position.set(
+          0.46 + swayX,
+          -0.38 + swayY + walkBob - (wd.recoilY || 0),
+          -0.55 + (wd.recoil || 0),
+        );
+        // Pitch barrel up + slight roll on fire, spring back to neutral
+        viewWeapon.rotation.set(
+          -(wd.recoilRot  || 0),
+           0,
+           (wd.recoilRoll || 0),
+        );
       } else {
         viewWeapon.visible = false;
         const desired = new THREE.Vector3(focus.x, 10, focus.y + 9);
@@ -774,8 +801,12 @@ export function createScene3d({ canvas }) {
 
   function triggerMuzzleFlash() {
     muzzle.material.opacity = 0.9;
-    muzzleLight.intensity = 4.0;  // brighter blue flash
-    viewWeapon.userData.recoil = 0.12;
+    muzzleLight.intensity = 4.0;
+    // Full recoil kick — z push back, y rise, pitch barrel up, slight roll
+    viewWeapon.userData.recoil    = 0.08;   // z kick back
+    viewWeapon.userData.recoilY   = 0.035;  // gun rises on fire
+    viewWeapon.userData.recoilRot = 0.22;   // barrel pitches up
+    viewWeapon.userData.recoilRoll = -0.07; // slight CCW roll
   }
 
   // Camera forward vector projected to the XZ (game) plane.
