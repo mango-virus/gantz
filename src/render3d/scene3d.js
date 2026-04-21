@@ -134,13 +134,12 @@ export function createScene3d({ canvas }) {
   muzzleLight.position.copy(muzzle.position);
   viewWeapon.add(muzzleLight);
 
-  // X-Gun GLB — coloring: dark gloss-black body, cyan emissive accents
-  const _xgunBodyMat = new THREE.MeshStandardMaterial({
-    color: 0x0d0d14, roughness: 0.38, metalness: 0.90,
+  // X-Gun GLB — bright test colours while diagnosing visibility
+  const _xgunBodyMat = new THREE.MeshBasicMaterial({
+    color: 0xff6600, side: THREE.DoubleSide,
   });
-  const _xgunAccentMat = new THREE.MeshStandardMaterial({
-    color: 0x001a33, emissive: new THREE.Color(0x00aaff),
-    emissiveIntensity: 2.4, roughness: 0.15, metalness: 0.95,
+  const _xgunAccentMat = new THREE.MeshBasicMaterial({
+    color: 0x00eeff, side: THREE.DoubleSide,
   });
   const _ACCENT_KEYS = ['glow', 'light', 'emit', 'led', 'neon', 'blue', 'ring',
                         'accent', 'lens', 'orb', 'circle', 'line', 'stripe'];
@@ -158,7 +157,8 @@ export function createScene3d({ canvas }) {
     const gun = gltf.scene;
     gun.scale.set(0.42, 0.42, 0.42);
     gun.rotation.set(0.08, -Math.PI / 2, -0.18);
-    gun.position.set(0, 0, 0.05);
+    gun.position.set(0, 0, 0);
+    gun.frustumCulled = false;
     gun.traverse(node => {
       if (!node.isMesh) return;
       node.castShadow = false;
