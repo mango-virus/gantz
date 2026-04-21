@@ -1,5 +1,5 @@
 import * as THREE from 'https://esm.sh/three@0.160.0';
-import { GLTFLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js?deps=three@0.160.0';
 import {
   buildHumanMesh, buildAlienMesh, buildPropMesh, buildBuildingMesh,
   buildLobbyRoom, buildMissionRoom, buildGantzBallMesh, buildTracerMesh,
@@ -148,10 +148,22 @@ export function createScene3d({ canvas }) {
   // Mesh / material name substrings that indicate a glowing accent part
   const _ACCENT_KEYS = ['glow', 'light', 'emit', 'led', 'neon', 'blue', 'ring',
                         'accent', 'lens', 'orb', 'circle', 'line', 'stripe'];
+  // Placeholder box — visible immediately so position/visibility can be verified
+  // while the GLB loads. Removed once the model arrives.
+  const _gunPlaceholder = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.10, 0.36),
+    new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.4, metalness: 0.85 }),
+  );
+  _gunPlaceholder.position.set(0, 0, -0.14);
+  viewWeapon.add(_gunPlaceholder);
+
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
+    // Remove placeholder now that the real model is here
+    viewWeapon.remove(_gunPlaceholder);
+    _gunPlaceholder.geometry.dispose();
+
     const gun = gltf.scene;
     // Scale to hand-held size; rotate so barrel faces -Z (into screen = forward).
-    // Adjust rotation.y if the gun appears backwards in-game.
     gun.scale.set(0.14, 0.14, 0.14);
     gun.rotation.set(0.08, Math.PI, -0.18); // slight downward pitch + roll so it reads as held
     gun.position.set(0, 0, 0.05);
@@ -171,15 +183,10 @@ export function createScene3d({ canvas }) {
     gun.add(gunGlow);
 
     viewWeapon.add(gun);
+    console.log('[scene3d] X-Gun GLB loaded OK');
   }, undefined, err => {
-    // Fallback: simple dark box if the GLB fails to load
-    console.warn('[scene3d] X-Gun GLB failed to load, using fallback:', err);
-    const fb = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.12, 0.45),
-      new THREE.MeshStandardMaterial({ color: 0x141418, roughness: 0.45, metalness: 0.8 }),
-    );
-    fb.position.set(0, 0, -0.18);
-    viewWeapon.add(fb);
+    // Placeholder stays as permanent fallback if GLB fails
+    console.warn('[scene3d] X-Gun GLB failed to load, using placeholder:', err);
   });
 
   camera.add(viewWeapon);
