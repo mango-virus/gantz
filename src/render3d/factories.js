@@ -1896,15 +1896,19 @@ export function buildLobbyRoom() {
     // openSide: 'maxX'|'minX'|'maxZ'|'minZ' — wall facing the lobby (not built).
     // Floor and ceiling extend by WT on the open side so they reach the lobby
     // inner wall face, sealing the floor gap under the lobby wall thickness.
+    // Shift floor/ceiling toward the lobby (open) side by WT so they cover the
+    // gap under the lobby wall thickness and reach the lobby inner wall face.
+    // Rule: shift center in the direction of the open face (+x for maxX, etc.)
     let fx = cx, fz = cz, frw = rw, frd = rd;
-    if (openSide === 'maxX') { frw += WT; fx -= WT / 2; }
-    if (openSide === 'minX') { frw += WT; fx += WT / 2; }
-    if (openSide === 'maxZ') { frd += WT; fz -= WT / 2; }
-    if (openSide === 'minZ') { frd += WT; fz += WT / 2; }
+    if (openSide === 'maxX') { frw += WT; fx += WT / 2; }
+    if (openSide === 'minX') { frw += WT; fx -= WT / 2; }
+    if (openSide === 'maxZ') { frd += WT; fz += WT / 2; }
+    if (openSide === 'minZ') { frd += WT; fz -= WT / 2; }
 
-    // Floor
+    // Floor — top surface at y=0.001 to match lobby hardwood floor level
+    const floorY = 0.001 - ADJ_FT / 2;
     { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), adjFloorMat);
-      m.position.set(fx, -ADJ_FT / 2, fz); m.receiveShadow = true; group.add(m); }
+      m.position.set(fx, floorY, fz); m.receiveShadow = true; group.add(m); }
     // Ceiling
     { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), ceilMat);
       m.position.set(fx, CEIL + ADJ_FT / 2, fz); group.add(m); }
