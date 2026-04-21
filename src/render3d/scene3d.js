@@ -489,6 +489,27 @@ export function createScene3d({ canvas }) {
       }
     }
 
+    // Animate lobby door pivots
+    if (currentRoomKind === 'lobby') {
+      const doors = currentRoomGroup?.userData.doors;
+      const doorStates = state.doorStates; // array of progress values 0..1
+      if (doors && doorStates) {
+        const SPEED = 4.5; // radians per second (door swings in ~0.4 s)
+        for (let i = 0; i < doors.length; i++) {
+          const { pivot, openAngle } = doors[i];
+          const target = (doorStates[i] || 0) * openAngle;
+          const cur    = pivot.rotation.y;
+          const diff   = target - cur;
+          if (Math.abs(diff) > 0.0005) {
+            const step = Math.sign(diff) * Math.min(Math.abs(diff), SPEED * dt);
+            pivot.rotation.y = cur + step;
+          } else {
+            pivot.rotation.y = target;
+          }
+        }
+      }
+    }
+
     // Gantz ball visible when not in mission
     ensureGantzBall(state.phase !== 'MISSION');
     if (gantzBall && state.gantzBallPos) {

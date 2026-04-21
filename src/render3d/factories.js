@@ -1611,15 +1611,52 @@ export function buildLobbyRoom() {
     group.add(floor); }
 
   // ---- Walls ----
-  // Left (-X): solid plaster
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(WT, CEIL, H + WT * 2), wallMat);
-    m.position.set(-W / 2 - WT / 2, CEIL / 2, 0); m.receiveShadow = true; group.add(m); }
-  // Far (-Z): solid plaster
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(W + WT * 2, CEIL, WT), wallMat);
-    m.position.set(0, CEIL / 2, -H / 2 - WT / 2); m.receiveShadow = true; group.add(m); }
-  // Back (+Z): solid plaster
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(W + WT * 2, CEIL, WT), wallMat);
-    m.position.set(0, CEIL / 2, H / 2 + WT / 2); m.receiveShadow = true; group.add(m); }
+  // Shared door constants (must match addDoor below)
+  const DW = 1.25; // door width
+  const DH = 2.35; // door height
+
+  // Left (-X): wall patches with openings for two doors at z=+5.5 and z=-1.5
+  {
+    const LX  = -W / 2 - WT / 2;                     // wall centre x = -5.075
+    const ZMN = -H / 2 - WT / 2, ZMX = H / 2 + WT / 2; // z extents: -8.075 → 8.075
+    const D0Z = 5.5, D1Z = -1.5;                      // door z centres
+    const wp = (z0, z1, y0 = 0, y1 = CEIL) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(WT, y1 - y0, z1 - z0), wallMat);
+      m.position.set(LX, (y0 + y1) / 2, (z0 + z1) / 2);
+      m.receiveShadow = true; group.add(m);
+    };
+    wp(ZMN,            D1Z - DW / 2);        // far end → door-1 left
+    wp(D1Z + DW / 2,   D0Z - DW / 2);        // between doors
+    wp(D0Z + DW / 2,   ZMX);                 // door-0 right → back end
+    wp(D1Z - DW / 2,   D1Z + DW / 2, DH, CEIL); // above door 1
+    wp(D0Z - DW / 2,   D0Z + DW / 2, DH, CEIL); // above door 0
+  }
+  // Far (-Z): wall patches with opening for one door at x=0
+  {
+    const FZ  = -H / 2 - WT / 2;
+    const XMN = -W / 2 - WT / 2, XMX = W / 2 + WT / 2;
+    const fp = (x0, x1, y0 = 0, y1 = CEIL) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, WT), wallMat);
+      m.position.set((x0 + x1) / 2, (y0 + y1) / 2, FZ);
+      m.receiveShadow = true; group.add(m);
+    };
+    fp(XMN, -DW / 2);               // left section
+    fp( DW / 2, XMX);               // right section
+    fp(-DW / 2,  DW / 2, DH, CEIL); // above door
+  }
+  // Back (+Z): wall patches with opening for one door at x=0
+  {
+    const BZ  = H / 2 + WT / 2;
+    const XMN = -W / 2 - WT / 2, XMX = W / 2 + WT / 2;
+    const bp = (x0, x1, y0 = 0, y1 = CEIL) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, WT), wallMat);
+      m.position.set((x0 + x1) / 2, (y0 + y1) / 2, BZ);
+      m.receiveShadow = true; group.add(m);
+    };
+    bp(XMN, -DW / 2);
+    bp( DW / 2, XMX);
+    bp(-DW / 2,  DW / 2, DH, CEIL);
+  }
 
   // Right (+X) wall — solid sections around the window bank
   // Window spans z: WIN_START → WIN_END, y: WIN_SILL → WIN_TOP
@@ -1740,9 +1777,11 @@ export function buildLobbyRoom() {
   }
 
   // ---- Reddish slatted doors ----
-  // Each door: dark reddish-brown frame, 5 horizontal frosted-glass slats.
-  function addDoor(wx, wz, rotY, narrow = false) {
-    const DW = narrow ? 1.05 : 1.25;
+  // Each door: dark reddish-brown frame, animated slab on a hinge pivot.
+  // Returns { pivot, openAngle } so the scene can animate the slab.
+  const _lobbyDoors = [];
+  function addDoor(wx, wz, rotY, openAngle) {
+    const DW = 1.25;
     const DH = 2.35;
     const SLATS = 6;
     const KICK  = 0.24;     // solid kick-panel height at bottom
@@ -1751,15 +1790,12 @@ export function buildLobbyRoom() {
     const DT    = 0.052;    // door slab depth
 
     const dg = new THREE.Group();
-    const box = (w, h, d, x, y, z) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), doorMat);
-      m.position.set(x, y, z); m.castShadow = true; dg.add(m);
-    };
+
     const slatMat = new THREE.MeshStandardMaterial({
       color: 0xc8d0d4, roughness: 0.1, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
     });
 
-    // Frame: top, left jamb, right jamb — dark grey to match reference
+    // ── Static frame (jambs + header) ────────────────────────────────────────
     const jambMat = new THREE.MeshStandardMaterial({ color: 0x3a3e44, roughness: 0.6 });
     const jbox = (w, h, d, x, y, z) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), jambMat);
@@ -1769,13 +1805,25 @@ export function buildLobbyRoom() {
     jbox(FT,          DH + FT,  DT + 0.02, -(DW / 2 + FT / 2),  DH / 2,      0);
     jbox(FT,          DH + FT,  DT + 0.02,  (DW / 2 + FT / 2),  DH / 2,      0);
 
+    // ── Animated slab — pivot sits at hinge edge (local x = -DW/2) ───────────
+    // All slab geometry is shifted +DW/2 in x so it's centred in the opening
+    // when the pivot is at x=-DW/2.  Rotating the pivot swings the slab open.
+    const slabPivot = new THREE.Group();
+    slabPivot.position.set(-DW / 2, 0, 0);
+    dg.add(slabPivot);
+
+    const sbox = (w, h, d, x, y, z) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), doorMat);
+      m.position.set(x + DW / 2, y, z); m.castShadow = true; slabPivot.add(m);
+    };
+
     // Kick panel (solid)
-    box(DW - FT, KICK, DT, 0, KICK / 2, 0);
+    sbox(DW - FT, KICK, DT, 0, KICK / 2, 0);
     // Door stiles (left & right vertical rails)
-    box(STILE, DH - KICK, DT, -(DW / 2 - STILE / 2), KICK + (DH - KICK) / 2, 0);
-    box(STILE, DH - KICK, DT,  (DW / 2 - STILE / 2), KICK + (DH - KICK) / 2, 0);
+    sbox(STILE, DH - KICK, DT, -(DW / 2 - STILE / 2), KICK + (DH - KICK) / 2, 0);
+    sbox(STILE, DH - KICK, DT,  (DW / 2 - STILE / 2), KICK + (DH - KICK) / 2, 0);
     // Top rail of door slab
-    box(DW - FT, FT, DT, 0, DH - FT / 2, 0);
+    sbox(DW - FT, FT, DT, 0, DH - FT / 2, 0);
 
     // Glass slats + horizontal rails between them
     const slatSection = DH - KICK - FT;
@@ -1786,41 +1834,94 @@ export function buildLobbyRoom() {
         new THREE.BoxGeometry(DW - STILE * 2 - 0.02, slatH - 0.038, 0.018),
         slatMat,
       );
-      gp.position.set(0, sy, 0);
-      dg.add(gp);
-      if (s > 0) box(DW - FT * 0.5, 0.038, DT, 0, KICK + slatH * s, 0);
+      gp.position.set(DW / 2, sy, 0);
+      slabPivot.add(gp);
+      if (s > 0) sbox(DW - FT * 0.5, 0.038, DT, 0, KICK + slatH * s, 0);
     }
 
-    // Door handle: a lever-style pull on the latch side of each face
+    // Door handle: lever-style pull on the latch side
     const handleMat = new THREE.MeshStandardMaterial({ color: 0xc8a050, roughness: 0.25, metalness: 0.75 });
-    const handleX = DW / 2 - STILE * 0.7; // near the latch edge
+    const handleX = DW / 2 - STILE * 0.7; // near the latch edge (right side)
     for (const side of [-1, 1]) {
-      // Lever bar (horizontal cylinder)
       const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.095, 8), handleMat);
       lever.rotation.x = Math.PI / 2;
-      lever.position.set(handleX, 1.02, side * (DT / 2 + 0.05));
-      dg.add(lever);
-      // Rose (backplate disc)
+      lever.position.set(handleX + DW / 2, 1.02, side * (DT / 2 + 0.05));
+      slabPivot.add(lever);
       const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.012, 10), handleMat);
       rose.rotation.x = Math.PI / 2;
-      rose.position.set(handleX, 1.02, side * (DT / 2 + 0.006));
-      dg.add(rose);
+      rose.position.set(handleX + DW / 2, 1.02, side * (DT / 2 + 0.006));
+      slabPivot.add(rose);
     }
 
     dg.position.set(wx, 0, wz);
     dg.rotation.y = rotY;
     group.add(dg);
+
+    const doorEntry = { pivot: slabPivot, openAngle };
+    _lobbyDoors.push(doorEntry);
+    return doorEntry;
   }
 
-  // Left wall (-X = -5): two doors — one near the player end, one mid-back
-  addDoor(-W / 2, +5.5,  Math.PI / 2);         // near player-spawn end (foreground)
-  addDoor(-W / 2, -1.5,  Math.PI / 2);          // mid-wall toward far end
+  // Left wall (-X = -5): two doors
+  //   rotY = π/2  → door faces into the room along +X.  Open = swing inward (-Z).
+  addDoor(-W / 2, +5.5,  Math.PI / 2, -Math.PI * 0.8);  // door 0 (Bedroom)
+  addDoor(-W / 2, -1.5,  Math.PI / 2, -Math.PI * 0.8);  // door 1 (Bathroom)
 
   // Far wall (-Z = -8): one centered door
-  addDoor(0, -H / 2, 0);
+  addDoor(0, -H / 2, 0, Math.PI * 0.8);           // door 2 (Kitchen)
 
   // Back wall (+Z = +8): one door
-  addDoor(0, H / 2, Math.PI);
+  addDoor(0,  H / 2, Math.PI, Math.PI * 0.8);     // door 3 (Hallway)
+
+  // Expose door pivot array for scene3d
+  group.userData.doors = _lobbyDoors;
+
+  // ---- Adjacent rooms --------------------------------------------------------
+  // Small boxed rooms visible through each doorway.
+  const adjRoomMat = new THREE.MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.95 });
+  const adjFloorMat = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 0.9 });
+  const adjCeilMat  = new THREE.MeshStandardMaterial({ color: 0xe0dbd2, roughness: 0.9 });
+  const WT2 = 0.12; // thin wall thickness for adjacent rooms
+
+  function addAdjRoom(cx, cz, rw, rd, openSide) {
+    // cx,cz = room centre; rw = room width (X); rd = room depth (Z)
+    // openSide: 'maxX' | 'minX' | 'maxZ' | 'minZ' — which wall is open (faces lobby)
+    const ry = CEIL;
+    // Floor
+    { const m = new THREE.Mesh(new THREE.BoxGeometry(rw, WT2, rd), adjFloorMat);
+      m.position.set(cx, -WT2 / 2, cz); m.receiveShadow = true; group.add(m); }
+    // Ceiling
+    { const m = new THREE.Mesh(new THREE.BoxGeometry(rw, WT2, rd), adjCeilMat);
+      m.position.set(cx, ry + WT2 / 2, cz); group.add(m); }
+    // Four walls — skip the open side
+    const walls = [
+      // [geom_w, geom_h, geom_d, px, py, pz, skip_if]
+      [WT2, ry, rd, cx - rw / 2, ry / 2, cz, 'minX'],
+      [WT2, ry, rd, cx + rw / 2, ry / 2, cz, 'maxX'],
+      [rw,  ry, WT2, cx, ry / 2, cz - rd / 2, 'minZ'],
+      [rw,  ry, WT2, cx, ry / 2, cz + rd / 2, 'maxZ'],
+    ];
+    for (const [gw, gh, gd, px, py, pz, skip] of walls) {
+      if (skip === openSide) continue;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(gw, gh, gd), adjRoomMat);
+      m.position.set(px, py, pz); m.castShadow = true; m.receiveShadow = true;
+      group.add(m);
+    }
+    // Simple pendant light
+    const apl = new THREE.PointLight(0xfff5e0, 1.4, 6, 1.8);
+    apl.position.set(cx, ry - 0.3, cz);
+    group.add(apl);
+  }
+
+  // Adjacent rooms positioned just outside each door opening
+  //   Door 0 @ (-5, 5.5, rotY=π/2): room to the left (-X side)
+  addAdjRoom(-W / 2 - 2.0,  5.5, 4.0, 3.0, 'maxX');   // Bedroom
+  //   Door 1 @ (-5, -1.5, rotY=π/2): room to the left (-X side)
+  addAdjRoom(-W / 2 - 1.75, -1.5, 3.5, 2.5, 'maxX');   // Bathroom
+  //   Door 2 @ (0, -8, rotY=0): room beyond far wall (-Z side)
+  addAdjRoom(0, -H / 2 - 2.0, 5.0, 4.0, 'maxZ');        // Kitchen
+  //   Door 3 @ (0, +8, rotY=π): room beyond back wall (+Z side)
+  addAdjRoom(0,  H / 2 + 2.0, 5.0, 4.0, 'minZ');        // Hallway
 
   // ---- Structural RC pilasters ----
   // Rectangular columns protruding from walls — very visible in the reference photos.

@@ -43,7 +43,18 @@ const APP_ID = 'gantz-jam-2026';
 const ROOM_ID = 'gantz-global-lobby';
 const PLAYER_COLOR = 'c8142b';
 const INTERACT_RADIUS = 2.8;
+const DOOR_INTERACT_RADIUS = 1.8;
 const AFK_MS = 180000;
+
+// Lobby interactive doors — 4 doors matching addDoor calls in factories.js.
+// Game (x, y) positions of the door openings (2D: game-x = 3D-x, game-y = 3D-z).
+const _LOBBY_DOORS = [
+  { x: -5, y:  5.5 },   // 0 — Bedroom  (left wall, near player spawn)
+  { x: -5, y: -1.5 },   // 1 — Bathroom (left wall, mid)
+  { x:  0, y: -8   },   // 2 — Kitchen  (far wall)
+  { x:  0, y:  8   },   // 3 — Hallway  (back wall)
+];
+const _doorOpen = [false, false, false, false];  // toggled by E
 
 // Phase timings (chunk 5 values; mission duration scales per alien load in Chunk 7)
 const BRIEFING_MS = 30000;
@@ -3921,7 +3932,8 @@ addEventListener('mousemove', noteActivity);
 addEventListener('mousedown', noteActivity);
 
 // --- Toast log ---
-const gantzPromptEl = document.getElementById('gantz-prompt');
+const gantzPromptEl  = document.getElementById('gantz-prompt');
+const doorPromptEl   = document.getElementById('door-prompt');
 const spectatePromptEl = document.getElementById('spectate-prompt');
 
 function updateWorldHtmlOverlays() {
@@ -3942,6 +3954,25 @@ function updateWorldHtmlOverlays() {
     }
   } else {
     gantzPromptEl.style.display = 'none';
+  }
+
+  // Door prompt — show when near a lobby door and no menu is open
+  if (!localInMission && !menu.isOpen()) {
+    let nearDoor = -1;
+    for (let di = 0; di < _LOBBY_DOORS.length; di++) {
+      const door = _LOBBY_DOORS[di];
+      if (Math.hypot(player.x - door.x, player.y - door.y) < DOOR_INTERACT_RADIUS) {
+        nearDoor = di; break;
+      }
+    }
+    if (nearDoor >= 0 && gantzPromptEl.style.display === 'none') {
+      doorPromptEl.textContent = _doorOpen[nearDoor] ? '[E] Close door' : '[E] Open door';
+      doorPromptEl.style.display = 'block';
+    } else {
+      doorPromptEl.style.display = 'none';
+    }
+  } else {
+    doorPromptEl.style.display = 'none';
   }
 
   if (localInMission && !player.alive) {
@@ -4328,6 +4359,17 @@ function update(dt) {
     }
   }
 
+  // ── Lobby door interaction ───────────────────────────────────────────────
+  if (inLobbyScene && !menu.isOpen() && !chat.isOpen?.()) {
+    for (let di = 0; di < _LOBBY_DOORS.length; di++) {
+      const door = _LOBBY_DOORS[di];
+      const dd = Math.hypot(player.x - door.x, player.y - door.y);
+      if (dd < DOOR_INTERACT_RADIUS && wasPressed('e')) {
+        _doorOpen[di] = !_doorOpen[di];
+        break; // consume E for this frame
+      }
+    }
+  }
 
   const nowMs = Date.now(); // wall-clock ms — synchronized across peers unlike performance.now()
   hostTick(nowMs);
@@ -4466,6 +4508,7 @@ function render(dt) {
     bob,
     jumpY,
     playerAlive: player.alive,
+    doorStates: _doorOpen.map(o => o ? 1 : 0),
   }, dt || 1 / 60);
 
   // Draw menu content onto the ball surface canvas
