@@ -1,4 +1,5 @@
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { GLTFLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 import {
   buildHumanMesh, buildAlienMesh, buildPropMesh, buildBuildingMesh,
   buildLobbyRoom, buildMissionRoom, buildGantzBallMesh, buildTracerMesh,
@@ -118,44 +119,68 @@ export function createScene3d({ canvas }) {
   // First-person weapon view model (parented to the camera). Only visible in FP.
   const viewWeapon = new THREE.Group();
   viewWeapon.position.set(0.28, -0.28, -0.55);
-  // barrel
-  const barrel = new THREE.Mesh(
-    new THREE.BoxGeometry(0.08, 0.08, 0.55),
-    new THREE.MeshStandardMaterial({ color: 0x141418, roughness: 0.45, metalness: 0.8 }),
-  );
-  barrel.position.set(0, 0, -0.18);
-  viewWeapon.add(barrel);
-  // receiver
-  const receiver = new THREE.Mesh(
-    new THREE.BoxGeometry(0.14, 0.14, 0.28),
-    new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.5, metalness: 0.75 }),
-  );
-  receiver.position.set(0, 0, 0.05);
-  viewWeapon.add(receiver);
-  // grip
-  const grip = new THREE.Mesh(
-    new THREE.BoxGeometry(0.08, 0.22, 0.09),
-    new THREE.MeshStandardMaterial({ color: 0x24242c, roughness: 0.7, metalness: 0.3 }),
-  );
-  grip.position.set(0, -0.18, 0.09);
-  viewWeapon.add(grip);
-  // red accent X
-  const accent = new THREE.Mesh(
-    new THREE.BoxGeometry(0.15, 0.02, 0.02),
-    new THREE.MeshBasicMaterial({ color: 0xc8142b }),
-  );
-  accent.position.set(0, 0.02, 0.05);
-  viewWeapon.add(accent);
-  // muzzle flash (hidden by default)
+
+  // Muzzle flash — blue-white to match X-Gun energy. Positioned at barrel tip.
   const muzzle = new THREE.Mesh(
     new THREE.SphereGeometry(0.12, 10, 8),
-    new THREE.MeshBasicMaterial({ color: 0xffe28a, transparent: true, opacity: 0 }),
+    new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0 }),
   );
-  muzzle.position.set(0, 0, -0.5);
+  muzzle.position.set(0, 0.05, -0.52);
   viewWeapon.add(muzzle);
-  const muzzleLight = new THREE.PointLight(0xffe28a, 0, 4, 2);
-  muzzleLight.position.set(0, 0, -0.5);
+  const muzzleLight = new THREE.PointLight(0x44aaff, 0, 4, 2);
+  muzzleLight.position.copy(muzzle.position);
   viewWeapon.add(muzzleLight);
+
+  // X-Gun GLB model — load async; show nothing until ready (only visible in MISSION)
+  const _xgunBodyMat = new THREE.MeshStandardMaterial({
+    color: 0x0d0d14,
+    roughness: 0.38,
+    metalness: 0.90,
+  });
+  const _xgunAccentMat = new THREE.MeshStandardMaterial({
+    color: 0x001a33,
+    emissive: new THREE.Color(0x00aaff),
+    emissiveIntensity: 2.4,
+    roughness: 0.15,
+    metalness: 0.95,
+  });
+  // Mesh / material name substrings that indicate a glowing accent part
+  const _ACCENT_KEYS = ['glow', 'light', 'emit', 'led', 'neon', 'blue', 'ring',
+                        'accent', 'lens', 'orb', 'circle', 'line', 'stripe'];
+  new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
+    const gun = gltf.scene;
+    // Scale to hand-held size; rotate so barrel faces -Z (into screen = forward).
+    // Adjust rotation.y if the gun appears backwards in-game.
+    gun.scale.set(0.22, 0.22, 0.22);
+    gun.rotation.y = Math.PI;
+    gun.position.set(0, 0, 0.1);
+
+    gun.traverse(node => {
+      if (!node.isMesh) return;
+      node.castShadow = false;
+      node.receiveShadow = false;
+      const id = (node.name + '|' + (node.material?.name || '')).toLowerCase();
+      const isAccent = _ACCENT_KEYS.some(k => id.includes(k));
+      node.material = isAccent ? _xgunAccentMat : _xgunBodyMat;
+    });
+
+    // Soft blue fill light so the gun reads well in dark mission scenes
+    const gunGlow = new THREE.PointLight(0x0066ff, 0.35, 0.9, 2);
+    gunGlow.position.set(0, 0.05, -0.1);
+    gun.add(gunGlow);
+
+    viewWeapon.add(gun);
+  }, undefined, err => {
+    // Fallback: simple dark box if the GLB fails to load
+    console.warn('[scene3d] X-Gun GLB failed to load, using fallback:', err);
+    const fb = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.12, 0.45),
+      new THREE.MeshStandardMaterial({ color: 0x141418, roughness: 0.45, metalness: 0.8 }),
+    );
+    fb.position.set(0, 0, -0.18);
+    viewWeapon.add(fb);
+  });
+
   camera.add(viewWeapon);
   scene.add(camera); // camera must be in scene graph for child meshes to render
   viewWeapon.visible = false;
@@ -707,8 +732,8 @@ export function createScene3d({ canvas }) {
   }
 
   function triggerMuzzleFlash() {
-    muzzle.material.opacity = 1.0;
-    muzzleLight.intensity = 3.0;
+    muzzle.material.opacity = 0.9;
+    muzzleLight.intensity = 4.0;  // brighter blue flash
     viewWeapon.userData.recoil = 0.12;
   }
 
