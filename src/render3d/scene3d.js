@@ -113,7 +113,7 @@ export function createScene3d({ canvas }) {
 
   const EYE_HEIGHT = 1.7;
 
-  const camera = new THREE.PerspectiveCamera(72, canvas.clientWidth / canvas.clientHeight, 0.05, 4000);
+  const camera = new THREE.PerspectiveCamera(72, canvas.clientWidth / canvas.clientHeight, 0.005, 4000);
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
@@ -154,6 +154,7 @@ export function createScene3d({ canvas }) {
       if (!node.isMesh) return;
       node.castShadow = false;
       node.receiveShadow = false;
+      node.frustumCulled = false; // viewmodel is always in view — never cull it
       const id = (node.name + '|' + (node.material?.name || '')).toLowerCase();
       node.material = _ACCENT_KEYS.some(k => id.includes(k)) ? _xgunAccentMat : _xgunBodyMat;
     });
