@@ -3435,12 +3435,7 @@ net.onAliens((incoming) => {
 
 // --- Fire / hit / kill ---
 net.onShot((msg, peerId) => {
-  // Non-participants stay in the lobby — don't show mission tracers to them.
-  if (!localIsParticipant()) return;
-  emitTracer({
-    x1: msg.x1, y1: msg.y1, x2: msg.x2, y2: msg.y2,
-    color: msg.color || '#ff2030', ttl: 0.18,
-  });
+  // Tracers disabled — will be replaced with a new shooting effect later.
 });
 
 net.onHit((msg) => {
@@ -4088,7 +4083,7 @@ function fireRay(originX, originY, dirX, dirY, w, shooterId = net.selfId) {
     })),
   ];
   const hit = hitscan(originX, originY, dirX, dirY, w.range, activeColliders, targets);
-  emitTracer({ x1: originX, y1: originY, x2: hit.point.x, y2: hit.point.y, color: w.tracerColor, ttl: 0.18 });
+  // Local tracer omitted in first-person — other players see it via net.sendShot
   net.sendShot({ x1: originX, y1: originY, x2: hit.point.x, y2: hit.point.y, color: w.tracerColor });
   if (hit.target) {
     if (hit.target.kind === 'alien') {
