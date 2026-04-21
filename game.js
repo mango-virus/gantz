@@ -4016,11 +4016,28 @@ function updateWorldHtmlOverlays() {
   }
 
   // Hunters list — local player first, then connected peers
+  // status: 'lobby' | 'mission_alive' | 'mission_dead'
+  const _inMission = session.phase === Phase.MISSION;
+  const _parts     = session.participants; // null = everyone is a participant
+  function _hunterStatus(isParticipant, alive) {
+    if (!_inMission || !isParticipant) return 'lobby';
+    return alive ? 'mission_alive' : 'mission_dead';
+  }
   const _hunters = [
-    { name: player.username || 'Hunter', color: String(player.color || 'c8142b').replace('#', ''), local: true },
-    ...[...net.peers.values()]
-      .filter(p => p.username)
-      .map(p => ({ name: p.username, color: String(p.color || 'c8142b').replace('#', ''), local: false })),
+    {
+      name:   player.username || 'Hunter',
+      color:  String(player.color || 'c8142b').replace('#', ''),
+      local:  true,
+      status: _hunterStatus(localIsParticipant(), player.alive),
+    },
+    ...[...net.peers.entries()]
+      .filter(([, p]) => p.username)
+      .map(([id, p]) => ({
+        name:   p.username,
+        color:  String(p.color || 'c8142b').replace('#', ''),
+        local:  false,
+        status: _hunterStatus(!_parts || _parts.includes(id), p.alive !== false),
+      })),
   ];
   chat.updateHunters(_hunters);
 }

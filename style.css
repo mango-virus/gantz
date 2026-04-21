@@ -166,8 +166,7 @@ html, body {
   position: relative;
   z-index: 1;
 }
-#chat-hunters-count { color: var(--g); }
-#chat-esc-hint      { color: var(--g-dim); font-size: 0.68em; }
+#chat-esc-hint { color: var(--g-dim); font-size: 0.68em; }
 
 /* Body: log + hunters sidebar */
 #chat-body {
@@ -252,6 +251,13 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.hunter-icon {
+  flex-shrink: 0;
+  font-style: normal;
 }
 .chat-hunter-local {
   color: var(--g-bright) !important;

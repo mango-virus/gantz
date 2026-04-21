@@ -1,16 +1,31 @@
 import { isInputSuspended } from '../engine/input.js';
 
+const HISTORY_KEY = 'gantz:chat-history';
+const MAX = 40;
+
+// Load persisted history from localStorage (array of serialised message objects)
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveHistory(entries) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(-MAX))); } catch {}
+}
+
 export function createChatUI({ onSend, onSuspendInput }) {
   const logWrapEl  = document.getElementById('chat-log-wrap');
   const logEl      = document.getElementById('chat-log');
   const formEl     = document.getElementById('chat-form');
   const inputEl    = document.getElementById('chat-input');
   const huntersEl  = document.getElementById('chat-hunters-list');
-  const countEl    = document.getElementById('chat-hunters-count');
 
-  const MAX = 40;
   let open = false;
   let userScrolled = false;
+  // In-memory list mirrors what's in localStorage
+  let history = loadHistory();
 
   // Track manual scroll so auto-scroll doesn't fight the user
   logWrapEl.addEventListener('scroll', () => {
@@ -22,6 +37,57 @@ export function createChatUI({ onSend, onSuspendInput }) {
     logWrapEl.scrollTop = logWrapEl.scrollHeight;
   }
 
+  // ── DOM builders ─────────────────────────────────────────────────────────
+  function timestamp() {
+    const d = new Date();
+    const h = String(d.getHours()).padStart(2, '0');
+    const m = String(d.getMinutes()).padStart(2, '0');
+    return `[${h}:${m}]`;
+  }
+
+  function buildMsgEl(entry) {
+    const row = document.createElement('div');
+    row.className = 'chat-msg';
+    const ts = document.createElement('span');
+    ts.className = 'chat-ts';
+    ts.textContent = entry.ts;
+    const u = document.createElement('span');
+    u.className = 'chat-u';
+    u.style.color = '#' + String(entry.color || 'c8142b').replace('#', '');
+    u.textContent = entry.username || 'Hunter';
+    row.appendChild(ts);
+    row.appendChild(u);
+    row.appendChild(document.createTextNode(': ' + (entry.text || '')));
+    return row;
+  }
+
+  function buildSystemEl(entry) {
+    const row = document.createElement('div');
+    row.className = 'chat-msg chat-system';
+    const ts = document.createElement('span');
+    ts.className = 'chat-ts';
+    ts.textContent = entry.ts;
+    row.appendChild(ts);
+    row.appendChild(document.createTextNode(entry.text || ''));
+    return row;
+  }
+
+  // ── Render persisted history on load ────────────────────────────────────
+  for (const entry of history) {
+    logEl.appendChild(entry.type === 'system' ? buildSystemEl(entry) : buildMsgEl(entry));
+  }
+  scrollToBottom();
+
+  function persist(entry) {
+    history.push(entry);
+    if (history.length > MAX) history = history.slice(-MAX);
+    // Prune DOM to match
+    while (logEl.children.length > MAX) logEl.removeChild(logEl.firstChild);
+    saveHistory(history);
+    if (!userScrolled) scrollToBottom();
+  }
+
+  // ── Open / close (only the input row toggles) ────────────────────────────
   function openChat() {
     if (open) return;
     open = true;
@@ -45,10 +111,7 @@ export function createChatUI({ onSend, onSuspendInput }) {
     if (document.activeElement === inputEl) return;
     if (isInputSuspended() && !open) return;
     const k = e.key;
-    if (k === 't' || k === 'T' || k === 'Enter') {
-      e.preventDefault();
-      openChat();
-    }
+    if (k === 't' || k === 'T' || k === 'Enter') { e.preventDefault(); openChat(); }
   });
 
   inputEl.addEventListener('keydown', e => {
@@ -62,63 +125,49 @@ export function createChatUI({ onSend, onSuspendInput }) {
     closeChat();
   });
 
-  function timestamp() {
-    const d = new Date();
-    const h = String(d.getHours()).padStart(2, '0');
-    const m = String(d.getMinutes()).padStart(2, '0');
-    return `[${h}:${m}]`;
-  }
-
-  function appendMsg(el) {
-    logEl.appendChild(el);
-    while (logEl.children.length > MAX) logEl.removeChild(logEl.firstChild);
-    if (!userScrolled) scrollToBottom();
-  }
-
+  // ── Public API ────────────────────────────────────────────────────────────
   function add(msg) {
-    const row = document.createElement('div');
-    row.className = 'chat-msg';
-
-    const ts = document.createElement('span');
-    ts.className = 'chat-ts';
-    ts.textContent = timestamp();
-
-    const u = document.createElement('span');
-    u.className = 'chat-u';
-    u.style.color = '#' + String(msg.color || 'c8142b').replace('#', '');
-    u.textContent = msg.username || 'Hunter';
-
-    row.appendChild(ts);
-    row.appendChild(u);
-    row.appendChild(document.createTextNode(': ' + (msg.text || '')));
-    appendMsg(row);
+    const entry = {
+      type: 'msg',
+      ts: timestamp(),
+      username: msg.username || 'Hunter',
+      color: String(msg.color || 'c8142b').replace('#', ''),
+      text: msg.text || '',
+    };
+    logEl.appendChild(buildMsgEl(entry));
+    persist(entry);
   }
 
   function addSystem(text) {
-    const row = document.createElement('div');
-    row.className = 'chat-msg chat-system';
-    const ts = document.createElement('span');
-    ts.className = 'chat-ts';
-    ts.textContent = timestamp();
-    row.appendChild(ts);
-    row.appendChild(document.createTextNode(text || ''));
-    appendMsg(row);
+    const entry = { type: 'system', ts: timestamp(), text: text || '' };
+    logEl.appendChild(buildSystemEl(entry));
+    persist(entry);
   }
 
-  // hunters: array of { name, color, local }
+  // hunters: array of { name, color, local, status }
+  // status: 'lobby' | 'mission_alive' | 'mission_dead'
   function updateHunters(hunters) {
     huntersEl.innerHTML = '';
     for (const h of hunters) {
+      const icon =
+        h.status === 'mission_alive' ? '⚔\uFE0E' :
+        h.status === 'mission_dead'  ? '☠\uFE0E' :
+                                       '●';          // gantz ball (lobby)
       const div = document.createElement('div');
       div.className = 'chat-hunter' + (h.local ? ' chat-hunter-local' : '');
       div.style.color = '#' + String(h.color || '00e05a').replace('#', '');
-      div.textContent = '▸ ' + (h.name || 'Hunter');
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'hunter-icon';
+      iconSpan.textContent = icon + ' ';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = h.name || 'Hunter';
+
+      div.appendChild(iconSpan);
+      div.appendChild(nameSpan);
       div.title = h.name || 'Hunter';
       huntersEl.appendChild(div);
-    }
-    if (countEl) {
-      const n = hunters.length;
-      countEl.textContent = n + (n === 1 ? ' HUNTER' : ' HUNTERS');
     }
   }
 
