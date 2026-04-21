@@ -155,10 +155,19 @@ export function createScene3d({ canvas }) {
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
     viewWeapon.remove(_diagBox); // GLB loaded — remove placeholder
     const gun = gltf.scene;
-    gun.scale.set(0.42, 0.42, 0.42);
+    // Auto-center: model origin may be far from geometry (Blender export issue).
+    // Compute bounding box at natural scale, then offset so geometry centre = group origin.
+    gun.updateMatrixWorld(true);
+    const _bbox = new THREE.Box3().setFromObject(gun);
+    const _bsize = _bbox.getSize(new THREE.Vector3());
+    const _bctr  = _bbox.getCenter(new THREE.Vector3());
+    const _maxDim = Math.max(_bsize.x, _bsize.y, _bsize.z);
+    const _s = _maxDim > 0 ? 0.42 / _maxDim : 1;  // scale so longest axis = 0.42 m
+    gun.scale.setScalar(_s);
+    gun.position.set(-_bctr.x * _s, -_bctr.y * _s, -_bctr.z * _s);
     gun.rotation.set(0.08, -Math.PI / 2, -0.18);
-    gun.position.set(0, 0, 0);
     gun.frustumCulled = false;
+    console.log(`[scene3d] X-Gun bbox size=${_bsize.x.toFixed(1)},${_bsize.y.toFixed(1)},${_bsize.z.toFixed(1)} scale=${_s.toFixed(4)}`);
     gun.traverse(node => {
       if (!node.isMesh) return;
       node.castShadow = false;
