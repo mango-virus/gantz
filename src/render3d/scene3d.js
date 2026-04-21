@@ -117,10 +117,11 @@ export function createScene3d({ canvas }) {
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
-  // z=-0.65: frustum half-height ≈ 0.47m, half-width ≈ 0.84m → x=0.50, y=-0.35 sit
-  // comfortably in the lower-right quadrant without clipping outside the screen.
+  // At z=-0.45: half-height≈0.33m, half-width≈0.58m (16:9).
+  // x=0.38 → right-of-centre; y=-0.30 → grip near bottom edge (partially off-screen).
+  // Scale 0.42 makes the gun fill the lower-right like a standard FPS hold.
   const viewWeapon = new THREE.Group();
-  viewWeapon.position.set(0.50, -0.35, -0.65);
+  viewWeapon.position.set(0.38, -0.30, -0.45);
 
   // Muzzle flash — blue-white to match X-Gun energy.
   const muzzle = new THREE.Mesh(
@@ -146,7 +147,7 @@ export function createScene3d({ canvas }) {
 
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
     const gun = gltf.scene;
-    gun.scale.set(0.14, 0.14, 0.14);
+    gun.scale.set(0.42, 0.42, 0.42);
     gun.rotation.set(0.08, -Math.PI / 2, -0.18);
     gun.position.set(0, 0, 0.05);
     gun.traverse(node => {
@@ -701,7 +702,7 @@ export function createScene3d({ canvas }) {
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
         muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 30);
         // Recoil ease
-        viewWeapon.position.z = -0.65 + (viewWeapon.userData.recoil || 0);
+        viewWeapon.position.z = -0.45 + (viewWeapon.userData.recoil || 0);
         viewWeapon.userData.recoil = Math.max(0, (viewWeapon.userData.recoil || 0) - dt * 3);
       } else {
         viewWeapon.visible = false;
