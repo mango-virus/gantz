@@ -121,35 +121,67 @@ html, body {
   50%      { opacity: 1; }
 }
 
-/* ── Chat box — MMORPG panel ─────────────────────────────────────── */
+/* ── Chat box — MMORPG panel (always visible) ────────────────────── */
 #chat {
   position: fixed;
   bottom: 1rem;
   left: 1rem;
-  width: 360px;
+  width: 500px;
   z-index: 10;
-  pointer-events: none;
+  pointer-events: auto;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 0.80rem;
   line-height: 1.45;
-  transition: opacity 1.5s ease;
-  position: relative;  /* needed for scanline pseudo-element */
-  position: fixed;
+  background: rgba(0, 3, 10, 0.96);
+  border: 1px solid var(--g);
+  box-shadow: 0 0 28px var(--g-glow), inset 0 0 50px rgba(0,0,0,0.65);
 }
 
-/* Panel chrome — hidden when chat is closed */
-#chat-header { display: none; }
-#chat-hunters { display: none; }
+/* CRT scanlines */
+#chat::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent, transparent 3px,
+    rgba(0,0,0,0.13) 3px, rgba(0,0,0,0.13) 4px
+  );
+  pointer-events: none;
+  z-index: 20;
+}
 
+/* Header bar */
+#chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.28rem 0.65rem;
+  border-bottom: 1px solid var(--g-dim);
+  background: rgba(0, 35, 15, 0.5);
+  color: var(--g-bright);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  position: relative;
+  z-index: 1;
+}
+#chat-hunters-count { color: var(--g); }
+#chat-esc-hint      { color: var(--g-dim); font-size: 0.68em; }
+
+/* Body: log + hunters sidebar */
 #chat-body {
   display: flex;
   flex-direction: row;
+  position: relative;
+  z-index: 1;
 }
 
 /* Scrollable message area */
 #chat-log-wrap {
   flex: 1;
-  max-height: 28vh;
+  max-height: 36vh;
+  min-height: 120px;
   overflow-y: auto;
   pointer-events: auto;
   scrollbar-width: thin;
@@ -170,12 +202,11 @@ html, body {
 .chat-msg {
   color: var(--ink);
   padding: 0.14rem 0.35rem;
-  border-left: 2px solid var(--accent);
-  background: rgba(4, 6, 14, 0.82);
+  border-left: 2px solid var(--g-dim);
   word-break: break-word;
 }
 .chat-ts {
-  color: #445544;
+  color: #446644;
   font-size: 0.75em;
   margin-right: 0.3rem;
 }
@@ -184,66 +215,13 @@ html, body {
   letter-spacing: 0.03em;
 }
 .chat-msg.chat-system {
-  border-left-color: var(--g-dim);
+  border-left-color: #333;
   color: var(--g-dim);
   font-style: italic;
 }
 
-/* ── Open state ─────────────────────────────────────────────────── */
-#chat.chat-open {
-  width: 500px;
-  background: rgba(0, 3, 10, 0.96);
-  border: 1px solid var(--g);
-  box-shadow: 0 0 28px var(--g-glow), inset 0 0 50px rgba(0,0,0,0.65);
-  pointer-events: auto;
-  opacity: 1 !important;
-  transition: opacity 0s;
-}
-
-/* CRT scanlines overlay when open */
-#chat.chat-open::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent, transparent 3px,
-    rgba(0,0,0,0.13) 3px, rgba(0,0,0,0.13) 4px
-  );
-  pointer-events: none;
-  z-index: 20;
-}
-
-/* Header bar */
-#chat.chat-open #chat-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.28rem 0.65rem;
-  border-bottom: 1px solid var(--g-dim);
-  background: rgba(0, 35, 15, 0.5);
-  color: var(--g-bright);
-  font-size: 0.72rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  position: relative;
-  z-index: 1;
-}
-#chat-hunters-count { color: var(--g); }
-#chat-esc-hint      { color: var(--g-dim); font-size: 0.68em; }
-
-/* Body: log + hunters sidebar */
-#chat.chat-open #chat-body {
-  position: relative;
-  z-index: 1;
-}
-#chat.chat-open #chat-log-wrap {
-  max-height: 36vh;
-  min-height: 120px;
-}
-
 /* Hunters sidebar */
-#chat.chat-open #chat-hunters {
+#chat-hunters {
   display: flex;
   flex-direction: column;
   width: 138px;
@@ -281,7 +259,7 @@ html, body {
   font-weight: 700;
 }
 
-/* Input form */
+/* Input form — hidden until T is pressed */
 #chat-form {
   pointer-events: auto;
   margin: 0;

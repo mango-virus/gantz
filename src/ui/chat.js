@@ -1,44 +1,22 @@
 import { isInputSuspended } from '../engine/input.js';
 
 export function createChatUI({ onSend, onSuspendInput }) {
-  const chatEl      = document.getElementById('chat');
-  const logWrapEl   = document.getElementById('chat-log-wrap');
-  const logEl       = document.getElementById('chat-log');
-  const formEl      = document.getElementById('chat-form');
-  const inputEl     = document.getElementById('chat-input');
-  const huntersEl   = document.getElementById('chat-hunters-list');
-  const countEl     = document.getElementById('chat-hunters-count');
+  const logWrapEl  = document.getElementById('chat-log-wrap');
+  const logEl      = document.getElementById('chat-log');
+  const formEl     = document.getElementById('chat-form');
+  const inputEl    = document.getElementById('chat-input');
+  const huntersEl  = document.getElementById('chat-hunters-list');
+  const countEl    = document.getElementById('chat-hunters-count');
 
   const MAX = 40;
   let open = false;
   let userScrolled = false;
-  let fadeTimer = null;
-  const FADE_DELAY_MS = 6000;
 
-  function scheduleFade() {
-    clearTimeout(fadeTimer);
-    fadeTimer = setTimeout(() => { chatEl.style.opacity = '0'; }, FADE_DELAY_MS);
-  }
-
-  function showChat() {
-    clearTimeout(fadeTimer);
-    chatEl.style.opacity = '1';
-  }
-
-  // Start hidden
-  chatEl.style.opacity = '0';
-
-  // Track manual scroll so auto-scroll to bottom doesn't fight the user
+  // Track manual scroll so auto-scroll doesn't fight the user
   logWrapEl.addEventListener('scroll', () => {
     const atBottom = logWrapEl.scrollHeight - logWrapEl.scrollTop - logWrapEl.clientHeight < 10;
     userScrolled = !atBottom;
   });
-
-  // Mouse-wheel scrolling through history (active whenever chat is open)
-  logWrapEl.addEventListener('wheel', e => {
-    if (!open) return;
-    e.stopPropagation();
-  }, { passive: true });
 
   function scrollToBottom() {
     logWrapEl.scrollTop = logWrapEl.scrollHeight;
@@ -47,12 +25,9 @@ export function createChatUI({ onSend, onSuspendInput }) {
   function openChat() {
     if (open) return;
     open = true;
-    showChat();
-    chatEl.classList.add('chat-open');
     formEl.style.display = 'flex';
     inputEl.focus();
     onSuspendInput(true);
-    // Jump to latest messages on open
     userScrolled = false;
     scrollToBottom();
   }
@@ -60,12 +35,10 @@ export function createChatUI({ onSend, onSuspendInput }) {
   function closeChat() {
     if (!open) return;
     open = false;
-    chatEl.classList.remove('chat-open');
     formEl.style.display = 'none';
     inputEl.value = '';
     inputEl.blur();
     onSuspendInput(false);
-    scheduleFade();
   }
 
   addEventListener('keydown', e => {
@@ -100,8 +73,6 @@ export function createChatUI({ onSend, onSuspendInput }) {
     logEl.appendChild(el);
     while (logEl.children.length > MAX) logEl.removeChild(logEl.firstChild);
     if (!userScrolled) scrollToBottom();
-    showChat();
-    if (!open) scheduleFade();
   }
 
   function add(msg) {
