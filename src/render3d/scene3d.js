@@ -389,6 +389,13 @@ export function createScene3d({ canvas }) {
       gun.frustumCulled = false;
       console.log(`[scene3d] X-Gun size: ${_sz.x.toFixed(2)}x${_sz.y.toFixed(2)}x${_sz.z.toFixed(2)} scale:${_s.toFixed(3)} ctr:${_ct.x.toFixed(2)},${_ct.y.toFixed(2)},${_ct.z.toFixed(2)}`);
       viewWeapon.add(gun);
+      // Store barrel panel refs for animation (traverse after add so full tree is reachable)
+      viewWeapon.traverse(n => {
+        if (n.name === 'Object_7') _panelL = n;
+        if (n.name === 'Object_8') _panelR = n;
+        if (n.name === 'Object_6') _panelB = n;
+      });
+      console.log('[scene3d] barrel panels:', !!_panelL, !!_panelR, !!_panelB);
     } catch (e) {
       console.error('[scene3d] X-Gun setup error:', e);
     }
@@ -399,6 +406,12 @@ export function createScene3d({ canvas }) {
   camera.add(viewWeapon);
   scene.add(camera); // camera must be in scene graph for child meshes to render
   viewWeapon.visible = false;
+
+  // ── Barrel panel references (populated after GLB loads) ──────────────────
+  let _panelL = null;  // Object_7 — left panel
+  let _panelR = null;  // Object_8 — right panel
+  let _panelB = null;  // Object_6 — bottom panel
+  let _barrelExtend = 0; // 0=closed, spikes to 1 on fire, spring-decays back
 
   // ── ADS (Aim Down Sights) ─────────────────────────────────────────────────
   let _adsActive = false;
@@ -980,6 +993,22 @@ export function createScene3d({ canvas }) {
         muzzle.position.x = -0.14 + (-0.188 - -0.14) * _adsE;
         muzzleLight.position.x = muzzle.position.x;
 
+        // ── Barrel panel extension ───────────────────────────────────────
+        // Lazily resolve panel refs on first render after GLB loads
+        if (!_panelL || !_panelR || !_panelB) {
+          viewWeapon.traverse(n => {
+            if (n.name === 'Object_7') _panelL = n;
+            if (n.name === 'Object_8') _panelR = n;
+            if (n.name === 'Object_6') _panelB = n;
+          });
+        }
+        // Two layers: ADS hold (smooth open while aiming) + fire spike (quick kick on shoot)
+        _barrelExtend = Math.max(0, _barrelExtend - dt * 6); // fire spike decays
+        const _be   = _barrelExtend * _barrelExtend * (3 - 2 * _barrelExtend); // smoothstep fire
+        if (_panelL) _panelL.position.x = -0.08 * _be; // fire spike only
+        if (_panelR) _panelR.position.x =  0.08 * _be; // fire spike only
+        if (_panelB) _panelB.position.x =  0.08 * _be; // fire spike only
+
         // FOV narrows from 72° → 55° during ADS (subtle zoom)
         const fovTarget = 72 - 17 * _adsE;
         camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 10);
@@ -999,6 +1028,8 @@ export function createScene3d({ canvas }) {
   function triggerMuzzleFlash() {
     muzzle.material.opacity = 0.9;
     muzzleLight.intensity = 4.0;
+    // Trigger barrel panel extension
+    _barrelExtend = 1;
     // ADS tightens recoil — scale down to 50% at full ADS
     const adsScale = 1 - 0.5 * _adsT;
     viewWeapon.userData.recoil     = 0.08  * adsScale;  // z kick back
