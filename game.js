@@ -3720,7 +3720,8 @@ function hostEndMission(nowMs, result = 'wiped') {
   // Record stats + permadeath
   if (result === 'wiped') {
     stats = recordWipe();
-    // Full wipe: reset everything
+    // Full wipe: reset everything, restart from mission 1
+    session.missionIndex = 0;  // hostStartBriefing() will increment to 1
     player.points = 0;
     player.loadout = baseLoadout();
     player.activeSlot = 0;
@@ -4232,8 +4233,11 @@ function update(dt) {
   sprinting = moving && isDown('shift');
   const speedMul = sprinting ? 1.7 : 1.0;
   if (moving) noteActivity();
-  player.x += vx * player.speed * speedMul * dt;
-  player.y += vz * player.speed * speedMul * dt;
+  // Dead players cannot move in the lobby (alive is only reset to true on MISSION enter)
+  if (player.alive) {
+    player.x += vx * player.speed * speedMul * dt;
+    player.y += vz * player.speed * speedMul * dt;
+  }
   // facing follows camera yaw regardless of movement (first-person)
   player.facing = Math.atan2(fz, fx);
   if (moving) {
