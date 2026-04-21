@@ -15,7 +15,11 @@ function saveHistory(entries) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(-MAX))); } catch {}
 }
 
+const FADE_DELAY_MS = 7000;  // ms of inactivity before fading out
+const FADE_IN_MS    = 0;     // fade in is instant (opacity transition handles visual)
+
 export function createChatUI({ onSend, onSuspendInput }) {
+  const chatEl     = document.getElementById('chat');
   const logWrapEl  = document.getElementById('chat-log-wrap');
   const logEl      = document.getElementById('chat-log');
   const formEl     = document.getElementById('chat-form');
@@ -27,10 +31,21 @@ export function createChatUI({ onSend, onSuspendInput }) {
   // In-memory list mirrors what's in localStorage
   let history = loadHistory();
 
-  // Track manual scroll so auto-scroll doesn't fight the user
+  // ── Fade logic ────────────────────────────────────────────────────────────
+  let _fadeTimer = null;
+  function wake() {
+    chatEl.classList.remove('chat-faded');
+    if (_fadeTimer) clearTimeout(_fadeTimer);
+    _fadeTimer = setTimeout(() => {
+      if (!open) chatEl.classList.add('chat-faded');
+    }, FADE_DELAY_MS);
+  }
+
+  // Track manual scroll so auto-scroll doesn't fight the user; also wake on scroll
   logWrapEl.addEventListener('scroll', () => {
     const atBottom = logWrapEl.scrollHeight - logWrapEl.scrollTop - logWrapEl.clientHeight < 10;
     userScrolled = !atBottom;
+    wake();
   });
 
   function scrollToBottom() {
@@ -77,6 +92,8 @@ export function createChatUI({ onSend, onSuspendInput }) {
     logEl.appendChild(entry.type === 'system' ? buildSystemEl(entry) : buildMsgEl(entry));
   }
   scrollToBottom();
+  // Start faded — first activity or incoming message will wake it
+  chatEl.classList.add('chat-faded');
 
   function persist(entry) {
     history.push(entry);
@@ -96,6 +113,7 @@ export function createChatUI({ onSend, onSuspendInput }) {
     onSuspendInput(true);
     userScrolled = false;
     scrollToBottom();
+    wake();
   }
 
   function closeChat() {
@@ -105,6 +123,7 @@ export function createChatUI({ onSend, onSuspendInput }) {
     inputEl.value = '';
     inputEl.blur();
     onSuspendInput(false);
+    wake();  // restart the 7s fade timer from close time
   }
 
   addEventListener('keydown', e => {
@@ -136,12 +155,14 @@ export function createChatUI({ onSend, onSuspendInput }) {
     };
     logEl.appendChild(buildMsgEl(entry));
     persist(entry);
+    wake();
   }
 
   function addSystem(text) {
     const entry = { type: 'system', ts: timestamp(), text: text || '' };
     logEl.appendChild(buildSystemEl(entry));
     persist(entry);
+    wake();
   }
 
   // hunters: array of { name, color, local, status }

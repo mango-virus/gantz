@@ -121,7 +121,7 @@ html, body {
   50%      { opacity: 1; }
 }
 
-/* ── Chat box — MMORPG panel (always visible) ────────────────────── */
+/* ── Chat box — MMORPG panel (fades after 7s inactivity) ─────────── */
 #chat {
   position: fixed;
   bottom: 1rem;
@@ -135,6 +135,12 @@ html, body {
   background: rgba(0, 3, 10, 0.96);
   border: 1px solid var(--g);
   box-shadow: 0 0 28px var(--g-glow), inset 0 0 50px rgba(0,0,0,0.65);
+  opacity: 1;
+  transition: opacity 1.2s ease;
+}
+#chat.chat-faded {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* CRT scanlines */
