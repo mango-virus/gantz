@@ -180,8 +180,7 @@ html, body {
 /* Scrollable message area */
 #chat-log-wrap {
   flex: 1;
-  max-height: 36vh;
-  min-height: 120px;
+  height: 10.5rem;   /* fixed ~6 message rows; scrolls beyond that */
   overflow-y: auto;
   pointer-events: auto;
   scrollbar-width: thin;
