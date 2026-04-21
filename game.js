@@ -4211,6 +4211,12 @@ function update(dt) {
           missionPointsEarned += points;
           if (alien.isBonusBoss) missionBossKilled = true;
           toast(`+${points} · ${arch.name}`, 'kill');
+        } else {
+          // Trystero has no loopback — the host's onKill listener never fires for
+          // kills it broadcasts.  Eagerly update the peer's points here so the host's
+          // debrief calculation is accurate without waiting for the next 15Hz pose.
+          const killerPeer = net.peers.get(alien._killerId);
+          if (killerPeer) killerPeer.points = (killerPeer.points || 0) + points;
         }
       });
 
