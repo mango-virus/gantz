@@ -147,7 +147,7 @@ export function createScene3d({ canvas }) {
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
     const gun = gltf.scene;
     gun.scale.set(0.14, 0.14, 0.14);
-    gun.rotation.set(0.08, Math.PI, -0.18);
+    gun.rotation.set(0.08, -Math.PI / 2, -0.18);
     gun.position.set(0, 0, 0.05);
     gun.traverse(node => {
       if (!node.isMesh) return;
