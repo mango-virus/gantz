@@ -140,9 +140,180 @@ export function createScene3d({ canvas }) {
   // Body: full PBR texture set (colour/normal/metalness/roughness/ao).
   // Accents/screen: MeshBasicMaterial (unlit) so they always glow.
   const _xgunAccentMat = new THREE.MeshBasicMaterial({ color: 0x003577 }); // dark steel blue
-  const _xgunScreenMat = new THREE.MeshBasicMaterial({ color: 0x0077cc });
   const _ACCENT_KEYS   = ['luz'];
   const _SCREEN_KEYS   = ['pantalla', 'craneo'];
+
+  // ── Gantz HUD screen (canvas texture, updated every frame) ───────────────
+  const _scrW = 256, _scrH = 128;
+  const _scrCanvas = document.createElement('canvas');
+  _scrCanvas.width = _scrW; _scrCanvas.height = _scrH;
+  const _scrCtx = _scrCanvas.getContext('2d');
+  const _scrTex  = new THREE.CanvasTexture(_scrCanvas);
+  const _xgunScreenMat = new THREE.MeshBasicMaterial({ map: _scrTex, side: THREE.DoubleSide });
+  let _scrTime = 0;
+
+  // Weapon id → short display name
+  const _WNAMES = { xgun:'X-GUN', xshot:'X-SHOT', xsword:'X-SWD', xsniper:'SNPR', ygun:'Y-GUN' };
+  // Glitch char pool
+  const _GLITCH_CHARS = '▓░█▒#@%&?!';
+  let _glitchTimer = 0;     // counts down to next glitch burst
+  let _glitchActive = 0;    // frames remaining in current burst
+
+  function _drawGantzScreen(dt, state) {
+    _scrTime += dt;
+    const t  = _scrTime;
+    const ctx = _scrCtx;
+
+    // ── Safe draw region (derived from mesh UV bounds) ──────────────────────
+    // UV: U 0.204–0.839, V 0.743–0.982  →  canvas px (256×128, flipY)
+    const SX0 = 59, SX1 = 211, SW = SX1 - SX0;   // 152 px wide
+    const SY0 =  4, SY1 =  31, SH = SY1 - SY0;   //  27 px tall
+
+    // ── Glitch timing ────────────────────────────────────────────────────────
+    _glitchTimer -= dt;
+    if (_glitchTimer <= 0) {
+      _glitchActive = 3 + Math.random() * 4; // 3–7 frames of glitch
+      _glitchTimer  = 4 + Math.random() * 6; // next burst in 4–10 s
+    }
+    const glitching = _glitchActive > 0;
+    if (glitching) _glitchActive -= 1;
+    const gc = () => _GLITCH_CHARS[Math.random() * _GLITCH_CHARS.length | 0];
+
+    // Clear to black outside safe zone
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, _scrW, _scrH);
+
+    // Panel background
+    ctx.fillStyle = '#03111e';
+    ctx.fillRect(SX0, SY0, SW, SH);
+
+    // Scan lines (every 3 px, subtle)
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    for (let y = SY0; y < SY1; y += 3) ctx.fillRect(SX0, y, SW, 1);
+
+    // ── Sweep line ───────────────────────────────────────────────────────────
+    // Cycles top→bottom every 3 s, then resets
+    const sweepPeriod = 3.0;
+    const sweepPos = (t % sweepPeriod) / sweepPeriod; // 0→1
+    const sweepY   = SY0 + sweepPos * SH;
+    const sweepGrad = ctx.createLinearGradient(0, sweepY - 4, 0, sweepY + 4);
+    sweepGrad.addColorStop(0,   'rgba(0,212,255,0)');
+    sweepGrad.addColorStop(0.5, 'rgba(0,212,255,0.35)');
+    sweepGrad.addColorStop(1,   'rgba(0,212,255,0)');
+    ctx.fillStyle = sweepGrad;
+    ctx.fillRect(SX0, sweepY - 4, SW, 8);
+
+    // ── Outer border — neon glow ─────────────────────────────────────────────
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
+    ctx.save();
+    ctx.shadowColor = '#00d4ff';
+    ctx.shadowBlur  = 6;
+    ctx.strokeStyle = `rgba(0,212,255,${0.55 + 0.25 * pulse})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(SX0 + 0.5, SY0 + 0.5, SW - 1, SH - 1);
+    ctx.restore();
+
+    // Inner inset line
+    ctx.strokeStyle = 'rgba(0,212,255,0.12)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(SX0 + 2.5, SY0 + 2.5, SW - 5, SH - 5);
+
+    // Corner ticks
+    const TL = 5;
+    ctx.save();
+    ctx.shadowColor = '#00d4ff';
+    ctx.shadowBlur  = 4;
+    ctx.strokeStyle = '#00d4ff';
+    ctx.lineWidth = 1.2;
+    [[SX0,SY0,1,1],[SX1,SY0,-1,1],[SX0,SY1,1,-1],[SX1,SY1,-1,-1]].forEach(([cx,cy,sx,sy]) => {
+      ctx.beginPath();
+      ctx.moveTo(cx + sx*TL, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + sy*TL);
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    // ── Three data columns ───────────────────────────────────────────────────
+    const D1 = SX0 + SW * 0.333 | 0;
+    const D2 = SX0 + SW * 0.667 | 0;
+    ctx.strokeStyle = 'rgba(0,212,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(D1, SY0 + 3); ctx.lineTo(D1, SY1 - 3);
+    ctx.moveTo(D2, SY0 + 3); ctx.lineTo(D2, SY1 - 3);
+    ctx.stroke();
+
+    const C1x   = SX0 + SW * 0.167 | 0;
+    const C2x   = SX0 + SW * 0.500 | 0;
+    const C3x   = SX0 + SW * 0.833 | 0;
+    const labelY = SY0 + 10;
+    const valueY = SY1 - 4;
+
+    // Live data
+    const alienCount  = (state?.aliens?.length ?? 0);
+    const points      = (state?.player?.points  ?? 0);
+    const wid         = state?.player?.loadout?.weapon1 || 'xgun';
+    const weaponLabel = _WNAMES[wid] || wid.toUpperCase().slice(0,5);
+
+    // Alien count colour — red pulse on last target
+    const oneLeft   = alienCount === 1 && state?.phase === 'MISSION';
+    const targetClr = oneLeft ? `rgba(255,60,60,${0.7 + 0.3 * pulse})` : '#00d4ff';
+
+    ctx.textAlign = 'center';
+
+    // Column labels — neon glow
+    ctx.save();
+    ctx.shadowColor = '#00d4ff';
+    ctx.shadowBlur  = 5;
+    ctx.font = '7px monospace';
+    ctx.letterSpacing = '1px';
+    ctx.fillStyle = 'rgba(0,212,255,0.75)';
+    ctx.fillText('TARGETS', C1x, labelY);
+    ctx.fillText('POINTS',  C2x, labelY);
+    ctx.fillText('WEAPON',  C3x, labelY);
+    ctx.restore();
+
+    // Column values — brighter glow + optional glitch
+    ctx.save();
+    ctx.font = 'bold 9px monospace';
+    ctx.letterSpacing = '2px';
+
+    // TARGETS
+    ctx.shadowColor = oneLeft ? '#ff3c3c' : '#00d4ff';
+    ctx.shadowBlur  = 8;
+    ctx.fillStyle   = targetClr;
+    const tgtStr = glitching
+      ? gc() + (Math.random() < 0.5 ? gc() : String(alienCount).padStart(2,'0')[1])
+      : String(alienCount).padStart(2, '0');
+    ctx.fillText(tgtStr, C1x, valueY);
+
+    // POINTS
+    ctx.shadowColor = '#00d4ff';
+    ctx.shadowBlur  = 8;
+    ctx.fillStyle   = '#00d4ff';
+    const ptStr = glitching && Math.random() < 0.4
+      ? String(points).slice(0,-1) + gc()
+      : String(points);
+    ctx.fillText(ptStr, C2x, valueY);
+
+    // WEAPON
+    const wpStr = glitching && Math.random() < 0.3
+      ? weaponLabel.slice(0,-1) + gc()
+      : weaponLabel;
+    ctx.fillText(wpStr, C3x, valueY);
+
+    ctx.restore();
+    ctx.letterSpacing = '0px';
+
+    // Blinking "alive" dot — bottom-left corner
+    const dotAlpha = 0.4 + 0.6 * ((Math.floor(t * 1.5) % 2 === 0) ? 1 : 0);
+    ctx.fillStyle = `rgba(0,212,255,${dotAlpha})`;
+    ctx.beginPath();
+    ctx.arc(SX0 + 4, SY1 - 4, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.textAlign = 'left';
+    _scrTex.needsUpdate = true;
+  }
   // These accent meshes were visually identified and removed (wrong placement on model).
   const _HIDDEN_MESHES = new Set(['Object_24', 'Object_26', 'Object_27']);
 
@@ -763,6 +934,8 @@ export function createScene3d({ canvas }) {
         camera.rotation.x = state.pitch || 0;
         camera.rotation.z = 0;
         viewWeapon.visible = (state.phase === 'MISSION' || state.phase === 'LOBBY') && (state.playerAlive !== false);
+        // Update Gantz HUD screen texture every frame
+        if (viewWeapon.visible) _drawGantzScreen(dt, state);
         // Muzzle flash decays every frame
         const mMat = muzzle.material;
         mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
