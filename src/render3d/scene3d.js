@@ -139,10 +139,12 @@ export function createScene3d({ canvas }) {
   // GLB material names: M_01_base_negra (body), M_01_luz (lights), craneo_pantalla (screen).
   // Body: full PBR texture set (colour/normal/metalness/roughness/ao).
   // Accents/screen: MeshBasicMaterial (unlit) so they always glow.
-  const _xgunAccentMat = new THREE.MeshBasicMaterial({ color: 0x00ccff });
+  const _xgunAccentMat = new THREE.MeshBasicMaterial({ color: 0x003577 }); // dark steel blue
   const _xgunScreenMat = new THREE.MeshBasicMaterial({ color: 0x0077cc });
   const _ACCENT_KEYS   = ['luz'];
   const _SCREEN_KEYS   = ['pantalla', 'craneo'];
+  // These accent meshes were visually identified and removed (wrong placement on model).
+  const _HIDDEN_MESHES = new Set(['Object_24', 'Object_26', 'Object_27']);
 
   // Load PBR textures for the body then build the material.
   const _tl = new THREE.TextureLoader();
@@ -203,6 +205,7 @@ export function createScene3d({ canvas }) {
         node.geometry.translate(-_ct.x, -_ct.y, -_ct.z);
         node.frustumCulled = false;
         // Read original GLB material name before replacing it.
+        if (_HIDDEN_MESHES.has(node.name)) { node.visible = false; return; }
         const matName = (node.material?.name || '').toLowerCase();
         if (_ACCENT_KEYS.some(k => matName.includes(k)))       node.material = _xgunAccentMat;
         else if (_SCREEN_KEYS.some(k => matName.includes(k)))  node.material = _xgunScreenMat;
