@@ -3344,6 +3344,11 @@ const net = createNetwork({
 net.onStatus(s => {
   if (s === 'connected') { broadcastSession(); }
 });
+// Track which peer IDs have already been announced in chat.
+// We wait for the first pose (which carries the username) rather than announcing
+// on raw join, because the username isn't known until the first pose arrives.
+const _announcedPeers = new Set();
+
 net.onPeerJoin(() => {
   if (net.isHost) broadcastSession();
 });
@@ -4120,6 +4125,14 @@ chatInputEl?.addEventListener('focus', () => {
 
 
 function update(dt) {
+  // Announce peers the first time their username is known (arrives via pose, not raw join).
+  for (const [id, p] of net.peers) {
+    if (p.username && !_announcedPeers.has(id)) {
+      _announcedPeers.add(id);
+      chat.addSystem(`${p.username} has entered the game.`);
+    }
+  }
+
   prevPos.clear();
   prevPos.set(player, { x: player.x, y: player.y });
 

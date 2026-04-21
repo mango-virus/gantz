@@ -169,6 +169,12 @@ html, body {
   letter-spacing: 0.04em;
 }
 
+.chat-msg.chat-system {
+  border-left-color: #555;
+  color: #aaa;
+  font-style: italic;
+}
+
 #chat-form {
   pointer-events: auto;
   margin: 0;

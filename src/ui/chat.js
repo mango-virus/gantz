@@ -98,5 +98,19 @@ export function createChatUI({ onSend, onSuspendInput }) {
     scheduleFade();
   }
 
-  return { add, openChat, closeChat, isOpen: () => open };
+  function addSystem(text) {
+    const div = document.createElement('div');
+    div.className = 'chat-msg chat-system';
+    div.textContent = text;
+    logEl.appendChild(div);
+
+    while (logEl.children.length > MAX) logEl.removeChild(logEl.firstChild);
+
+    if (!userScrolled) logEl.scrollTop = logEl.scrollHeight;
+
+    showChat();
+    scheduleFade();
+  }
+
+  return { add, addSystem, openChat, closeChat, isOpen: () => open };
 }
