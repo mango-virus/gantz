@@ -790,22 +790,22 @@ export function createScene3d({ canvas }) {
         const swayY   = Math.sin(wd.idleTime * 0.4) * 0.003 * hipAmt;
         const walkBob = (state.bob || 0) * 0.4 * hipAmt;
 
-        // Lerp between hip-fire and ADS position
-        // ADS target: barrel centred on screen, raised to eye level, pulled slightly closer
+        // Lerp between hip-fire and ADS position.
+        // ADS: pull gun back (further z), raise and slightly right so barrel lines up.
         viewWeapon.position.set(
-          0.46 + (0.08 - 0.46) * _adsE + swayX,
-          -0.38 + (-0.18 - -0.38) * _adsE + swayY + walkBob - (wd.recoilY || 0),
-          -0.55 + (-0.42 - -0.55) * _adsE + (wd.recoil || 0),
+          0.46 + (0.14 - 0.46) * _adsE + swayX,
+          -0.38 + (-0.22 - -0.38) * _adsE + swayY + walkBob - (wd.recoilY || 0),
+          -0.55 + (-0.62 - -0.55) * _adsE + (wd.recoil || 0),
         );
-        // Rotate gun slightly to align barrel with crosshair during ADS
+        // Gentle rotation to bring barrel in line — less aggressive than before
         viewWeapon.rotation.set(
           -(wd.recoilRot  || 0),
-          -0.30 * _adsE,
+          -0.10 * _adsE,
           (wd.recoilRoll || 0) * hipAmt,
         );
 
-        // FOV narrows from 72° → 50° during ADS (zoom effect)
-        const fovTarget = 72 - 22 * _adsE;
+        // FOV narrows from 72° → 55° during ADS (subtle zoom)
+        const fovTarget = 72 - 17 * _adsE;
         camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 10);
         camera.updateProjectionMatrix();
       } else {
