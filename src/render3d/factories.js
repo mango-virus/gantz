@@ -2218,6 +2218,49 @@ export function buildLobbyRoom() {
 
     group.userData.portalSurface = portalSurface;
     group.userData.portalLight   = portalLight;
+
+    // Sign above the portal frame
+    {
+      const SW = PW_W + FT * 2;   // sign width  (matches frame outer width)
+      const SH = 0.38;             // sign height in metres
+      const SY = PW_BOT + PW_H + FT + SH / 2 + 0.06;  // just above top bar (~3.10 m)
+
+      // Canvas texture — dark panel, cyan text to match portal
+      const sc = document.createElement('canvas');
+      sc.width = 512; sc.height = 128;
+      const sx = sc.getContext('2d');
+      // Background
+      sx.fillStyle = '#05060e';
+      sx.fillRect(0, 0, 512, 128);
+      // Outer border
+      sx.strokeStyle = '#00ccdd'; sx.lineWidth = 4;
+      sx.strokeRect(3, 3, 506, 122);
+      // Inner border
+      sx.strokeStyle = '#003344'; sx.lineWidth = 2;
+      sx.strokeRect(9, 9, 494, 110);
+      // Text — two passes: glow then solid
+      sx.font = 'bold 54px monospace';
+      sx.textAlign = 'center'; sx.textBaseline = 'middle';
+      sx.fillStyle = 'rgba(0,220,255,0.25)';
+      for (let g = 0; g < 3; g++) sx.fillText('JAM LOBBY', 256, 64);  // soft glow build-up
+      sx.fillStyle = '#00eeff';
+      sx.fillText('JAM LOBBY', 256, 64);
+
+      const signTex = new THREE.CanvasTexture(sc);
+      // Backing plate (dark metal box, protrudes slightly from wall)
+      const plateMat = new THREE.MeshStandardMaterial({ color: 0x05060e, roughness: 0.28, metalness: 0.90 });
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(SW + 0.05, SH + 0.05, 0.06), plateMat);
+      plate.position.set(0, SY, PZ + 0.03);
+      group.add(plate);
+      // Sign face plane, flush with plate front face
+      const signMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(SW, SH),
+        new THREE.MeshBasicMaterial({ map: signTex, side: THREE.FrontSide }),
+      );
+      signMesh.rotation.y = Math.PI;  // face toward -Z (toward approaching player)
+      signMesh.position.set(0, SY, PZ);
+      group.add(signMesh);
+    }
   }
 
   // ---- Structural RC pilasters ----
