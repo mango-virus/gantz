@@ -3047,7 +3047,13 @@ let bobPhase = 0;
 let bob = 0;
 let jumpY = 0;
 let jumpVY = 0;
+let jumpId = 0;        // increments each time a jump starts — triggers anim in scene3d
+let jumpMoveFwd  = 0;  // moveFwd captured at liftoff (not updated until next jump)
+let jumpMoveSide = 0;  // moveSide captured at liftoff
 let sprinting = false;
+let walking  = false;
+let moveFwd  = 0;  // -1=back, 0=still, +1=fwd (relative to facing)
+let moveSide = 0;  // -1=left, 0=still, +1=right (relative to facing)
 const JUMP_SPEED = 5.5;
 const GRAVITY    = 18;
 const MOUSE_SENS = 0.0022;
@@ -3366,7 +3372,13 @@ const net = createNetwork({
     ready: player.ready,
     lifetimePoints: stats.lifetimePoints,
     jumpY: jumpY,
+    jumpId,
+    jumpMoveFwd,
+    jumpMoveSide,
     sprinting: sprinting,
+    walking,
+    moveFwd,
+    moveSide,
   }),
 });
 
@@ -4226,7 +4238,11 @@ function update(dt) {
   const vz = fz * wsIn + rz * adIn;
   const moving = (vx !== 0 || vz !== 0);
   sprinting = moving && isDown('shift');
-  const speedMul = sprinting ? 1.7 : 1.0;
+  if (wasPressed('x')) walking = !walking;
+  if (sprinting) walking = false;
+  moveFwd  = moving ? wsIn : 0;
+  moveSide = moving ? adIn : 0;
+  const speedMul = sprinting ? 1.7 : walking ? 0.5 : 1.0;
   if (moving) noteActivity();
   // Dead players cannot move in the lobby (alive is only reset to true on MISSION enter)
   if (player.alive) {
@@ -4236,9 +4252,9 @@ function update(dt) {
   // facing follows camera yaw regardless of movement (first-person)
   player.facing = Math.atan2(fz, fx);
   if (moving) {
-    player.walkPhase += dt * (sprinting ? 14 : 9);
-    bobPhase += dt * (sprinting ? 16 : 10);
-    bob = Math.abs(Math.sin(bobPhase)) * (sprinting ? 0.055 : 0.035);
+    player.walkPhase += dt * (sprinting ? 14 : walking ? 6 : 9);
+    bobPhase += dt * (sprinting ? 16 : walking ? 7 : 10);
+    bob = Math.abs(Math.sin(bobPhase)) * (sprinting ? 0.055 : walking ? 0.02 : 0.035);
   } else {
     player.walkPhase *= Math.pow(0.05, dt);
     bobPhase *= Math.pow(0.05, dt);
@@ -4248,6 +4264,9 @@ function update(dt) {
   // Jump
   if (wasPressed(' ') && jumpY === 0 && player.alive) {
     jumpVY = JUMP_SPEED;
+    jumpId++;
+    jumpMoveFwd  = moveFwd;
+    jumpMoveSide = moveSide;
   }
   if (jumpY > 0 || jumpVY > 0) {
     jumpVY -= GRAVITY * dt;
@@ -4510,7 +4529,13 @@ function render(dt) {
       username: p.username || '?',
       suit: p.loadout?.suit && p.loadout.suit !== 'basic',
       jumpY: p.jumpY || 0,
+      jumpId: p.jumpId || 0,
+      jumpMoveFwd:  p.jumpMoveFwd  || 0,
+      jumpMoveSide: p.jumpMoveSide || 0,
       sprinting: !!p.sprinting,
+      walking:   !!p.walking,
+      moveFwd:  p.moveFwd  || 0,
+      moveSide: p.moveSide || 0,
       chatText:  bubbleAlive ? bubble.text : null,
       chatAlpha: bubbleAlive ? Math.min(1, (bubble.expiresAt - _now) / 1000) : 0,
     });

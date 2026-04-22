@@ -1,5 +1,7 @@
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { GLTFLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+import { FBXLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/FBXLoader.js';
+import { clone as skeletonClone } from 'https://esm.sh/three@0.160.0/examples/jsm/utils/SkeletonUtils.js';
 import {
   buildHumanMesh, buildAlienMesh, buildPropMesh, buildBuildingMesh,
   buildLobbyRoom, buildMissionRoom, buildGantzBallMesh, buildTracerMesh,
@@ -485,8 +487,176 @@ export function createScene3d({ canvas }) {
     if (currentRoomGroup) scene.add(currentRoomGroup);
   }
 
+  // ── Character model (FBX) ────────────────────────────────────────────────
+  let _charTemplate = null;  // loaded FBX root Object3D (not added to scene)
+  let _charClips = null;     // { clipName → AnimationClip }
+
+  function _resampleClip(clip, fps) {
+    const dt = 1 / fps;
+    const duration = clip.duration;
+    const count = Math.ceil(duration * fps) + 1;
+    const newTimes = new Float32Array(count);
+    for (let i = 0; i < count; i++) newTimes[i] = Math.min(i * dt, duration);
+    clip.tracks = clip.tracks.map(track => {
+      const stride = track.getValueSize();
+      const interp = track.createInterpolant(new Float32Array(stride));
+      const newValues = new Float32Array(count * stride);
+      for (let i = 0; i < count; i++) {
+        const r = interp.evaluate(newTimes[i]);
+        for (let j = 0; j < stride; j++) newValues[i * stride + j] = r[j];
+      }
+      return new track.constructor(track.name, newTimes, newValues);
+    });
+  }
+
+  const _CHAR_BASE = 'assets/models/character/male1/male1.fbx';
+  const _CHAR_ANIMS = {
+    lobby_idle:       'assets/models/character/male1/Lobby/male1_idle.fbx',
+    lobby_walk:       'assets/models/character/male1/Lobby/male1_walking.fbx',
+    lobby_walk_back:  'assets/models/character/male1/Lobby/male1_walking_backwards.fbx',
+    lobby_strafe_l:   'assets/models/character/male1/Lobby/male1_left_strafe_walking.fbx',
+    lobby_strafe_r:   'assets/models/character/male1/Lobby/male1_right_strafe_walking.fbx',
+    lobby_jog:        'assets/models/character/male1/Lobby/jog_forward.fbx',
+    lobby_jog_back:   'assets/models/character/male1/Lobby/jog_backward.fbx',
+    lobby_jog_diag_fl:'assets/models/character/male1/Lobby/jog_forward_diagonal_left.fbx',
+    lobby_jog_diag_fr:'assets/models/character/male1/Lobby/jog_forward_diagonal_right.fbx',
+    lobby_jog_diag_bl:'assets/models/character/male1/Lobby/jog_backward_diagonal_left.fbx',
+    lobby_jog_diag_br:'assets/models/character/male1/Lobby/jog_backward_diagonal_right.fbx',
+    lobby_jog_sl:     'assets/models/character/male1/Lobby/jog_strafe_left.fbx',
+    lobby_jog_sr:     'assets/models/character/male1/Lobby/jog_strafe_right.fbx',
+    lobby_run:        'assets/models/character/male1/Lobby/male1_standard_run.fbx',
+    lobby_run_back:   'assets/models/character/male1/Lobby/male1_standard_run_backwards.fbx',
+    lobby_sprint_l:   'assets/models/character/male1/Lobby/male1_left_strafe.fbx',
+    lobby_sprint_r:   'assets/models/character/male1/Lobby/male1_right_strafe.fbx',
+    lobby_jump:       'assets/models/character/male1/Lobby/male1_jump_forwards.fbx',
+    lobby_jump_fwd:   'assets/models/character/male1/Lobby/male1_jump_forwards.fbx',
+    lobby_jump_back:  'assets/models/character/male1/Lobby/male1_jump_backwards.fbx',
+    pistol_idle:    'assets/models/character/male1/Mission/pistol_idle.fbx',
+    pistol_walk:    'assets/models/character/male1/Mission/pistol_walk.fbx',
+    pistol_run:     'assets/models/character/male1/Mission/pistol_run.fbx',
+    pistol_strafe_l:'assets/models/character/male1/Mission/pistol_strafe_left.fbx',
+    pistol_strafe_r:'assets/models/character/male1/Mission/pistol_strafe_right.fbx',
+    pistol_jump:    'assets/models/character/male1/Mission/pistol_jump_standing.fbx',
+    pistol_jump_fwd:'assets/models/character/male1/Mission/pistol_jump_moving.fbx',
+    death:          'assets/models/character/male1/Mission/player_dying1.fbx',
+  };
+
+  (function loadCharacter() {
+    const loader = new FBXLoader();
+    loader.load(_CHAR_BASE, base => {
+      _charTemplate = base;
+      const clips = {};
+      const names = Object.keys(_CHAR_ANIMS);
+      let remaining = names.length;
+      const done = () => {
+        if (--remaining === 0) {
+          // Strip root-bone position tracks so Mixamo root motion doesn't fight
+          // the game's group.position.set() call each frame (causes jitter).
+          for (const [name, clip] of Object.entries(clips)) {
+            clip.tracks = clip.tracks.filter(t => {
+              const bone = t.name.split('.')[0].toLowerCase();
+              return !(t.name.endsWith('.position') && (bone.includes('hips') || bone === 'root'));
+            });
+            if (name.includes('jump')) _resampleClip(clip, 60);
+          }
+          _charClips = clips;
+        }
+      };
+      for (const name of names) {
+        loader.load(_CHAR_ANIMS[name], animFbx => {
+          if (animFbx.animations.length > 0) {
+            const clip = animFbx.animations[0];
+            clip.name = name;
+            clips[name] = clip;
+          }
+          done();
+        }, undefined, err => { console.warn('[char] anim load failed:', name); done(); });
+      }
+    }, undefined, () => console.error('[char] base mesh load failed'));
+  })();
+
+  function _createCharInstance() {
+    const clone = skeletonClone(_charTemplate);
+    clone.scale.setScalar(0.01); // Mixamo FBX is in cm
+    clone.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    const mixer = new THREE.AnimationMixer(clone);
+    const actions = {};
+    for (const [name, clip] of Object.entries(_charClips)) {
+      const action = mixer.clipAction(clip);
+      action.enabled = true;
+      actions[name] = action;
+    }
+    const startClip = 'lobby_idle';
+    actions[startClip]?.play();
+    return { group: clone, mixer, actions, currentAnim: startClip };
+  }
+
+  function _pickGroundAnim(phase, h) {
+    const moving    = Math.abs(h.moveFwd || 0) > 0.05 || Math.abs(h.moveSide || 0) > 0.05;
+    const sprinting = !!h.sprinting;
+    const walking   = !!h.walking;
+    const fwd  = h.moveFwd  || 0;
+    const side = h.moveSide || 0;
+    const pureStrafe = Math.abs(fwd) < 0.3;
+
+    if (phase !== 'MISSION') {
+      if (!moving) return 'lobby_idle';
+      if (sprinting) {
+        if (fwd < -0.2)  return 'lobby_run_back';
+        if (side < -0.3 && pureStrafe) return 'lobby_sprint_l';
+        if (side >  0.3 && pureStrafe) return 'lobby_sprint_r';
+        return 'lobby_run';
+      }
+      if (walking) {
+        if (fwd < -0.2)  return 'lobby_walk_back';
+        if (side < -0.3 && pureStrafe) return 'lobby_strafe_l';
+        if (side >  0.3 && pureStrafe) return 'lobby_strafe_r';
+        return 'lobby_walk';
+      }
+      // jog (default) — full diagonal detection
+      if (side < -0.3 && pureStrafe) return 'lobby_jog_sl';
+      if (side >  0.3 && pureStrafe) return 'lobby_jog_sr';
+      if (fwd < -0.15 && side < -0.15) return 'lobby_jog_diag_bl';
+      if (fwd < -0.15 && side >  0.15) return 'lobby_jog_diag_br';
+      if (fwd < -0.2)                  return 'lobby_jog_back';
+      if (fwd >  0.15 && side < -0.15) return 'lobby_jog_diag_fl';
+      if (fwd >  0.15 && side >  0.15) return 'lobby_jog_diag_fr';
+      return 'lobby_jog';
+    }
+    if (!moving) return 'pistol_idle';
+    if (goLeft)  return 'pistol_strafe_l';
+    if (goRight) return 'pistol_strafe_r';
+    return sprinting ? 'pistol_run' : 'pistol_walk';
+  }
+
+  function _pickJumpAnim(phase, h) {
+    const fwd  = h.jumpMoveFwd  || 0;
+    const side = h.jumpMoveSide || 0;
+    const inputBack = fwd < -0.15 && Math.abs(fwd) >= Math.abs(side);
+    const inputAny  = Math.abs(fwd) > 0.1 || Math.abs(side) > 0.1;
+    if (phase !== 'MISSION') {
+      if (inputBack) return 'lobby_jump_back';
+      if (inputAny)  return 'lobby_jump_fwd';
+      return 'lobby_jump';
+    }
+    return inputAny ? 'pistol_jump_fwd' : 'pistol_jump';
+  }
+
+  function _crossfadeAnim(entry, name, oneShot = false, force = false) {
+    if (!force && entry.currentAnim === name) return;
+    const prev = entry.actions[entry.currentAnim];
+    const next = entry.actions[name];
+    if (!next) return;
+    const fadeTime = oneShot ? 0.08 : 0.2;
+    if (prev) prev.fadeOut(fadeTime);
+    next.reset().setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+    next.clampWhenFinished = oneShot;
+    next.fadeIn(fadeTime).play();
+    entry.currentAnim = name;
+  }
+
   // Entity pools
-  const humans = new Map();   // id → { group, spec, opts }
+  const humans = new Map();   // id → { group, mixer?, actions?, currentAnim?, specSeed, suit, isFbx }
   const aliens = new Map();
   const props = new Map();
   let gantzBall = null;
@@ -496,12 +666,31 @@ export function createScene3d({ canvas }) {
   function getOrCreateHuman(id, spec, opts) {
     let entry = humans.get(id);
     const suit = !!opts?.suit;
-    if (!entry || entry.specSeed !== spec.seed || entry.suit !== suit) {
-      if (entry) { scene.remove(entry.group); disposeGroup(entry.group); }
-      const group = buildHumanMesh(spec, { suit });
-      scene.add(group);
-      entry = { group, specSeed: spec.seed, suit, labelText: null, labelColor: null, bubbleText: null };
-      humans.set(id, entry);
+    const charReady = !!(_charTemplate && _charClips);
+
+    if (charReady) {
+      // Rebuild if not yet FBX (was procedural fallback) or suit changed
+      if (!entry || !entry.isFbx || entry.suit !== suit) {
+        if (entry) {
+          scene.remove(entry.group);
+          disposeGroup(entry.group);
+          entry.mixer?.stopAllAction();
+        }
+        const { group, mixer, actions, currentAnim } = _createCharInstance();
+        scene.add(group);
+        entry = { group, mixer, actions, currentAnim, lastJumpId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null };
+        humans.set(id, entry);
+      }
+    } else {
+      // Procedural fallback until FBX loads
+      const needsRebuild = !entry || entry.isFbx || entry.specSeed !== spec.seed || entry.suit !== suit;
+      if (needsRebuild) {
+        if (entry) { scene.remove(entry.group); disposeGroup(entry.group); }
+        const group = buildHumanMesh(spec, { suit });
+        scene.add(group);
+        entry = { group, specSeed: spec.seed, suit, isFbx: false, labelText: null, labelColor: null, bubbleText: null };
+        humans.set(id, entry);
+      }
     }
     return entry;
   }
@@ -593,31 +782,34 @@ export function createScene3d({ canvas }) {
       if (!keepIds.has(id)) {
         scene.remove(entry.group);
         disposeGroup(entry.group);
+        entry.mixer?.stopAllAction();
         map.delete(id);
       }
     }
   }
 
-  function updateEntityTransform(group, e) {
+  function updateEntityTransform(group, e, isFbx) {
     const jy = e.jumpY || 0;
     group.position.set(e.x, jy, e.y);
     group.rotation.y = facingToRotY(e.facing || 0);
-    // walk bob — faster + bigger when sprinting
-    const phase = e.walkPhase || 0;
-    const bobAmp = e.sprinting ? 0.07 : 0.04;
-    group.position.y = jy + Math.abs(Math.sin(phase)) * bobAmp;
-    const parts = group.userData.parts;
-    if (parts) {
-      const swingAmp = e.sprinting ? 0.55 : 0.3;
-      const swing = Math.sin(phase) * swingAmp;
-      if (parts.armL) parts.armL.rotation.x = swing;
-      if (parts.armR) parts.armR.rotation.x = -swing;
-    }
-    if (e.alive === false) {
-      group.rotation.x = 1.2;
-      group.position.y = 0.2;
-    } else {
-      group.rotation.x = 0;
+    group.rotation.x = 0;
+
+    if (!isFbx) {
+      // Procedural walk bob + arm swing for primitive meshes
+      const phase = e.walkPhase || 0;
+      const bobAmp = e.sprinting ? 0.07 : 0.04;
+      group.position.y = jy + Math.abs(Math.sin(phase)) * bobAmp;
+      const parts = group.userData.parts;
+      if (parts) {
+        const swingAmp = e.sprinting ? 0.55 : 0.3;
+        const swing = Math.sin(phase) * swingAmp;
+        if (parts.armL) parts.armL.rotation.x = swing;
+        if (parts.armR) parts.armR.rotation.x = -swing;
+      }
+      if (e.alive === false) {
+        group.rotation.x = 1.2;
+        group.position.y = 0.2;
+      }
     }
   }
 
@@ -878,7 +1070,28 @@ export function createScene3d({ canvas }) {
     for (const h of humanEntries) {
       if (!h.spec) continue;
       const entry = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
-      updateEntityTransform(entry.group, h);
+      updateEntityTransform(entry.group, h, entry.isFbx);
+      if (entry.isFbx && entry.mixer) {
+        if (h.alive === false) {
+          _crossfadeAnim(entry, 'death', true);
+        } else {
+          const jumpId = h.jumpId || 0;
+          const jumpAction = entry.currentAnim?.includes('jump')
+            ? entry.actions[entry.currentAnim] : null;
+          const jumpRunning = jumpAction?.isRunning();
+
+          if (jumpId !== entry.lastJumpId) {
+            // New jump started — trigger immediately, use input direction at liftoff
+            entry.lastJumpId = jumpId;
+            _crossfadeAnim(entry, _pickJumpAnim(state.phase, h), true, true);
+          } else if (!jumpRunning) {
+            // No jump in progress — play normal ground animation
+            _crossfadeAnim(entry, _pickGroundAnim(state.phase, h));
+          }
+          // If jumpRunning: do nothing, let the one-shot play out
+        }
+        entry.mixer.update(dt);
+      }
       // Show name label for remotes and third-person local; hide for dead or local FP
       const isLocalFP = h._id === '__player__' && state.firstPerson;
       const showLabel = !isLocalFP && h.alive !== false && !!h.username;
