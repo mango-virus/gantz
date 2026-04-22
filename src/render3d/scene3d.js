@@ -576,7 +576,10 @@ export function createScene3d({ canvas }) {
               }
               return true;
             });
-            if (name.includes('jump') || name === 'pistol_shoot' ||
+            // Jump clips: resample at 120fps to smooth sparse Mixamo keyframes.
+            // Other one-shots: 60fps is sufficient.
+            if (name.includes('jump')) _resampleClip(clip, 120);
+            else if (name === 'pistol_shoot' ||
                 name === 'pistol_stand_to_kneel' || name === 'pistol_kneel_to_stand' ||
                 name === 'death') _resampleClip(clip, 60);
           }
@@ -606,13 +609,18 @@ export function createScene3d({ canvas }) {
       for (const mat of mats) {
         // DoubleSide prevents hair/thin geometry from vanishing when viewed from behind
         mat.side = THREE.DoubleSide;
-        // Hair / alpha-masked geometry: keep transparency on but discard only the
-        // near-fully-transparent pixels (alphaTest 0.1 keeps soft edges).
-        // depthWrite = false avoids hair silhouettes blocking geometry behind them.
-        if (mat.transparent || mat.alphaMap) {
-          mat.alphaTest  = 0.1;
+        if (mat.alphaMap) {
+          // Hair strand planes: keep all pixels visible (alphaTest=0), render after
+          // opaque body parts (renderOrder=2) so depth-test doesn't clip strands.
+          mat.alphaTest   = 0;
           mat.transparent = true;
           mat.depthWrite  = false;
+          o.renderOrder   = 2;
+        } else if (mat.transparent && (mat.opacity == null || mat.opacity >= 0.99)) {
+          // FBX loader marks some fully-opaque materials as transparent — undo that
+          // so they write to the depth buffer and don't get depth-sort artefacts.
+          mat.transparent = false;
+          mat.depthWrite  = true;
         }
       }
     });

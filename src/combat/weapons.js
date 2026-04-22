@@ -4,7 +4,7 @@ export const WEAPONS = {
     name: 'X-Gun',
     rarity: 'common',
     range: 40,
-    cooldown: 0.7,
+    cooldown: 0.35,
     markTime: 1.5,
     mode: 'single',
     tracerColor: '#ff2030',

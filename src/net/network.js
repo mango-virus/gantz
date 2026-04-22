@@ -26,6 +26,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
   const peerListeners = new Set();
   const hostListeners = new Set();
   const peerJoinListeners = new Set();
+  const peerLeaveListeners = new Set();
   const rosterAnnListeners = new Set();
   const rosterFullListeners = new Set();
   const sessionListeners = new Set();
@@ -118,6 +119,8 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
         for (const l of peerJoinListeners) l(id);
       });
       room.onPeerLeave(id => {
+        const leaving = peers.get(id); // capture before delete
+        for (const l of peerLeaveListeners) l(id, leaving);
         peers.delete(id);
         recomputeHost();
         firePeers();
@@ -215,6 +218,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
     onPeerChange(fn) { peerListeners.add(fn); return () => peerListeners.delete(fn); },
     onHostChange(fn) { hostListeners.add(fn); return () => hostListeners.delete(fn); },
     onPeerJoin(fn) { peerJoinListeners.add(fn); return () => peerJoinListeners.delete(fn); },
+    onPeerLeave(fn) { peerLeaveListeners.add(fn); return () => peerLeaveListeners.delete(fn); },
     onRosterAnn(fn) { rosterAnnListeners.add(fn); return () => rosterAnnListeners.delete(fn); },
     onRosterFull(fn) { rosterFullListeners.add(fn); return () => rosterFullListeners.delete(fn); },
     sendRosterAnn: (msg, target) => { if (sendRosterAnn) try { sendRosterAnn(msg, target); } catch {} },

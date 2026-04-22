@@ -139,7 +139,7 @@ html, body {
   position: fixed;
   bottom: 1rem;
   left: 1rem;
-  width: 500px;
+  width: 400px;
   z-index: 10;
   pointer-events: auto;
   font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -198,7 +198,7 @@ html, body {
 /* Scrollable message area */
 #chat-log-wrap {
   flex: 1;
-  height: 10.5rem;   /* fixed ~6 message rows; scrolls beyond that */
+  height: 17rem;     /* ~10 message rows visible at once; scrolls beyond that */
   overflow-y: auto;
   pointer-events: auto;
   scrollbar-width: thin;

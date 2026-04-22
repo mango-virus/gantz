@@ -3638,6 +3638,8 @@ function enterPhase(newPhase) {
       _debriefPlayers.push({ name: p.username, pts: earned, died: pDied,
         comment: _pickDebriefComment(earned, pDied) });
     }
+    // Highest scorer first so the MVP is always shown at the top.
+    _debriefPlayers.sort((a, b) => b.pts - a.pts);
   }
   if (newPhase === Phase.BRIEFING) {
     _briefingRevealAt = -1;
@@ -3995,6 +3997,10 @@ net.onHostChange((hostId) => {
   refreshPeerCount();
   if (net.isHost) hostSince = Date.now();
 });
+net.onPeerLeave((id, peer) => {
+  const name = peer?.username;
+  if (name) chat.addSystem(`${name} has left the game.`);
+});
 
 // ---- Frame ----
 const prevPos = new Map();
@@ -4178,8 +4184,9 @@ function fireRay(originX, originY, dirX, dirY, w, shooterId = net.selfId) {
 }
 
 function tryFire() {
-  if (session.phase !== Phase.MISSION || !player.alive || !localIsParticipant()) return;
-  if (world.lobbyDisarmed && session.phase !== Phase.MISSION) return;
+  const inFightPhase = session.phase === Phase.MISSION || session.phase === Phase.LOBBY;
+  if (!inFightPhase || !player.alive) return;
+  if (session.phase === Phase.MISSION && !localIsParticipant()) return;
   if (fireCooldown > 0) return;
   const wid = activeWeaponId();
   const w = WEAPONS[wid];
