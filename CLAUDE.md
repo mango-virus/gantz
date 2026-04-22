@@ -175,6 +175,16 @@ don't stack or lock up.
   mission bounds 40×40m, lobby bounds 18×14m.
 - **Facing ↔ yaw**: `facing = atan2(-cos(yaw), -sin(yaw))`, inverse is
   `yaw = atan2(-cos(facing), -sin(facing))`. Both must be set on mission spawn.
+- **FBX character hair / alpha-masked geometry** (`_createCharInstance` in scene3d.js):
+  Apply per-mesh in `clone.traverse`:
+  1. `mat.side = THREE.DoubleSide` — ALL materials (prevents back-face culling on thin geo).
+  2. `mat.alphaMap` materials (hair strand planes):
+     `alphaTest = 0.01, transparent = false, depthWrite = true, o.renderOrder = 0`
+     — cutout mode at near-zero threshold keeps every visible strand solid/dense
+       while discarding only fully-transparent background pixels.
+       DO NOT use `transparent = true` (blended) — makes hair look wispy/ghostly.
+  3. `mat.transparent && opacity >= 0.99` materials (FBX loader marks some fully-opaque
+     mats transparent by mistake): force `transparent = false, depthWrite = true`.
 
 ### Briefing UI — canvas renderer, NOT the HTML overlay
 The briefing screen is drawn entirely on a 2D canvas by the **Gantz ball renderer**
