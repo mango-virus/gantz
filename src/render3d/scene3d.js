@@ -467,12 +467,12 @@ export function createScene3d({ canvas }) {
     buildingMeshes.clear();
   }
 
-  function setRoom(kind, missionMap) {
+  function setRoom(kind, missionMap, lobbySeed) {
     clearRoom();
     currentRoomKind = kind;
     currentRoomSeed = missionMap?._seed ?? null;
     if (kind === 'lobby') {
-      currentRoomGroup = buildLobbyRoom();
+      currentRoomGroup = buildLobbyRoom(lobbySeed || 0);
     } else if (kind === 'mission') {
       currentRoomGroup = buildMissionRoom(missionMap);
       // buildings
@@ -531,14 +531,19 @@ export function createScene3d({ canvas }) {
     lobby_jump:       'assets/models/character/male1/Lobby/male1_jump_forwards.fbx',
     lobby_jump_fwd:   'assets/models/character/male1/Lobby/male1_jump_forwards.fbx',
     lobby_jump_back:  'assets/models/character/male1/Lobby/male1_jump_backwards.fbx',
-    pistol_idle:    'assets/models/character/male1/Mission/pistol_idle.fbx',
-    pistol_walk:    'assets/models/character/male1/Mission/pistol_walk.fbx',
-    pistol_run:     'assets/models/character/male1/Mission/pistol_run.fbx',
-    pistol_strafe_l:'assets/models/character/male1/Mission/pistol_strafe_left.fbx',
-    pistol_strafe_r:'assets/models/character/male1/Mission/pistol_strafe_right.fbx',
-    pistol_jump:    'assets/models/character/male1/Mission/pistol_jump_standing.fbx',
-    pistol_jump_fwd:'assets/models/character/male1/Mission/pistol_jump_moving.fbx',
-    death:          'assets/models/character/male1/Mission/player_dying1.fbx',
+    pistol_idle:          'assets/models/character/male1/Mission/pistol_idle.fbx',
+    pistol_walk:          'assets/models/character/male1/Mission/pistol_walk.fbx',
+    pistol_walk_back:     'assets/models/character/male1/Mission/pistol_walk_backward.fbx',
+    pistol_run:           'assets/models/character/male1/Mission/pistol_run.fbx',
+    pistol_strafe_l:      'assets/models/character/male1/Mission/pistol_strafe_left.fbx',
+    pistol_strafe_r:      'assets/models/character/male1/Mission/pistol_strafe_right.fbx',
+    pistol_jump:          'assets/models/character/male1/Mission/pistol_jump_standing.fbx',
+    pistol_jump_fwd:      'assets/models/character/male1/Mission/pistol_jump_moving.fbx',
+    pistol_shoot:         'assets/models/character/male1/Mission/pistol_shooting.fbx',
+    pistol_kneel_idle:    'assets/models/character/male1/Mission/pistol_kneeling_idle.fbx',
+    pistol_stand_to_kneel:'assets/models/character/male1/Mission/pistol_stand_to_kneel.fbx',
+    pistol_kneel_to_stand:'assets/models/character/male1/Mission/pistol_kneel_to_stand.fbx',
+    death:                'assets/models/character/male1/Mission/player_dying1.fbx',
   };
 
   (function loadCharacter() {
@@ -555,9 +560,25 @@ export function createScene3d({ canvas }) {
           for (const [name, clip] of Object.entries(clips)) {
             clip.tracks = clip.tracks.filter(t => {
               const bone = t.name.split('.')[0].toLowerCase();
-              return !(t.name.endsWith('.position') && (bone.includes('hips') || bone === 'root'));
+              if (t.name.endsWith('.position') && (bone.includes('hips') || bone === 'root')) {
+                const needsY = name === 'death' ||
+                               name === 'pistol_stand_to_kneel' ||
+                               name === 'pistol_kneel_to_stand';
+                if (needsY) {
+                  // Keep Y for vertical motion (fall/kneel); zero XZ to prevent horizontal drift
+                  for (let i = 0; i < t.values.length; i += 3) {
+                    t.values[i]   = 0; // X
+                    t.values[i+2] = 0; // Z
+                  }
+                  return true;
+                }
+                return false; // strip entirely for all other clips
+              }
+              return true;
             });
-            if (name.includes('jump')) _resampleClip(clip, 60);
+            if (name.includes('jump') || name === 'pistol_shoot' ||
+                name === 'pistol_stand_to_kneel' || name === 'pistol_kneel_to_stand' ||
+                name === 'death') _resampleClip(clip, 60);
           }
           _charClips = clips;
         }
@@ -578,7 +599,23 @@ export function createScene3d({ canvas }) {
   function _createCharInstance() {
     const clone = skeletonClone(_charTemplate);
     clone.scale.setScalar(0.01); // Mixamo FBX is in cm
-    clone.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    clone.traverse(o => {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const mat of mats) {
+        // DoubleSide prevents hair/thin geometry from vanishing when viewed from behind
+        mat.side = THREE.DoubleSide;
+        // Hair / alpha-masked geometry: keep transparency on but discard only the
+        // near-fully-transparent pixels (alphaTest 0.1 keeps soft edges).
+        // depthWrite = false avoids hair silhouettes blocking geometry behind them.
+        if (mat.transparent || mat.alphaMap) {
+          mat.alphaTest  = 0.1;
+          mat.transparent = true;
+          mat.depthWrite  = false;
+        }
+      }
+    });
     const mixer = new THREE.AnimationMixer(clone);
     const actions = {};
     for (const [name, clip] of Object.entries(_charClips)) {
@@ -624,8 +661,9 @@ export function createScene3d({ canvas }) {
       return 'lobby_jog';
     }
     if (!moving) return 'pistol_idle';
-    if (goLeft)  return 'pistol_strafe_l';
-    if (goRight) return 'pistol_strafe_r';
+    if (fwd < -0.2 && !pureStrafe) return 'pistol_walk_back';
+    if (side < -0.3 && pureStrafe) return 'pistol_strafe_l';
+    if (side >  0.3 && pureStrafe) return 'pistol_strafe_r';
     return sprinting ? 'pistol_run' : 'pistol_walk';
   }
 
@@ -678,7 +716,7 @@ export function createScene3d({ canvas }) {
         }
         const { group, mixer, actions, currentAnim } = _createCharInstance();
         scene.add(group);
-        entry = { group, mixer, actions, currentAnim, lastJumpId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null };
+        entry = { group, mixer, actions, currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null };
         humans.set(id, entry);
       }
     } else {
@@ -824,7 +862,7 @@ export function createScene3d({ canvas }) {
       }
     } else {
       if (currentRoomKind !== 'lobby') {
-        setRoom('lobby', null);
+        setRoom('lobby', null, state.lobbySeed);
         const ud = currentRoomGroup?.userData ?? {};
         scene.background.set(ud.bgColor ?? 0x04050a);
         scene.fog.color.set(ud.fogColor ?? ud.bgColor ?? 0x04050a);
@@ -1064,31 +1102,63 @@ export function createScene3d({ canvas }) {
     const keepHumans = new Set();
     const humanEntries = [
       ...(state.player && !state.firstPerson ? [{ ...state.player, _id: '__player__', _suit: !!state.player.suit }] : []),
-      ...(state.civilians || []).map(c => ({ ...c, _id: c.id, _suit: false })),
+      ...(state.civilians || []).map(c => ({ ...c, _id: c.id, _suit: false, _isCivilian: true })),
       ...(state.remotes || []).map(r => ({ ...r, _id: r.peerId, _suit: !!r.suit })),
     ];
     for (const h of humanEntries) {
       if (!h.spec) continue;
       const entry = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
       updateEntityTransform(entry.group, h, entry.isFbx);
+      // Civilians have no moveFwd/moveSide from the network — derive from position change.
+      if (h._isCivilian && entry.isFbx) {
+        const dx  = h.x - (entry._civPrevX ?? h.x);
+        const dz  = h.y - (entry._civPrevY ?? h.y);
+        const spd = Math.sqrt(dx * dx + dz * dz) / dt;
+        h.moveFwd  = spd > 0.15 ? 1.0 : 0;
+        h.moveSide = 0;
+        entry._civPrevX = h.x;
+        entry._civPrevY = h.y;
+      }
       if (entry.isFbx && entry.mixer) {
         if (h.alive === false) {
           _crossfadeAnim(entry, 'death', true);
         } else {
-          const jumpId = h.jumpId || 0;
-          const jumpAction = entry.currentAnim?.includes('jump')
-            ? entry.actions[entry.currentAnim] : null;
-          const jumpRunning = jumpAction?.isRunning();
+          // Civilians always use lobby animations regardless of mission phase
+          const phase     = h._isCivilian ? 'LOBBY' : state.phase;
+          const jumpId    = h.jumpId    || 0;
+          const crouchId  = h.crouchId  || 0;
+          const fireId    = h.fireId    || 0;
+          const cur       = entry.currentAnim || '';
+          const curAction = entry.actions[cur];
+          const curRunning = curAction?.isRunning();
+          const isJumpAnim    = cur.includes('jump');
+          const isCrouchTrans = cur === 'pistol_stand_to_kneel' || cur === 'pistol_kneel_to_stand';
+          const isShootAnim   = cur === 'pistol_shoot';
 
           if (jumpId !== entry.lastJumpId) {
-            // New jump started — trigger immediately, use input direction at liftoff
+            // New jump — always takes priority, force-restarts
             entry.lastJumpId = jumpId;
-            _crossfadeAnim(entry, _pickJumpAnim(state.phase, h), true, true);
-          } else if (!jumpRunning) {
-            // No jump in progress — play normal ground animation
-            _crossfadeAnim(entry, _pickGroundAnim(state.phase, h));
+            _crossfadeAnim(entry, _pickJumpAnim(phase, h), true, true);
+          } else if (isJumpAnim && curRunning) {
+            // Let jump finish
+          } else if (phase === 'MISSION' && crouchId !== entry.lastCrouchId) {
+            // Crouch toggled — play stand↔kneel transition
+            entry.lastCrouchId = crouchId;
+            _crossfadeAnim(entry, h.crouching ? 'pistol_stand_to_kneel' : 'pistol_kneel_to_stand', true, true);
+          } else if (phase === 'MISSION' && isCrouchTrans && curRunning) {
+            // Let crouch transition finish
+          } else if (phase === 'MISSION' && h.crouching) {
+            // Settled into crouch
+            _crossfadeAnim(entry, 'pistol_kneel_idle');
+          } else if (phase === 'MISSION' && fireId !== entry.lastFireId) {
+            // New shot fired
+            entry.lastFireId = fireId;
+            _crossfadeAnim(entry, 'pistol_shoot', true, true);
+          } else if (phase === 'MISSION' && isShootAnim && curRunning) {
+            // Let shoot finish
+          } else {
+            _crossfadeAnim(entry, _pickGroundAnim(phase, h));
           }
-          // If jumpRunning: do nothing, let the one-shot play out
         }
         entry.mixer.update(dt);
       }

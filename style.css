@@ -56,6 +56,19 @@ html, body {
   opacity: 1;
 }
 
+#reconnect-btn {
+  margin-top: 0.3rem;
+  background: none;
+  border: 1px solid #c8142b;
+  color: #c8142b;
+  font-size: 0.65rem;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+#reconnect-btn:hover { opacity: 1; background: rgba(200,20,43,0.12); }
+
 #phase {
   margin-top: 0.15rem;
   font-size: 0.72rem;

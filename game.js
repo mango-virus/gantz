@@ -11,7 +11,7 @@ import { generateHumanSpec } from './src/content/humanSpec.js';
 import { drawHuman } from './src/render/drawHuman.js';
 import { drawProp } from './src/render/drawProp.js';
 import { drawGantzBall } from './src/render/drawGantzBall.js';
-import { resolveAgainstStatic, resolveCharacterOverlaps } from './src/engine/collision.js';
+import { resolveAgainstStatic, resolveCharacterOverlaps, circleVsCircle } from './src/engine/collision.js';
 import {
   LOBBY_BOUNDS, GANTZ_BALL,
   buildLobbyProps, buildLobbyWalls, getGantzBallCollider,
@@ -451,6 +451,15 @@ function _stopTypeSound() {
   try { _typeAudioSrc.stop(); } catch {}
   _typeAudioSrc = null;
 }
+// Stop all looping audio when the page becomes hidden (tab-out / window minimize)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    _stopTypeSound();
+    _gantzOpenSfx?.pause();
+    if (_gantzOpenSfx) _gantzOpenSfx.currentTime = 0;
+  }
+});
+
 function _typeTickSound(line, isTyping) {
   if (isTyping) {
     if (line !== _lastTypePos) { _lastTypePos = line; _startTypeSound(); }
@@ -3051,7 +3060,10 @@ let jumpId = 0;        // increments each time a jump starts — triggers anim i
 let jumpMoveFwd  = 0;  // moveFwd captured at liftoff (not updated until next jump)
 let jumpMoveSide = 0;  // moveSide captured at liftoff
 let sprinting = false;
-let walking  = false;
+let walking   = false;
+let crouching = false;
+let crouchId  = 0;
+let fireId    = 0;
 let moveFwd  = 0;  // -1=back, 0=still, +1=fwd (relative to facing)
 let moveSide = 0;  // -1=left, 0=still, +1=right (relative to facing)
 const JUMP_SPEED = 5.5;
@@ -3206,6 +3218,7 @@ const session = {
   phase: Phase.LOBBY,
   missionIndex: 0,
   missionSeed: 0,
+  lobbySeed: (Math.random() * 0xffffffff) >>> 0,  // seeded once; synced so all peers share same sky/weather
   missionEndsAt: 0,
   briefingEndsAt: 0,
   debriefEndsAt: 0,
@@ -3297,7 +3310,7 @@ const menu = createGantzMenu({
     menu.closeMenu();
   },
   onReadyToggle: () => {
-    if (session.phase !== Phase.LOBBY && session.phase !== Phase.DEBRIEF) return;
+    if (session.phase === Phase.MISSION) return;
     player.ready = !player.ready;
     if (!player.ready) player.afkReady = false;
     net.broadcastPose();
@@ -3377,8 +3390,12 @@ const net = createNetwork({
     jumpMoveSide,
     sprinting: sprinting,
     walking,
+    crouching,
+    crouchId,
+    fireId,
     moveFwd,
     moveSide,
+    doorStates: _doorOpen.map(o => o ? 1 : 0),
   }),
 });
 
@@ -3400,6 +3417,16 @@ net.onSession((incoming) => {
   if (incoming.version < session.version) return;
   const prevPhase = session.phase;
   Object.assign(session, incoming);
+  // If joining mid-countdown, mid-briefing, or mid-mission, skip the Gantz intro and
+  // name-entry sequence so the player can immediately join the queue or mission.
+  const missionActive = session.phase === Phase.BRIEFING ||
+                        session.phase === Phase.MISSION  ||
+                        session.readyCountdownEnd >= 0;
+  if (missionActive && (!_introDone || !_namePromptDone)) {
+    _stopTypeSound();
+    _introDone     = true;
+    _namePromptDone = true;
+  }
   if (session.phase !== prevPhase) {
     enterPhase(session.phase);
   } else {
@@ -3517,6 +3544,8 @@ function teleportToMission() {
   pitch = 0;
 }
 
+let _wasInMission = false; // true only if local player was teleported into the mission
+
 function enterPhase(newPhase) {
   if (newPhase === Phase.MISSION) {
     missionMap = generateMissionMap(session.missionSeed >>> 0, MISSION_BOUNDS);
@@ -3531,7 +3560,8 @@ function enterPhase(newPhase) {
     for (const [id, p] of net.peers) _missionStartPts.set(id, p.points || 0);
     spectateIndex = 0;
 
-    if (localIsParticipant()) {
+    _wasInMission = localIsParticipant();
+    if (_wasInMission) {
       activeColliders = [
         ...missionBoundaryWalls,
         ...missionProps.map(p => p.collider).filter(Boolean),
@@ -3572,9 +3602,10 @@ function enterPhase(newPhase) {
       activeColliders = lobbyColliders;
     }
   } else {
-    if (phase.get() === Phase.MISSION || phase.get() === Phase.BRIEFING) {
+    if (_wasInMission && (phase.get() === Phase.MISSION || phase.get() === Phase.BRIEFING)) {
       teleportToLobby();
     }
+    _wasInMission = false;
     missionMap = null;
     missionProps = [];
     civilians = [];
@@ -3583,6 +3614,7 @@ function enterPhase(newPhase) {
     activeColliders = lobbyColliders;
   }
   if (newPhase === Phase.LOBBY || newPhase === Phase.DEBRIEF) {
+    player.alive = true;   // revive for lobby/debrief so movement works after dying in mission
     player.ready = false;
     player.afkReady = false;
   }
@@ -3933,10 +3965,25 @@ net.onChat(msg => {
 });
 
 const peersEl = document.getElementById('peers');
+const reconnectBtn = document.getElementById('reconnect-btn');
+if (reconnectBtn) reconnectBtn.addEventListener('click', () => location.reload());
+
+let _reconnectTimer = null;
 function refreshPeerCount() {
   const n = net.peers.size + 1;
   peersEl.textContent = `${n} online${net.isHost ? ' · host' : ''}`;
   peersEl.classList.toggle('offline', net.status === 'offline');
+  // Show reconnect button if alone for more than 30 s after connecting
+  if (reconnectBtn) {
+    clearTimeout(_reconnectTimer);
+    if (net.peers.size === 0 && net.status === 'connected') {
+      _reconnectTimer = setTimeout(() => {
+        if (net.peers.size === 0) reconnectBtn.style.display = 'block';
+      }, 30000);
+    } else {
+      reconnectBtn.style.display = 'none';
+    }
+  }
 }
 net.onStatus(s => {
   if (s === 'connected') refreshPeerCount();
@@ -4141,6 +4188,7 @@ function tryFire() {
 
   // FPS feedback: muzzle flash + recoil
   scene3d.triggerMuzzleFlash?.();
+  fireId++;
 
   // Aim direction from camera forward (first-person aim)
   const fwd = scene3d.getCameraForwardXZ();
@@ -4172,6 +4220,7 @@ addEventListener('keydown', (e) => {
 
 // Ball menu click interaction — raycast screen click to UV, map to button region
 addEventListener('click', (e) => {
+  if (e.button !== 0) return;
   if (!menu.isOpen()) return;
   if (!scene3d) return;
   const sx = document.pointerLockElement ? canvas.clientWidth / 2 : e.clientX;
@@ -4240,6 +4289,7 @@ function update(dt) {
   sprinting = moving && isDown('shift');
   if (wasPressed('x')) walking = !walking;
   if (sprinting) walking = false;
+  if (wasPressed('c')) { crouching = !crouching; crouchId++; }
   moveFwd  = moving ? wsIn : 0;
   moveSide = moving ? adIn : 0;
   const speedMul = sprinting ? 1.7 : walking ? 0.5 : 1.0;
@@ -4408,6 +4458,23 @@ function update(dt) {
   for (const e of movers) resolveAgainstStatic(e, activeColliders);
   resolveCharacterOverlaps(movers);
 
+  // One-directional pushout: push local player away from remote peers.
+  // Peers aren't in movers (their positions are network-authoritative), so we only
+  // move the local player to avoid walking through other people.
+  if (player.alive) {
+    for (const [, pr] of net.peers) {
+      if (pr.renderX == null || pr.alive === false) continue;
+      const hit = circleVsCircle(
+        player.x, player.y, player.radius || 0.35,
+        pr.renderX, pr.renderY, 0.35,
+      );
+      if (hit) {
+        player.x += hit.nx * hit.depth;
+        player.y += hit.ny * hit.depth;
+      }
+    }
+  }
+
   if (session.phase === Phase.MISSION) {
     for (const civ of civilians) {
       if (!civ.alive || civ.behavior !== 'patrol' && civ.behavior !== 'hero') continue;
@@ -4430,8 +4497,14 @@ function update(dt) {
     const _countdownNow = session.readyCountdownEnd >= 0 && session.phase !== Phase.BRIEFING && session.phase !== Phase.MISSION;
     const _canInteract = !player.ready || _countdownNow; // ready players can still open menu during countdown to leave queue
     if (dBall < INTERACT_RADIUS && wasPressed('e') && !menu.isOpen() && !chat.isOpen?.() && !gantzTalking && _canInteract && performance.now() - _menuClosedAt > 250) {
-      if (_countdownNow) _skipNextGreeting = true; // skip greeting so queue UI shows immediately
-      menu.openMenu();
+      if (_countdownNow) {
+        // During the countdown, pressing E toggles the queue directly — no menu needed.
+        player.ready = !player.ready;
+        if (!player.ready) player.afkReady = false;
+        net.broadcastPose();
+      } else {
+        menu.openMenu();
+      }
     }
   }
 
@@ -4444,6 +4517,19 @@ function update(dt) {
         _doorOpen[di] = !_doorOpen[di];
         break; // consume E for this frame
       }
+    }
+  }
+
+  // ── Peer door state sync ────────────────────────────────────────────────────
+  if (inLobbyScene) {
+    for (const pr of net.peers.values()) {
+      if (!Array.isArray(pr.doorStates)) continue;
+      for (let i = 0; i < _doorOpen.length; i++) {
+        const cur = !!pr.doorStates[i];
+        const prev = pr._prevDoorStates ? !!pr._prevDoorStates[i] : null;
+        if (prev === null || cur !== prev) _doorOpen[i] = cur;
+      }
+      pr._prevDoorStates = pr.doorStates.slice();
     }
   }
 
@@ -4532,8 +4618,11 @@ function render(dt) {
       jumpId: p.jumpId || 0,
       jumpMoveFwd:  p.jumpMoveFwd  || 0,
       jumpMoveSide: p.jumpMoveSide || 0,
-      sprinting: !!p.sprinting,
-      walking:   !!p.walking,
+      sprinting:  !!p.sprinting,
+      walking:    !!p.walking,
+      crouching:  !!p.crouching,
+      crouchId:   p.crouchId  || 0,
+      fireId:     p.fireId    || 0,
       moveFwd:  p.moveFwd  || 0,
       moveSide: p.moveSide || 0,
       chatText:  bubbleAlive ? bubble.text : null,
@@ -4582,6 +4671,7 @@ function render(dt) {
     // Pass Phase.LOBBY for them so scene3d doesn't switch to the mission room/props/weapon.
     phase: localInMission ? session.phase : (inMission ? Phase.LOBBY : session.phase),
     missionSeed: session.missionSeed,
+    lobbySeed: session.lobbySeed,
     missionMap,
     missionProps,
     lobbyProps: props,
