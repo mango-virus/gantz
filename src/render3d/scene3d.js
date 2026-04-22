@@ -610,12 +610,14 @@ export function createScene3d({ canvas }) {
         // DoubleSide prevents hair/thin geometry from vanishing when viewed from behind
         mat.side = THREE.DoubleSide;
         if (mat.alphaMap) {
-          // Hair strand planes: keep all pixels visible (alphaTest=0), render after
-          // opaque body parts (renderOrder=2) so depth-test doesn't clip strands.
-          mat.alphaTest   = 0;
-          mat.transparent = true;
-          mat.depthWrite  = false;
-          o.renderOrder   = 2;
+          // Hair: alpha-cutout mode with minimal threshold so near-fully-transparent
+          // edge pixels are the only ones discarded.  transparent=false keeps depth
+          // writing on so the solid hair strands correctly occlude geometry behind them
+          // and render densely like the source FBX in Blender.
+          mat.alphaTest   = 0.01;
+          mat.transparent = false;
+          mat.depthWrite  = true;
+          o.renderOrder   = 0;
         } else if (mat.transparent && (mat.opacity == null || mat.opacity >= 0.99)) {
           // FBX loader marks some fully-opaque materials as transparent — undo that
           // so they write to the depth buffer and don't get depth-sort artefacts.
@@ -1117,13 +1119,17 @@ export function createScene3d({ canvas }) {
       if (!h.spec) continue;
       const entry = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
       updateEntityTransform(entry.group, h, entry.isFbx);
-      // Civilians have no moveFwd/moveSide from the network — derive from position change.
+      // Civilians have no moveFwd/moveSide from the network — derive from position delta.
+      // They move at walk speed (1.5–2.6 m/s) so force the walk tier to avoid foot-sliding.
       if (h._isCivilian && entry.isFbx) {
         const dx  = h.x - (entry._civPrevX ?? h.x);
         const dz  = h.y - (entry._civPrevY ?? h.y);
         const spd = Math.sqrt(dx * dx + dz * dz) / dt;
-        h.moveFwd  = spd > 0.15 ? 1.0 : 0;
-        h.moveSide = 0;
+        const moving = spd > 0.15;
+        h.moveFwd   = moving ? 1.0 : 0;
+        h.moveSide  = 0;
+        h.walking   = moving;   // forces lobby_walk tier, appropriate for civilian speeds
+        h.sprinting = false;
         entry._civPrevX = h.x;
         entry._civPrevY = h.y;
       }
@@ -1237,7 +1243,7 @@ export function createScene3d({ canvas }) {
         camera.rotation.y = state.yaw || 0;
         camera.rotation.x = state.pitch || 0;
         camera.rotation.z = 0;
-        viewWeapon.visible = (state.phase === 'MISSION' || state.phase === 'LOBBY') && (state.playerAlive !== false);
+        viewWeapon.visible = (state.playerAlive !== false);
         // Update Gantz HUD screen texture every frame
         if (viewWeapon.visible) _drawGantzScreen(dt, state);
         // Muzzle flash decays every frame

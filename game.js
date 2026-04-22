@@ -431,6 +431,7 @@ let _lastTypePos  = -1;
   } catch (e) { console.warn('[audio] type blip load failed:', e); }
 })();
 function _startTypeSound() {
+  if (document.hidden) return;  // never start audio while tabbed out
   _stopTypeSound();
   if (!_typeAudioCtx || !_typeAudioBuf) return;
   if (_typeAudioCtx.state === 'suspended') _typeAudioCtx.resume().catch(() => {});
@@ -451,12 +452,18 @@ function _stopTypeSound() {
   try { _typeAudioSrc.stop(); } catch {}
   _typeAudioSrc = null;
 }
-// Stop all looping audio when the page becomes hidden (tab-out / window minimize)
+// Stop all looping audio when the page becomes hidden (tab-out / window minimize).
+// Web Audio BufferSource with loop=true keeps running independently of rAF, so
+// we must stop it AND suspend the AudioContext to silence it fully.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     _stopTypeSound();
+    _typeAudioCtx?.suspend();
     _gantzOpenSfx?.pause();
     if (_gantzOpenSfx) _gantzOpenSfx.currentTime = 0;
+  } else {
+    // Restore AudioContext on tab-in so sounds can play again
+    if (_typeAudioCtx?.state === 'suspended') _typeAudioCtx.resume().catch(() => {});
   }
 });
 
