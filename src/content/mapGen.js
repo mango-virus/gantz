@@ -156,7 +156,7 @@ export function generateMissionMap(seed, bounds) {
       facing: rng.range(0, Math.PI * 2),
       walkPhase: 0,
       radius: 0.32,
-      speed: rng.range(1.5, 2.6),
+      speed: rng.range(0.7, 1.1),
       alive: true,
       behavior: rng.weighted(CIV_BEHAVIORS),
       wanderTarget: null,
