@@ -1119,19 +1119,15 @@ export function createScene3d({ canvas }) {
       if (!h.spec) continue;
       const entry = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
       updateEntityTransform(entry.group, h, entry.isFbx);
-      // Civilians have no moveFwd/moveSide from the network — derive from position delta.
-      // They move at walk speed (1.5–2.6 m/s) so force the walk tier to avoid foot-sliding.
+      // Civilians: use the vx/vy stamped by planCivilian — direct, no position-delta fragility.
+      // They move at walk speed (1.5–2.6 m/s) so keep the walk tier to avoid foot-sliding.
       if (h._isCivilian && entry.isFbx) {
-        const dx  = h.x - (entry._civPrevX ?? h.x);
-        const dz  = h.y - (entry._civPrevY ?? h.y);
-        const spd = Math.sqrt(dx * dx + dz * dz) / dt;
-        const moving = spd > 0.15;
+        const spd   = Math.sqrt((h.vx || 0) ** 2 + (h.vy || 0) ** 2);
+        const moving = spd > 0.1;
         h.moveFwd   = moving ? 1.0 : 0;
         h.moveSide  = 0;
-        h.walking   = moving;   // forces lobby_walk tier, appropriate for civilian speeds
+        h.walking   = moving;   // lobby_walk tier matches their actual movement pace
         h.sprinting = false;
-        entry._civPrevX = h.x;
-        entry._civPrevY = h.y;
       }
       if (entry.isFbx && entry.mixer) {
         if (h.alive === false) {

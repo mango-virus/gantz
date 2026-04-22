@@ -4343,8 +4343,10 @@ function update(dt) {
       if (!civ.alive) continue;
       prevPos.set(civ, { x: civ.x, y: civ.y });
       const v = planCivilian(civ, dt, wanderRng, MISSION_BOUNDS, planWanderer);
-      civ.x += v.vx * dt;
-      civ.y += v.vy * dt;
+      civ.x  += v.vx * dt;
+      civ.y  += v.vy * dt;
+      civ.vx  = v.vx;   // expose velocity so scene3d can pick the right animation
+      civ.vy  = v.vy;
     }
 
     // Alien AI (host authoritative)
