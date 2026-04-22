@@ -137,6 +137,10 @@ export function createChatUI({ onSend, onSuspendInput }) {
     if (e.key === 'Escape') { e.preventDefault(); closeChat(); }
   });
 
+  // Close chat and restore input when focus leaves the chat box entirely
+  // (e.g. user clicks outside the browser window while chat is open)
+  inputEl.addEventListener('blur', () => { closeChat(); });
+
   formEl.addEventListener('submit', e => {
     e.preventDefault();
     const text = inputEl.value.trim();

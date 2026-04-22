@@ -1,4 +1,5 @@
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { mulberry32 } from '../engine/rng.js';
 
 function color(hex) { return new THREE.Color(hex); }
 
@@ -1669,7 +1670,7 @@ export function buildGantzBallDisplay() {
 // Canonical Gantz room — cream-plaster Tokyo apartment, hardwood floor,
 // cassette-AC pendant lights, reddish slatted doors, large window bank.
 // Matches the anime/manga reference: empty except for the black sphere.
-export function buildLobbyRoom() {
+export function buildLobbyRoom(lobbySeed = 0) {
   const group = new THREE.Group();
 
   // ── Time-of-day + weather randomisation ───────────────────────────────────
@@ -1697,7 +1698,8 @@ export function buildLobbyRoom() {
     ['blizzard_sky', 'blizzard',     8],
   ];
   const _totalW = _PAIRINGS.reduce((s, p) => s + p[2], 0);
-  let _roll = Math.random() * _totalW;
+  const _rng = mulberry32(lobbySeed);
+  let _roll = _rng() * _totalW;
   let _picked = _PAIRINGS[0];
   for (const p of _PAIRINGS) { _roll -= p[2]; if (_roll <= 0) { _picked = p; break; } }
   const skyVariant  = _picked[0];

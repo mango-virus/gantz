@@ -398,6 +398,8 @@ export function createScene3d({ canvas }) {
         if (n.name === 'Object_6') _panelB = n;
       });
       console.log('[scene3d] barrel panels:', !!_panelL, !!_panelR, !!_panelB);
+      // Pre-warm gun shaders so first render is instant.
+      renderer.compile(scene, camera);
     } catch (e) {
       console.error('[scene3d] X-Gun setup error:', e);
     }
@@ -484,12 +486,43 @@ export function createScene3d({ canvas }) {
         }
       }
     }
-    if (currentRoomGroup) scene.add(currentRoomGroup);
+    if (currentRoomGroup) {
+      scene.add(currentRoomGroup);
+      // Pre-warm all room/building/prop shaders immediately so the first rendered
+      // frame after a phase transition doesn't stall on GPU compilation.
+      renderer.compile(scene, camera);
+    }
   }
 
   // ── Character model (FBX) ────────────────────────────────────────────────
   let _charTemplate = null;  // loaded FBX root Object3D (not added to scene)
   let _charClips = null;     // { clipName → AnimationClip }
+
+  // Instance pool: pre-cloned character instances that are ready to use instantly.
+  // skeletonClone() is expensive (~10-30ms per call). Pre-building the pool one
+  // entry per rAF frame spreads that cost to load time rather than gameplay.
+  // POOL_SIZE = 12 civilians + 8 players + a few spare.
+  const _charPool = [];
+  const _POOL_SIZE = 24;
+
+  function _acquireCharInstance() {
+    if (_charPool.length > 0) return _charPool.pop();
+    // Pool drained — create on demand (rare, only if more than POOL_SIZE chars needed).
+    return _createCharInstance();
+  }
+
+  function _releaseCharInstance(entry) {
+    entry.mixer.stopAllAction();
+    entry.currentAnim = null;
+    entry.deathAnim = null;
+    // Remove name label and chat bubble so the recycled group is clean.
+    const toStrip = entry.group.children.filter(
+      c => c.userData.isNameLabel || c.userData.isChatBubble
+    );
+    for (const c of toStrip) { entry.group.remove(c); disposeGroup(c); }
+    scene.remove(entry.group);
+    _charPool.push({ group: entry.group, mixer: entry.mixer, actions: entry.actions, currentAnim: null });
+  }
 
   function _resampleClip(clip, fps) {
     const dt = 1 / fps;
@@ -543,7 +576,19 @@ export function createScene3d({ canvas }) {
     pistol_kneel_idle:    'assets/models/character/male1/Mission/pistol_kneeling_idle.fbx',
     pistol_stand_to_kneel:'assets/models/character/male1/Mission/pistol_stand_to_kneel.fbx',
     pistol_kneel_to_stand:'assets/models/character/male1/Mission/pistol_kneel_to_stand.fbx',
-    death:                'assets/models/character/male1/Mission/player_dying1.fbx',
+    death_1:  'assets/models/character/male1/Dying/player_dying1.fbx',
+    death_2:  'assets/models/character/male1/Dying/player_dying2.fbx',
+    death_3:  'assets/models/character/male1/Dying/player_dying3.fbx',
+    death_4:  'assets/models/character/male1/Dying/player_dying4.fbx',
+    death_5:  'assets/models/character/male1/Dying/player_dying5.fbx',
+    death_6:  'assets/models/character/male1/Dying/player_dying6.fbx',
+    death_7:  'assets/models/character/male1/Dying/player_dying7.fbx',
+    death_8:  'assets/models/character/male1/Dying/player_dying8.fbx',
+    death_9:  'assets/models/character/male1/Dying/player_dying9.fbx',
+    death_10: 'assets/models/character/male1/Dying/player_dying10.fbx',
+    death_11: 'assets/models/character/male1/Dying/player_dying11.fbx',
+    death_12: 'assets/models/character/male1/Dying/player_dying12.fbx',
+    death_13: 'assets/models/character/male1/Dying/player_dying13.fbx',
   };
 
   (function loadCharacter() {
@@ -561,7 +606,7 @@ export function createScene3d({ canvas }) {
             clip.tracks = clip.tracks.filter(t => {
               const bone = t.name.split('.')[0].toLowerCase();
               if (t.name.endsWith('.position') && (bone.includes('hips') || bone === 'root')) {
-                const needsY = name === 'death' ||
+                const needsY = name.startsWith('death_') ||
                                name === 'pistol_stand_to_kneel' ||
                                name === 'pistol_kneel_to_stand';
                 if (needsY) {
@@ -581,9 +626,26 @@ export function createScene3d({ canvas }) {
             if (name.includes('jump')) _resampleClip(clip, 120);
             else if (name === 'pistol_shoot' ||
                 name === 'pistol_stand_to_kneel' || name === 'pistol_kneel_to_stand' ||
-                name === 'death') _resampleClip(clip, 60);
+                name.startsWith('death_')) _resampleClip(clip, 60);
           }
           _charClips = clips;
+          // Fill the instance pool one entry per rAF frame so no single frame
+          // pays the full skeletonClone cost.  The first entry also triggers a
+          // shader compile so GPU programs are ready before any character renders.
+          let _poolBuilt = 0;
+          (function _fillPool() {
+            if (_poolBuilt >= _POOL_SIZE) return;
+            const inst = _createCharInstance();
+            if (_poolBuilt === 0) {
+              // Compile GPU shaders now using the first instance.
+              scene.add(inst.group);
+              renderer.compile(scene, camera);
+              scene.remove(inst.group);
+            }
+            _charPool.push(inst);
+            _poolBuilt++;
+            requestAnimationFrame(_fillPool);
+          })();
         }
       };
       for (const name of names) {
@@ -720,13 +782,16 @@ export function createScene3d({ canvas }) {
       // Rebuild if not yet FBX (was procedural fallback) or suit changed
       if (!entry || !entry.isFbx || entry.suit !== suit) {
         if (entry) {
-          scene.remove(entry.group);
-          disposeGroup(entry.group);
-          entry.mixer?.stopAllAction();
+          if (entry.isFbx) {
+            _releaseCharInstance(entry); // return to pool — never dispose shared FBX materials
+          } else {
+            scene.remove(entry.group);
+            disposeGroup(entry.group);  // procedural mesh has unique materials — safe to dispose
+          }
         }
-        const { group, mixer, actions, currentAnim } = _createCharInstance();
-        scene.add(group);
-        entry = { group, mixer, actions, currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null };
+        const inst = _acquireCharInstance(); // instant from pool; clone only if pool drained
+        scene.add(inst.group);
+        entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null };
         humans.set(id, entry);
       }
     } else {
@@ -828,9 +893,13 @@ export function createScene3d({ canvas }) {
   function prune(map, keepIds) {
     for (const [id, entry] of map) {
       if (!keepIds.has(id)) {
-        scene.remove(entry.group);
-        disposeGroup(entry.group);
-        entry.mixer?.stopAllAction();
+        if (entry.isFbx) {
+          _releaseCharInstance(entry); // return to pool; never dispose shared FBX materials
+        } else {
+          scene.remove(entry.group);
+          disposeGroup(entry.group);
+          entry.mixer?.stopAllAction();
+        }
         map.delete(id);
       }
     }
@@ -1131,7 +1200,12 @@ export function createScene3d({ canvas }) {
       }
       if (entry.isFbx && entry.mixer) {
         if (h.alive === false) {
-          _crossfadeAnim(entry, 'death', true);
+          // Pick a random death clip once when the character first dies; keep it after.
+          if (!entry.deathAnim) {
+            const n = Math.floor(Math.random() * 13) + 1;
+            entry.deathAnim = `death_${n}`;
+          }
+          _crossfadeAnim(entry, entry.deathAnim, true);
         } else {
           // Civilians always use lobby animations regardless of mission phase
           const phase     = h._isCivilian ? 'LOBBY' : state.phase;

@@ -34,6 +34,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
   const shotListeners = new Set();
   const hitListeners = new Set();
   const killListeners = new Set();
+  const nudgeListeners = new Set();
   let sendRosterAnn = null;
   let sendRosterFull = null;
   let sendSession = null;
@@ -41,6 +42,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
   let sendShot = null;
   let sendHit = null;
   let sendKill = null;
+  let sendNudge = null;
 
   function fireStatus() { for (const l of statusListeners) l(status); }
   function firePeers() { for (const l of peerListeners) l(peers); }
@@ -80,6 +82,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
       const [sSh, gSh] = room.makeAction('shot');
       const [sHt, gHt] = room.makeAction('hit');
       const [sKl, gKl] = room.makeAction('kill');
+      const [sNu, gNu] = room.makeAction('nudge');
       sendPose = sp;
       sendChat = sc;
       sendRosterAnn = sra;
@@ -89,6 +92,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
       sendShot = sSh;
       sendHit = sHt;
       sendKill = sKl;
+      sendNudge = sNu;
 
       gse((msg, peerId) => {
         if (!msg || typeof msg !== 'object') return;
@@ -110,6 +114,10 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
         if (!msg) return;
         for (const l of killListeners) l(msg, peerId);
       });
+      gNu((msg, peerId) => {
+        if (!msg) return;
+        for (const l of nudgeListeners) l(msg, peerId);
+      });
 
       room.onPeerJoin(id => {
         peers.set(id, { renderX: 0, renderY: 0 });
@@ -129,11 +137,19 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
       gp((data, peerId) => {
         if (!data || typeof data !== 'object') return;
         const existing = peers.get(peerId);
+        // First pose ever for this peer — snap render position so the character
+        // appears instantly at the correct location rather than lerping from (0,0).
+        const firstPose = !existing || existing.x == null;
         const entry = existing || {
           renderX: data.x ?? 0,
           renderY: data.y ?? 0,
         };
         Object.assign(entry, data);
+        if (firstPose) {
+          entry.renderX    = entry.x    ?? 0;
+          entry.renderY    = entry.y    ?? 0;
+          entry.renderJumpY = entry.jumpY ?? 0;
+        }
         peers.set(peerId, entry);
       });
 
@@ -235,5 +251,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
     onHit(fn) { hitListeners.add(fn); return () => hitListeners.delete(fn); },
     sendKill: (msg, target) => { if (sendKill) try { sendKill(msg, target); } catch {} },
     onKill(fn) { killListeners.add(fn); return () => killListeners.delete(fn); },
+    sendNudge: (msg, target) => { if (sendNudge) try { sendNudge(msg, target); } catch {} },
+    onNudge(fn) { nudgeListeners.add(fn); return () => nudgeListeners.delete(fn); },
   };
 }

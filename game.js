@@ -4008,6 +4008,22 @@ net.onPeerLeave((id, peer) => {
   const name = peer?.username;
   if (name) chat.addSystem(`${name} has left the game.`);
 });
+net.onNudge((msg) => {
+  if (!msg || typeof msg.dx !== 'number' || typeof msg.dy !== 'number') return;
+  if (msg.kind === 'civ') {
+    // Another player nudged a civilian — apply to our local copy by ID.
+    const civ = civilians.find(c => c.id === msg.id);
+    if (civ && civ.alive !== false) {
+      civ.x += msg.dx;
+      civ.y += msg.dy;
+    }
+  } else {
+    // Targeted nudge — this message was sent to us specifically, move our player.
+    if (!player.alive) return;
+    player.x += msg.dx;
+    player.y += msg.dy;
+  }
+});
 
 // ---- Frame ----
 const prevPos = new Map();
@@ -4482,6 +4498,7 @@ function update(dt) {
   const NUDGE = 0.15;
   if (player.alive) {
     // Civilians & aliens (game-authoritative — move their real positions)
+    // Broadcast civilian nudges so all peers move their local copy of that civilian.
     for (const other of npcMovers) {
       if (other.alive === false) continue;
       const hit = circleVsCircle(
@@ -4489,20 +4506,30 @@ function update(dt) {
         other.x,  other.y,  other.radius  || 0.35,
       );
       if (hit) {
-        other.x -= hit.nx * hit.depth * NUDGE;
-        other.y -= hit.ny * hit.depth * NUDGE;
+        const dx = -hit.nx * hit.depth * NUDGE;
+        const dy = -hit.ny * hit.depth * NUDGE;
+        other.x += dx;
+        other.y += dy;
+        if (other.kind === 'civilian' && other.id) {
+          net.sendNudge({ kind: 'civ', id: other.id, dx, dy });
+        }
       }
     }
-    // Remote players (network-authoritative — nudge their rendered position only)
-    for (const [, pr] of net.peers) {
+    // Remote players: check against rendered position, but nudge the lerp TARGET (pr.x/pr.y)
+    // so the render follows smoothly and doesn't snap back every frame.
+    // Also send a nudge message to that peer so they move in their own game.
+    for (const [peerId, pr] of net.peers) {
       if (pr.renderX == null || pr.alive === false) continue;
       const hit = circleVsCircle(
         player.x,   player.y,   player.radius || 0.35,
         pr.renderX, pr.renderY, 0.35,
       );
       if (hit) {
-        pr.renderX -= hit.nx * hit.depth * NUDGE;
-        pr.renderY -= hit.ny * hit.depth * NUDGE;
+        const dx = -hit.nx * hit.depth * NUDGE;
+        const dy = -hit.ny * hit.depth * NUDGE;
+        pr.x += dx;
+        pr.y += dy;
+        net.sendNudge({ dx, dy }, peerId);
       }
     }
   }
