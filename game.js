@@ -4477,9 +4477,11 @@ function update(dt) {
   const npcMovers = movers.filter(e => e !== player);
   resolveCharacterOverlaps(npcMovers);
 
-  // Player-vs-NPC: player nudges others out of the way; player is never pushed back.
-  // Remote peers: player walks through them (network-authoritative, can't move them).
+  // Player nudges civilians/aliens/remote-peers: only the other entity moves, never the player.
+  // Apply a fraction of overlap depth per frame so it feels like a gentle drift, not a snap.
+  const NUDGE = 0.15;
   if (player.alive) {
+    // Civilians & aliens (game-authoritative — move their real positions)
     for (const other of npcMovers) {
       if (other.alive === false) continue;
       const hit = circleVsCircle(
@@ -4487,9 +4489,20 @@ function update(dt) {
         other.x,  other.y,  other.radius  || 0.35,
       );
       if (hit) {
-        // Full push applied to the NPC; player position is untouched.
-        other.x -= hit.nx * hit.depth;
-        other.y -= hit.ny * hit.depth;
+        other.x -= hit.nx * hit.depth * NUDGE;
+        other.y -= hit.ny * hit.depth * NUDGE;
+      }
+    }
+    // Remote players (network-authoritative — nudge their rendered position only)
+    for (const [, pr] of net.peers) {
+      if (pr.renderX == null || pr.alive === false) continue;
+      const hit = circleVsCircle(
+        player.x,   player.y,   player.radius || 0.35,
+        pr.renderX, pr.renderY, 0.35,
+      );
+      if (hit) {
+        pr.renderX -= hit.nx * hit.depth * NUDGE;
+        pr.renderY -= hit.ny * hit.depth * NUDGE;
       }
     }
   }
@@ -4633,7 +4646,7 @@ function render(dt) {
       alive: p.alive !== false,
       username: p.username || '?',
       suit: p.loadout?.suit && p.loadout.suit !== 'basic',
-      jumpY: p.jumpY || 0,
+      jumpY: p.renderJumpY || 0,
       jumpId: p.jumpId || 0,
       jumpMoveFwd:  p.jumpMoveFwd  || 0,
       jumpMoveSide: p.jumpMoveSide || 0,

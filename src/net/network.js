@@ -181,8 +181,10 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
     const k = Math.min(1, dt * 12);
     for (const p of peers.values()) {
       if (p.x == null) continue;
-      p.renderX += (p.x - p.renderX) * k;
-      p.renderY += (p.y - p.renderY) * k;
+      p.renderX     += (p.x          - p.renderX)     * k;
+      p.renderY     += (p.y          - p.renderY)     * k;
+      // Smooth jumpY the same way — without this it snaps at 15 Hz and looks jittery
+      p.renderJumpY  = (p.renderJumpY || 0) + ((p.jumpY || 0) - (p.renderJumpY || 0)) * k;
     }
   }
 
