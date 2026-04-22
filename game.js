@@ -4472,21 +4472,24 @@ function update(dt) {
   }
 
   for (const e of movers) resolveAgainstStatic(e, activeColliders);
-  resolveCharacterOverlaps(movers);
 
-  // One-directional pushout: push local player away from remote peers.
-  // Peers aren't in movers (their positions are network-authoritative), so we only
-  // move the local player to avoid walking through other people.
+  // NPC-vs-NPC overlap resolution (symmetric) — civilians and aliens don't stack.
+  const npcMovers = movers.filter(e => e !== player);
+  resolveCharacterOverlaps(npcMovers);
+
+  // Player-vs-NPC: player nudges others out of the way; player is never pushed back.
+  // Remote peers: player walks through them (network-authoritative, can't move them).
   if (player.alive) {
-    for (const [, pr] of net.peers) {
-      if (pr.renderX == null || pr.alive === false) continue;
+    for (const other of npcMovers) {
+      if (other.alive === false) continue;
       const hit = circleVsCircle(
         player.x, player.y, player.radius || 0.35,
-        pr.renderX, pr.renderY, 0.35,
+        other.x,  other.y,  other.radius  || 0.35,
       );
       if (hit) {
-        player.x += hit.nx * hit.depth;
-        player.y += hit.ny * hit.depth;
+        // Full push applied to the NPC; player position is untouched.
+        other.x -= hit.nx * hit.depth;
+        other.y -= hit.ny * hit.depth;
       }
     }
   }
