@@ -710,11 +710,13 @@ export function createScene3d({ canvas }) {
   // bone's local-space unit is 0.01 world-m.  Multiplying by 1/0.01 = 100 cancels
   // the FBX scale and leaves the gun at its correct ~0.32m world size.
   //
-  // Position/rotation are first-pass — tune via scene3d.setHandGunOffset/Rotation().
   // Bone local units: 1 unit = 0.01 world metres (FBX 0.01 scale).
-  // Bone -Y ≈ finger/forearm direction (forward), bone -X ≈ world up.
-  // Rz(-π/2) rotates GLB +X (barrel) → bone -Y (forward), GLB +Y (slide) → bone -X (up).
-  const _HAND_GUN_POS = new THREE.Vector3(0, 12, 0);
+  // RightHand bone axes (confirmed live):
+  //   +X = world up      (-X = world down)
+  //   +Y = toward wrist  (pulls grip back into palm from fingertips)
+  //   +Z = toward left hand (across body); -Z = toward right hand side
+  // Rz(-π/2) rotates GLB so barrel points along the bone's forward axis.
+  const _HAND_GUN_POS = new THREE.Vector3(-10, 16, -10);
   const _HAND_GUN_ROT = new THREE.Euler(0, 0, -Math.PI / 2);
 
   function _setHandGun(entry, show) {
