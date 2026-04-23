@@ -4664,7 +4664,7 @@ function update(dt) {
   // ADS slows movement to a deliberate creep in both FP and TP — aiming
   // should trade off mobility for accuracy. Stacks on top of the walk tier
   // so toggled-walk while ADS stays slow, not slower-than-walk×ADS.
-  const ADS_SPEED_MUL = 0.5;
+  const ADS_SPEED_MUL = 0.7;
   let speedMul = sprinting ? 1.7 : walking ? 0.5 : 1.0;
   if (adsHeld) speedMul = Math.min(speedMul, ADS_SPEED_MUL);
   if (moving) noteActivity();
