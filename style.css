@@ -69,23 +69,6 @@ html, body {
 }
 #reconnect-btn:hover { opacity: 1; background: rgba(200,20,43,0.12); }
 
-/* DEV: skip-to-mission button — remove before shipping */
-#debug-mission-btn {
-  pointer-events: auto;
-  display: block;
-  margin-top: 0.4rem;
-  background: rgba(255,140,0,0.12);
-  border: 1px solid #ff8c00;
-  color: #ff8c00;
-  font-family: inherit;
-  font-size: 0.62rem;
-  padding: 0.18rem 0.5rem;
-  cursor: pointer;
-  letter-spacing: 0.08em;
-  opacity: 0.85;
-}
-#debug-mission-btn:hover { opacity: 1; background: rgba(255,140,0,0.22); }
-
 #phase {
   margin-top: 0.15rem;
   font-size: 0.72rem;

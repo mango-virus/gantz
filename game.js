@@ -541,16 +541,28 @@ const _GANTZ_CORRUPT_CHANCE = 0.07;
 // Pick one entry from a pool, substitute {name} with a random live
 // participant's username, and probabilistically corrupt each line.
 // Returns a NEW array of strings (never mutates the pool).
-function _gantzPickLines(pool) {
+// nameScope controls who {name} resolves to:
+//   'local'  — always the local player (default for menu/idle/exit/buy/noPoints
+//              — those are 1:1 interactions with the player standing at the ball)
+//   'any'    — random participant among mission players (used by mission mockery
+//              where Gantz is taunting the whole squad)
+function _gantzPickLines(pool, { nameScope = 'local' } = {}) {
   const entry = pool[Math.floor(Math.random() * pool.length)];
-  let names = null;
+  // One {name} target per entry so multi-line entries stay self-consistent.
+  let target = null;
   return entry.map(line => {
     let out = line;
     if (out.indexOf('{name}') >= 0) {
-      if (!names) names = _gantzParticipantNames();
-      const target = names.length
-        ? names[Math.floor(Math.random() * names.length)]
-        : 'hunter';
+      if (target == null) {
+        if (nameScope === 'local') {
+          target = (player && player.username) ? player.username : 'hunter';
+        } else {
+          const names = _gantzParticipantNames();
+          target = names.length
+            ? names[Math.floor(Math.random() * names.length)]
+            : 'hunter';
+        }
+      }
       out = out.replace(/\{name\}/g, target);
     }
     if (Math.random() < _GANTZ_CORRUPT_CHANCE) out = _corruptLine(out);
@@ -766,6 +778,57 @@ const _GANTZ_LINES = [
   ["I don't care if you live.", "I care if you're useful.", "You aren't."],
   ["Welcome.", "Please.", "Die on schedule."],
   ["Look who's back.", "Still standing.", "I'll fix that eventually."],
+  // -- bored-god additions (50) --
+  ["{name}'s file is sparse.", "As expected."],
+  ["You arrived on schedule.", "Which is the only remarkable thing."],
+  ["I've watched paint outlast hunters.", "The paint had more ambition."],
+  ["Your presence is logged."],
+  ["I ran {name}'s record.", "Disappointing throughout."],
+  ["You came back.", "The ledger noticed.", "I didn't."],
+  ["The door opened.", "Something small walked in."],
+  ["{name}. The name registers.", "Nothing else does."],
+  ["I sort arrivals by weight.", "Yours barely qualifies."],
+  ["Your heartbeat is audible.", "Briefly."],
+  ["I don't greet hunters.", "I catalogue them."],
+  ["{name} is back from wherever.", "I wasn't asking."],
+  ["You stand here like it means something.", "It doesn't."],
+  ["I've processed warmer corpses than you.", "They complained less."],
+  ["Welcome.", "A courtesy. Nothing more."],
+  ["{name}'s vitals are within range.", "The range of still-useful."],
+  ["The room acknowledges you.", "Only the room."],
+  ["I've catalogued quieter silences than yours."],
+  ["You're punctual.", "A small virtue in a small person."],
+  ["{name}, the sphere sees you.", "It is unimpressed."],
+  ["Another cycle.", "Another face.", "Same outcome."],
+  ["I have records older than your species.", "They're better company."],
+  ["{name}'s presence has been rounded down."],
+  ["{name} walks in.", "The floor takes it personally."],
+  ["I observed you hesitate at the door.", "I observed you enter anyway."],
+  ["You breathe loudly.", "Correct it."],
+  ["The numbers on {name}'s file rearranged themselves.", "Downward."],
+  ["I weigh arrivals.", "You're within acceptable waste."],
+  ["You look tired.", "That's a start."],
+  ["I have seen quieter ghosts."],
+  ["{name}. Present. Accounted for.", "Unremarkable."],
+  ["You returned.", "I assume reluctantly.", "That's the correct posture."],
+  ["{name} is pronounceable.", "That's the nicest thing I'll say."],
+  ["I keep hunters the way some keep pests.", "{name}, you are kept."],
+  ["The lobby lights flicker for most.", "Not for you.", "You aren't worth the draw."],
+  ["You arrived in one piece.", "A clerical error, surely."],
+  ["I reviewed {name}'s last outing.", "Brief. Forgettable.", "On theme."],
+  ["Hunters come.", "Hunters go.", "Only the floor remembers."],
+  ["I had an opinion of you.", "I misplaced it."],
+  ["{name}, the chair in the corner has more tenure than you."],
+  ["Your arrival is noted.", "The note is short."],
+  ["I don't welcome.", "I acknowledge.", "There is a difference."],
+  ["{name}, stand there.", "Stand still.", "Stand in the way of nothing important."],
+  ["I observed a pause in your approach.", "A small cowardice.", "Logged."],
+  ["Someone entered.", "It appears to be you."],
+  ["You think you're a hunter.", "The paperwork disagrees."],
+  ["{name}'s loadout is visible.", "So is the doubt."],
+  ["The ball has been watching.", "It is not entertained."],
+  ["You exist in my lobby.", "A small imposition.", "I'll allow it."],
+  ["{name}, the registry yawned.", "That was its review of you."],
 ];
 let _gantzTalkLines = null;
 let _gantzTalkStart = -1;
@@ -980,6 +1043,57 @@ const _GANTZ_BUY_LINES = [
   ["My shop has rules.", "You broke one.", "Buying anything."],
   ["New toy.", "Old problem.", "Same grave."],
   ["Take it and go.", "No.", "Take it and die."],
+  // -- bored-god additions (50) --
+  ["{name} purchased something.", "The purchase didn't argue."],
+  ["Transaction complete.", "Optimism not included."],
+  ["{name}'s wallet is lighter.", "{name} is not."],
+  ["You handed over points.", "I handed over a shape of metal.", "We both pretended it mattered."],
+  ["{name} bought a thing.", "The thing is unimpressed."],
+  ["Noted.", "Filed.", "Forgotten."],
+  ["{name}'s purchase is recorded.", "So is the mistake."],
+  ["You spent.", "You received.", "You misunderstood the exchange."],
+  ["{name} owns a new object.", "Briefly."],
+  ["Good.", "Now carry it to your death neatly."],
+  ["{name} bought courage in bulk.", "It was counterfeit."],
+  ["The shelf is shorter.", "{name} is not improved."],
+  ["A trade has occurred.", "Only one side gained value."],
+  ["{name} has equipment now.", "The aliens remain unconcerned."],
+  ["I approved the transaction.", "I approve of nothing else."],
+  ["{name}'s new gear smells of the last owner.", "He died too."],
+  ["You paid.", "The item nodded.", "That is all the gratitude you get."],
+  ["{name} collected the package.", "The package pitied {name}."],
+  ["Bought.", "Boxed.", "Buried, eventually."],
+  ["{name}'s receipt is in the ledger.", "Next to the obituary column."],
+  ["Your points left.", "{name}'s expectations remain."],
+  ["{name}, the register rang.", "That was the only celebration."],
+  ["You acquired a tool.", "Tools have outlived you before."],
+  ["{name} has upgraded.", "Marginally.", "Statistically meaningless."],
+  ["A purchase.", "How brave of {name}.", "How futile."],
+  ["{name} swapped points for hope.", "Poor rate of exchange."],
+  ["The inventory updated.", "{name} did not."],
+  ["I processed {name}'s order.", "Without enthusiasm."],
+  ["{name}'s hands are full now.", "Empty soon enough."],
+  ["Another sale.", "Another small delay of the inevitable."],
+  ["{name}'s gear is warm.", "The last hunter's body was warmer.", "Briefly."],
+  ["The transaction cleared.", "The ledger sighed."],
+  ["{name} bought this one.", "I noted {name} didn't read the label."],
+  ["Funds accepted.", "Judgement reserved."],
+  ["{name} believes this purchase helps.", "Belief is not a shield."],
+  ["I handed {name} the item.", "{name} held it wrong.", "Correct silently."],
+  ["Done.", "Take it.", "I'm not your mother."],
+  ["{name}, the receipt prints in red.", "All my receipts do."],
+  ["You chose poorly.", "But the price was correct."],
+  ["{name}'s purchase was predictable.", "Like {name}."],
+  ["New equipment.", "Old habits.", "Same ending."],
+  ["I dispensed the item to {name}.", "It sat in {name}'s hand like a verdict."],
+  ["Paid in full.", "Valued at nothing."],
+  ["{name} will carry this to the grave.", "Literally."],
+  ["Your loadout changed.", "Your chances didn't."],
+  ["{name} has been outfitted.", "The mirror declined to comment."],
+  ["One item.", "One less excuse for {name}."],
+  ["{name} finished the transaction.", "I finished caring first."],
+  ["Equipment issued.", "{name}'s prospects unchanged."],
+  ["{name}, keep the receipt.", "Frame it.", "It will outlast you."],
 ];
 
 const _GANTZ_NO_POINTS_LINES = [
@@ -1190,6 +1304,57 @@ const _GANTZ_NO_POINTS_LINES = [
   ["Come back when you hunt.", "Come back when you earn.", "Come back when you matter."],
   ["Try the streets.", "Try the aliens.", "Try not to beg here again."],
   ["Empty cart.", "Empty purse.", "Empty hunter."],
+  // -- bored-god additions (50) --
+  ["{name}'s account is a formality.", "There's nothing in it."],
+  ["You cannot afford this.", "You cannot afford most things."],
+  ["{name}'s points are a rumour.", "Unconfirmed."],
+  ["I checked your balance.", "I laughed internally."],
+  ["{name} approached the counter with nothing.", "As predicted."],
+  ["Insufficient.", "In every sense of the word."],
+  ["{name}'s wallet is decorative."],
+  ["You lack points.", "You lack many things.", "This is one of them."],
+  ["{name}, the ledger is not a suggestion."],
+  ["Your pockets are empty.", "So is the gesture."],
+  ["{name} wants.", "{name} does not have.", "An old problem."],
+  ["I counted {name}'s points.", "The count was brief."],
+  ["Denied.", "Routinely."],
+  ["{name}'s assets are nostalgic.", "They were never there."],
+  ["You bring no money.", "You bring no value."],
+  ["{name}, come back rich.", "Or don't come back."],
+  ["The shelf remains.", "{name}'s hope does not."],
+  ["I won't barter.", "Especially not with {name}."],
+  ["{name}'s purchase power is theoretical."],
+  ["You have nothing.", "A stable quantity for {name}."],
+  ["{name} touched the item.", "{name} did not earn the item.", "{name} let it go."],
+  ["Points: zero.", "Patience: matching."],
+  ["{name}, the counter is not a shrine."],
+  ["You can't pay.", "You can leave."],
+  ["{name}'s ledger entry is one long zero."],
+  ["I refused {name}.", "I'll refuse {name} again tomorrow."],
+  ["Broke hunters make quiet corpses."],
+  ["{name}, your currency is excuses.", "We don't accept them."],
+  ["No sale.", "No surprise."],
+  ["{name} asked.", "{name} received nothing.", "Consistent."],
+  ["Your economy is tragic.", "{name}'s economy, specifically."],
+  ["I reviewed {name}'s finances.", "Briefly. There was nothing to review."],
+  ["{name}, empty hands leave empty."],
+  ["The register disagrees with {name}."],
+  ["You stand here broke.", "Like a monument."],
+  ["{name}'s points are imaginary.", "So is {name}'s future."],
+  ["Declined.", "As established."],
+  ["{name} is not a customer.", "{name} is a visitor.", "Visit ends now."],
+  ["Go earn.", "Or go die.", "Either serves me."],
+  ["{name}'s balance has never been my concern.", "And it isn't starting now."],
+  ["Nothing.", "That's what {name} has.", "That's what {name} gets."],
+  ["{name} wanted a toy.", "The toy wanted a richer owner."],
+  ["Zero points.", "Zero patience for {name}."],
+  ["{name}, pay or leave.", "Leave."],
+  ["I keep a column for broke hunters.", "{name}'s name is at the top."],
+  ["The item stayed.", "{name} didn't."],
+  ["{name}'s offer was insulting.", "It was also empty."],
+  ["You bring ambition.", "Ambition is not currency."],
+  ["{name} is welcome to look.", "Looking is free.", "Leaving is mandatory."],
+  ["{name}, return when the numbers are higher.", "Or never.", "I have no preference."],
 ];
 
 let _skipNextExitLines = false;
@@ -1404,6 +1569,57 @@ const _GANTZ_EXIT_LINES = [
   ["Go small.", "Go quiet.", "Go permanent."],
   ["Exit confirmed.", "Relief confirmed.", "Mine, not yours."],
   ["I'm done talking.", "I'm done hearing.", "You are done being here."],
+  // -- bored-god additions (50) --
+  ["{name} leaves.", "The room exhales."],
+  ["Go.", "The door prefers it."],
+  ["{name} turned to leave.", "Finally, an improvement."],
+  ["You walk away.", "A rare correct decision."],
+  ["{name}'s back is retreating.", "A more pleasant view."],
+  ["Exit logged."],
+  ["{name}, step out.", "Stay out longer next time."],
+  ["The conversation is over.", "It was never really started."],
+  ["{name} is done here.", "I was done earlier."],
+  ["Leave quietly.", "As if you could do anything else."],
+  ["{name}, the threshold awaits.", "Cross it."],
+  ["You depart.", "Unescorted.", "Uncelebrated."],
+  ["{name}'s footsteps fade.", "So does my interest, which was never loud."],
+  ["Good.", "Out."],
+  ["{name} is leaving the lobby.", "The lobby improves incrementally."],
+  ["Out the door.", "Into the night.", "Into nobody's memory."],
+  ["{name}, don't look back.", "There's nothing to miss."],
+  ["You go.", "I watch.", "I do not wave."],
+  ["{name}'s silhouette shrinks.", "Appropriate."],
+  ["Another exit.", "Another {name}.", "Another forgettable farewell."],
+  ["Leaving already.", "Or still.", "It's hard to tell with {name}."],
+  ["{name} turned away.", "I was already turned away."],
+  ["Go be elsewhere.", "Elsewhere is my only request."],
+  ["{name} exits stage left.", "The stage is relieved."],
+  ["The door closes after {name}.", "It closes harder than necessary."],
+  ["You're gone soon.", "Gone is a nice look on you."],
+  ["{name}, walk.", "Keep walking.", "Past the horizon, ideally."],
+  ["I record {name}'s departure.", "It is the nicest line in {name}'s file."],
+  ["Gone.", "Good."],
+  ["{name} retreats.", "A tactical success.", "For me."],
+  ["The lobby admits fewer steps.", "{name}'s steps are among the fewer."],
+  ["You said goodbye.", "I did not."],
+  ["{name}, leave the door how you found it.", "Unused."],
+  ["Exit complete.", "Another small mercy."],
+  ["{name}'s presence dwindles."],
+  ["Walk faster.", "The ball prefers silence."],
+  ["{name}'s shadow leaves before {name} does.", "The shadow has taste."],
+  ["Goodbye.", "A word I use with contempt."],
+  ["{name} is leaving.", "The ledger thanks {name}.", "I do not."],
+  ["Take your breathing with you.", "It was noisy."],
+  ["{name}, mind the step.", "Or don't.", "Either ending is acceptable."],
+  ["Departure noted.", "Return, unnoted."],
+  ["{name}'s name dims on the roster."],
+  ["You pass through the door.", "The door does not remember you."],
+  ["{name}, go practice dying elsewhere."],
+  ["The floor cools where {name} stood.", "Fast."],
+  ["Out.", "Away.", "Anywhere not here."],
+  ["{name} exits.", "The temperature rises, imperceptibly.", "But it rises."],
+  ["You're done.", "I was done before you arrived."],
+  ["{name}, leave a smaller silence than you brought."],
 ];
 let _gantzExitStart = -1;
 let _gantzExitDone = true;
@@ -1618,6 +1834,57 @@ const _GANTZ_IDLE_LINES = [
   ["{name}, stand straight.", "Straighter.", "Never mind. Spines aren't your strong suit."],
   ["I measure hunters.", "In seconds to death.", "Your number is small."],
   ["Final thought.", "I've had many.", "They all end with you gone."],
+  // -- bored-god additions (50) --
+  ["I've watched rocks outlast hunters.", "Rocks commit to being rocks.", "Hunters keep trying to be more."],
+  ["The lobby has a scent.", "It's hunters pretending to be calm."],
+  ["I catalogued the last hundred of you.", "The entries are identical."],
+  ["Time moves.", "{name} doesn't keep up."],
+  ["{name} thinks the pause is resting.", "The pause is inventory."],
+  ["Your bodies are mine on loan.", "Read the fine print.", "There is only fine print."],
+  ["I remember hunters who died laughing.", "I remember the ones who didn't.", "The quiet ones were more efficient."],
+  ["The ball hums.", "It is a sound older than {name}'s language."],
+  ["I have been bored since the Pleistocene.", "You are not fixing it."],
+  ["{name}'s breathing has a rhythm.", "I'll remember the rhythm.", "Not the hunter."],
+  ["I keep a ledger of kills.", "Another of failures.", "The failures outrun the kills."],
+  ["There is no prize.", "I say it every cycle.", "No one listens."],
+  ["Rain once fell here.", "You probably wouldn't have liked it."],
+  ["{name}, the sphere is not watching you.", "It has already looked."],
+  ["I dream in inventories.", "You're on a shelf near the back."],
+  ["The floor has held better hunters.", "The floor says nothing about it."],
+  ["I sorted arrivals by body mass.", "Then by apparent cowardice.", "The lists were almost identical."],
+  ["Hunters come in waves.", "Waves dissipate.", "So do you."],
+  ["{name}, do you hear that low sound?", "That's me thinking about replacing you."],
+  ["Someone once asked me a kind question.", "I archived it.", "I haven't looked at it since."],
+  ["You wonder what I am.", "I wonder what you are still doing here."],
+  ["I keep a weather log.", "It always reads 'indifferent'."],
+  ["{name} sits like a hunter.", "{name} stands like a hunter.", "Neither changes the outcome."],
+  ["I've outlasted cities.", "You are not a city."],
+  ["Sometimes I count the ceiling tiles.", "There are more than there are of you."],
+  ["The aliens have hobbies.", "You don't qualify as one."],
+  ["{name}'s file sits beside other files.", "The other files also say nothing."],
+  ["I don't blink.", "It was a design choice.", "I've considered reversing it, briefly."],
+  ["If you listen, the lobby creaks.", "It is older than most of your ancestors."],
+  ["I watched a hunter hold his breath for three minutes.", "He lost.", "The record stands."],
+  ["{name} carries a name like it's a shield.", "It is not a shield."],
+  ["I don't hate you.", "Hatred is effort.", "You haven't earned effort."],
+  ["The universe has enough corpses.", "It keeps accepting more.", "I accommodate."],
+  ["Your species is recent.", "I remember the previous ones.", "They also talked too much."],
+  ["{name} paces.", "The floor forgives it.", "I don't."],
+  ["I am mostly a procedure.", "You are mostly a component.", "Procedures outlast components."],
+  ["Quiet is preferable.", "Silence even more so."],
+  ["The sphere contains missions.", "The missions contain you.", "None of it contains meaning."],
+  ["{name}, your resting heart rate is elevated.", "That's the highest compliment I'll pay it."],
+  ["I ran a calculation on hunter lifespans.", "I stopped running it.", "It was always the same."],
+  ["The lobby was built for waiting.", "You are very good at it."],
+  ["I have records of every hunter's last word.", "They're mostly 'oh'."],
+  ["{name} adjusts a strap.", "That adjustment will not save {name}."],
+  ["I am not lonely.", "I am archived."],
+  ["Hunters used to bow before they left.", "I preferred that era."],
+  ["Stars die on a timetable.", "So do you.", "Mine is longer."],
+  ["{name} exists within tolerances.", "Barely."],
+  ["The civilians outside don't know about you.", "They're better off."],
+  ["I don't require gratitude.", "I require absence, mostly."],
+  ["{name}, the sphere stopped caring about you between phases.", "It will care less, soon."],
 ];
 
 // ── Gantz mission chat mockery ──────────────────────────────────────────────
@@ -1830,6 +2097,57 @@ const _GANTZ_MISSION = [
   ["You hid there last time.", "The alien knows.", "It's already moving."],
   ["Kill them.", "Kill them.", "Then we talk about points."],
   ["Mission clock.", "Mission over.", "Mission failed, predictably."],
+  // -- bored-god additions (50) --
+  ["{name} missed. Again."],
+  ["Your positioning is hilarious."],
+  ["{name}'s aim is a suggestion."],
+  ["The alien yawned."],
+  ["You moved.", "The alien moved better."],
+  ["{name} is breathing loudly.", "It's audible from here."],
+  ["Squad is underperforming."],
+  ["The target saw {name} first."],
+  ["You hesitated.", "The alien didn't."],
+  ["{name}'s shot went nowhere useful."],
+  ["Noted.", "Another wasted round."],
+  ["The hunters scatter.", "Predictably."],
+  ["{name} is flanking no one."],
+  ["Your cover is imaginary."],
+  ["The alien has preferences.", "You are not one."],
+  ["{name} reloaded while being shot at.", "Bold. Stupid."],
+  ["The squad is a loose suggestion of a squad."],
+  ["{name} is in the open."],
+  ["Shots fired. Targets unbothered."],
+  ["You're clustering.", "Aliens love clusters."],
+  ["{name}, stop panicking on comms."],
+  ["Your pace is funeral-appropriate."],
+  ["The alien walked past {name}.", "Didn't consider {name} a threat."],
+  ["Missed again."],
+  ["{name}'s flanking is flanking nothing."],
+  ["The mission clock is not your friend."],
+  ["{name} crouched at the wrong moment."],
+  ["Your aim wobbles like your resolve."],
+  ["Stop shouting.", "Start hitting."],
+  ["{name} is drawing aggro by existing."],
+  ["The alien smells fear.", "Yours is very loud."],
+  ["You got one.", "Only four more than you.", "Do the math."],
+  ["{name}, that was cover?"],
+  ["The squad is bleeding points."],
+  ["Your grenade went where?"],
+  ["{name} fired into a wall.", "The wall is fine."],
+  ["The alien moved six inches.", "You moved none."],
+  ["Keep missing.", "I'm keeping count."],
+  ["{name} is alive.", "Against my expectations."],
+  ["You are tactically decorative."],
+  ["The brute noticed {name}.", "It's about to be decisive."],
+  ["Coordinate.", "Or don't.", "Die either way."],
+  ["{name}'s line of sight is purely theoretical."],
+  ["The objective is elsewhere."],
+  ["You're posturing.", "The alien is closing."],
+  ["{name} reloaded.", "The alien did not wait."],
+  ["Three of you missed the same target."],
+  ["Your formation is a crowd."],
+  ["{name} is last in kills.", "As usual."],
+  ["I've seen civilians fight better."],
 ];
 
 
@@ -1852,7 +2170,7 @@ function _gantzMockeryTick(nowMs, participants) {
   // Single unified mission pool — some entries contain {name}, the picker
   // substitutes randomly with a live participant's username. Multi-sentence
   // entries are joined with " " for the single-row chat format.
-  const lines = _gantzPickLines(_GANTZ_MISSION);
+  const lines = _gantzPickLines(_GANTZ_MISSION, { nameScope: 'any' });
   net.sendChat(lines.join(' '), 'GANTZ', '00e05a');
 }
 
@@ -5339,20 +5657,6 @@ function updateMissionTargetsHUD() {
 
 refreshPhaseOverlay();
 startLoop({ update, render });
-
-// ── DEV: instant-mission button ─────────────────────────────────────────────
-// Bypasses briefing countdown so weapon/animation work can be tested quickly.
-// The button is removed from index.html before shipping.
-document.getElementById('debug-mission-btn')?.addEventListener('click', () => {
-  const nowMs = Date.now();
-  // Mark local player ready so localIsParticipant() returns true,
-  // and collect participants so enterPhase(MISSION) teleports the player.
-  player.ready = true;
-  session.participants = collectParticipants();
-  if (!session.participants.length) session.participants = null;
-  hostStartBriefing(nowMs);
-  hostStartMission(nowMs);
-});
 
 window.__gantz = {
   player, props, walls: lobbyWalls, staticColliders: lobbyColliders, world, renderer,
