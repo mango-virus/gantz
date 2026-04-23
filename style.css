@@ -69,6 +69,23 @@ html, body {
 }
 #reconnect-btn:hover { opacity: 1; background: rgba(200,20,43,0.12); }
 
+/* DEV: skip-to-mission button — remove before shipping */
+#debug-mission-btn {
+  pointer-events: auto;
+  display: block;
+  margin-top: 0.4rem;
+  background: rgba(255,140,0,0.12);
+  border: 1px solid #ff8c00;
+  color: #ff8c00;
+  font-family: inherit;
+  font-size: 0.62rem;
+  padding: 0.18rem 0.5rem;
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+}
+#debug-mission-btn:hover { opacity: 1; background: rgba(255,140,0,0.22); }
+
 #phase {
   margin-top: 0.15rem;
   font-size: 0.72rem;
@@ -80,27 +97,67 @@ html, body {
   display: none !important;
 }
 
+#gun-flash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: rgba(68, 170, 255, 0.18);
+  z-index: 50;
+}
+@keyframes gunFlash {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+#gun-flash.active {
+  animation: gunFlash 0.12s ease-out forwards;
+}
+
+/* Dynamic Gantz-green crosshair.
+   --spread is updated per-frame from game.js: bumps up when firing, decays
+   smoothly back to 0 when not. Each of the four ticks is pushed outward from
+   center by (base gap + --spread). */
 #crosshair {
+  --spread: 0px;
+  --chg: #00e05a;
   position: fixed;
   left: 50%;
   top: 50%;
-  width: 14px;
-  height: 14px;
-  margin-left: -7px;
-  margin-top: -7px;
+  width: 0;
+  height: 0;
   z-index: 6;
   pointer-events: none;
-  border-radius: 50%;
-  border: 1.5px solid rgba(255, 60, 80, 0.9);
-  box-shadow: 0 0 6px rgba(255, 60, 80, 0.5), inset 0 0 3px rgba(255, 60, 80, 0.35);
 }
-#crosshair::before, #crosshair::after {
-  content: '';
+#crosshair .ch-dot {
   position: absolute;
-  background: rgba(255, 60, 80, 0.85);
+  left: -1px; top: -1px;
+  width: 2px; height: 2px;
+  background: var(--chg);
+  box-shadow: 0 0 4px var(--chg);
 }
-#crosshair::before { left: 50%; top: -6px; width: 1.5px; height: 4px; transform: translateX(-50%); }
-#crosshair::after  { left: 50%; bottom: -6px; width: 1.5px; height: 4px; transform: translateX(-50%); }
+#crosshair .ch-tick {
+  position: absolute;
+  background: var(--chg);
+  box-shadow: 0 0 4px rgba(0, 224, 90, 0.7);
+}
+/* vertical ticks (top/bottom): 1.5px wide × 5px tall, gap 4px from center */
+#crosshair .ch-top,
+#crosshair .ch-bottom {
+  width: 1.5px;
+  height: 5px;
+  left: -0.75px;
+}
+#crosshair .ch-top    { top: calc(-5px - 4px - var(--spread)); }
+#crosshair .ch-bottom { top: calc(4px + var(--spread)); }
+/* horizontal ticks (left/right): 5px wide × 1.5px tall */
+#crosshair .ch-left,
+#crosshair .ch-right {
+  width: 5px;
+  height: 1.5px;
+  top: -0.75px;
+}
+#crosshair .ch-left  { left: calc(-5px - 4px - var(--spread)); }
+#crosshair .ch-right { left: calc(4px + var(--spread)); }
 
 .world-prompt {
   position: fixed;

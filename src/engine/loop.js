@@ -12,7 +12,14 @@ export function startLoop({ update, render }) {
       update(STEP);
       acc -= STEP;
     }
-    render(delta);
+    // Fractional position inside the current fixed step (0..1). render()
+    // uses this to smoothly interpolate the local player's pose between
+    // the last two simulated states so movement looks smooth on displays
+    // with refresh rates higher than the fixed-step rate (120/144/165Hz),
+    // which otherwise produces a stroboscopic stutter relative to objects
+    // that are interpolated every render frame (remote players, bullets).
+    const alpha = acc / STEP;
+    render(delta, alpha);
     requestAnimationFrame(tick);
   }
 

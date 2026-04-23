@@ -4,7 +4,7 @@ import { FBXLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/FBX
 import { clone as skeletonClone } from 'https://esm.sh/three@0.160.0/examples/jsm/utils/SkeletonUtils.js';
 import {
   buildHumanMesh, buildAlienMesh, buildPropMesh, buildBuildingMesh,
-  buildLobbyRoom, buildMissionRoom, buildGantzBallMesh, buildTracerMesh,
+  buildLobbyRoom, buildMissionRoom, buildGantzBallMesh,
   buildGantzBallDisplay,
 } from './factories.js';
 
@@ -79,13 +79,25 @@ function makeChatBubble(text) {
 
 // Creates a billboard sprite with the player's name drawn on a canvas texture.
 function makeNameLabel(text, hexColor) {
-  const CW = 256, CH = 52;
+  const label = String(text || '?').slice(0, 18);
+  const font = 'bold 20px ui-monospace,Menlo,Consolas,monospace';
+
+  // Measure actual text width so the pill hugs the name instead of spanning
+  // a fixed 256-pixel canvas. Use an offscreen context just for measurement.
+  const meas = document.createElement('canvas').getContext('2d');
+  meas.font = font;
+  const textW = Math.max(20, Math.ceil(meas.measureText(label).width));
+
+  const pad = 5;         // transparent margin so the pill isn't flush to the edge
+  const padX = 14;       // horizontal padding INSIDE the pill
+  const CH = 52;         // fixed height keeps world-space vertical scale constant
+  const CW = textW + (pad + padX) * 2;
+
   const c = document.createElement('canvas');
   c.width = CW; c.height = CH;
   const ctx = c.getContext('2d');
 
-  // Pill background
-  const pad = 5;
+  // Pill background — sized to the measured text, not the canvas width.
   ctx.fillStyle = 'rgba(0,0,0,0.58)';
   ctx.beginPath();
   ctx.roundRect(pad, pad, CW - pad * 2, CH - pad * 2, 8);
@@ -93,17 +105,20 @@ function makeNameLabel(text, hexColor) {
 
   // Name text
   const color = hexColor ? '#' + hexColor.replace('#', '') : '#00e05a';
-  ctx.font = 'bold 20px ui-monospace,Menlo,Consolas,monospace';
+  ctx.font = font;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = color;
-  ctx.fillText(String(text || '?').slice(0, 18), CW / 2, CH / 2);
+  ctx.fillText(label, CW / 2, CH / 2);
 
   const tex = new THREE.CanvasTexture(c);
   const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(1.1, 0.22, 1);  // world-space size (metres)
-  sprite.position.set(0, 2.15, 0); // above head in group-local space
+  // World-space size scales the X with canvas width to keep the text readable
+  // at a consistent pixels-per-metre density regardless of name length.
+  const PX_PER_M = 256 / 1.1;          // prior constant (256-wide → 1.1m)
+  sprite.scale.set(CW / PX_PER_M, CH / PX_PER_M, 1);
+  sprite.position.set(0, 2.15, 0);     // above head in group-local space
   sprite.userData.isNameLabel = true;
   return sprite;
 }
@@ -126,16 +141,48 @@ export function createScene3d({ canvas }) {
   const viewWeapon = new THREE.Group();
   viewWeapon.position.set(0.46, -0.38, -0.55);
 
-  // Muzzle flash — blue-white to match X-Gun energy.
-  const muzzle = new THREE.Mesh(
-    new THREE.SphereGeometry(0.09, 10, 8),
-    new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0 }),
-  );
-  muzzle.position.set(-0.14, 0.24, -0.12);
-  viewWeapon.add(muzzle);
-  const muzzleLight = new THREE.PointLight(0x44aaff, 0, 4, 2);
-  muzzleLight.position.copy(muzzle.position);
+  // Muzzle flash — bright blue point light at the barrel tip.
+  // Position calibrated from ADS crosshair alignment work.
+  // Layer reserved for the viewmodel + its lights. Lights on this layer only
+  // illuminate objects that also enable this layer — so viewmodel lights stay
+  // on the gun and cannot spill onto walls/characters, even at close range.
+  const VIEWMODEL_LAYER = 2;
+  // Two-pass render strategy:
+  //   Pass 1: camera.layers = {0}   → scene only (viewmodel skipped, vm lights skipped)
+  //   Pass 2: camera.layers = {2}   → viewmodel only, lit only by vm lights
+  // This is the only reliable way in Three.js to keep muzzle flash light off
+  // walls — per-object light layer filtering inside a single pass isn't honored
+  // consistently, but splitting the passes cleanly isolates the light sets.
+
+  const MUZZLE_TIP = { x: -0.188, y: 0.24, z: -0.12 };
+  const muzzleLight = new THREE.PointLight(0x44aaff, 0, 2.5, 2);
+  muzzleLight.position.set(MUZZLE_TIP.x, MUZZLE_TIP.y, MUZZLE_TIP.z);
+  muzzleLight.layers.set(VIEWMODEL_LAYER);
   viewWeapon.add(muzzleLight);
+
+  // Separate invisible anchor used as the bullet spawn point. `MUZZLE_TIP`
+  // was calibrated for ADS crosshair alignment, which puts it slightly off
+  // the visible barrel end — bullets spawning there look like they come
+  // "from the gun's neighborhood" rather than straight out of the barrel.
+  // This anchor sits right at the barrel tip.
+  const _barrelTip = new THREE.Object3D();
+  _barrelTip.position.set(MUZZLE_TIP.x, MUZZLE_TIP.y + 0.04, MUZZLE_TIP.z + 0.65);
+  viewWeapon.add(_barrelTip);
+
+  // Viewmodel-only lights — parented to viewWeapon so they move with the gun.
+  // Short range (≤1m) means they light the gun but don't reach scene characters.
+  const _vmKeyLight  = new THREE.PointLight(0xffffff, 2.2, 0.9, 1.5); // upper-left key
+  _vmKeyLight.position.set(-0.3, 0.35, 0.0);
+  _vmKeyLight.layers.set(VIEWMODEL_LAYER);
+  viewWeapon.add(_vmKeyLight);
+  const _vmFillLight = new THREE.PointLight(0x8899cc, 1.2, 0.8, 2);   // cool blue fill, upper-left
+  _vmFillLight.position.set(-0.2, 0.15, -0.1);
+  _vmFillLight.layers.set(VIEWMODEL_LAYER);
+  viewWeapon.add(_vmFillLight);
+  const _vmRimLight  = new THREE.PointLight(0xffffff, 1.0, 0.7, 2);   // rim/back highlight
+  _vmRimLight.position.set(0.0, 0.2, 0.4);
+  _vmRimLight.layers.set(VIEWMODEL_LAYER);
+  viewWeapon.add(_vmRimLight);
 
   // X-Gun materials.
   // GLB material names: M_01_base_negra (body), M_01_luz (lights), craneo_pantalla (screen).
@@ -346,17 +393,6 @@ export function createScene3d({ canvas }) {
     _xgunBodyMat.needsUpdate  = true;
   });
 
-  // Dedicated gun lights — attached to viewWeapon, move with camera.
-  // Intensities kept low so falloff doesn't visibly affect the game world.
-  const _gunKeyLight = new THREE.PointLight(0xffffff, 2.5, 1.4, 2); // neutral white key, upper-left
-  _gunKeyLight.position.set(-0.30, 0.25, -0.05);
-  viewWeapon.add(_gunKeyLight);
-  const _gunFillLight = new THREE.PointLight(0xddddcc, 0.8, 1.2, 2); // warm grey fill, right
-  _gunFillLight.position.set(0.25, 0.0, -0.15);
-  viewWeapon.add(_gunFillLight);
-  const _gunRimLight = new THREE.PointLight(0xaaaaaa, 0.4, 0.9, 2);  // neutral dim rim, below-back
-  _gunRimLight.position.set(0.10, -0.20, 0.20);
-  viewWeapon.add(_gunRimLight);
 
   new GLTFLoader().load('assets/models/x_gun_gantz.glb', gltf => {
     try {
@@ -385,21 +421,35 @@ export function createScene3d({ canvas }) {
         else                                                    node.material = _xgunBodyMat;
       });
       gun.scale.setScalar(_s);
+      // Clone the gun BEFORE applying viewmodel-specific rotation.
+      // This template (scale=_s, no rotation, geometry centred) is used to attach
+      // the X-Gun to character hand bones in world space.
+      _worldGunScale = _s;
+      _worldGunTemplate = gun.clone(true);
+
       gun.position.set(0, 0, 0); // centre is now at origin — no offset needed
       // Barrel forward (-Z), grip hangs bottom-right. Roll slight CW so top of gun faces left.
       gun.rotation.set(0.10, -Math.PI / 2 + 0.35, -0.20);
       gun.frustumCulled = false;
       console.log(`[scene3d] X-Gun size: ${_sz.x.toFixed(2)}x${_sz.y.toFixed(2)}x${_sz.z.toFixed(2)} scale:${_s.toFixed(3)} ctr:${_ct.x.toFixed(2)},${_ct.y.toFixed(2)},${_ct.z.toFixed(2)}`);
       viewWeapon.add(gun);
-      // Store barrel panel refs for animation (traverse after add so full tree is reachable)
+      // Store barrel panel refs for animation (traverse after add so full tree is reachable).
+      // Move every viewmodel descendant onto VIEWMODEL_LAYER exclusively so the
+      // main render pass (camera on layer 0) skips them, and the second pass
+      // (camera on layer 2) draws them lit only by the viewmodel lights.
       viewWeapon.traverse(n => {
+        n.layers.set(VIEWMODEL_LAYER);
         if (n.name === 'Object_7') _panelL = n;
         if (n.name === 'Object_8') _panelR = n;
         if (n.name === 'Object_6') _panelB = n;
       });
       console.log('[scene3d] barrel panels:', !!_panelL, !!_panelR, !!_panelB);
-      // Pre-warm gun shaders so first render is instant.
+      // Pre-warm gun shaders so first render is instant. Gun meshes live on
+      // VIEWMODEL_LAYER only, so temporarily enable layer 2 on the camera so
+      // compile() can see and compile them, then restore.
+      camera.layers.enable(VIEWMODEL_LAYER);
       renderer.compile(scene, camera);
+      camera.layers.set(0);
     } catch (e) {
       console.error('[scene3d] X-Gun setup error:', e);
     }
@@ -488,11 +538,98 @@ export function createScene3d({ canvas }) {
     }
     if (currentRoomGroup) {
       scene.add(currentRoomGroup);
-      // Pre-warm all room/building/prop shaders immediately so the first rendered
-      // frame after a phase transition doesn't stall on GPU compilation.
-      renderer.compile(scene, camera);
+      // Pre-warm all room/building/prop shaders so the first rendered frame
+      // after a phase transition doesn't stall on GPU compilation. Prefer
+      // the async variant when available (three r151+) — it parallelises
+      // program compilation across the driver's worker pool instead of
+      // blocking the main thread for the entire duration.
+      if (typeof renderer.compileAsync === 'function') {
+        renderer.compileAsync(scene, camera).catch(() => {
+          try { renderer.compile(scene, camera); } catch (e) { /* ignore */ }
+        });
+      } else {
+        renderer.compile(scene, camera);
+      }
     }
   }
+
+
+  // ── Third-person camera ───────────────────────────────────────────────────
+  // Scroll down → TP, scroll up → FP.  RMB → ADS zoom while in TP.
+  const TP_ARM_LENGTH     = 3.0;   // spring arm length hip-fire
+  const TP_ARM_LENGTH_ADS = 1.8;   // spring arm length ADS (closer to shoulder)
+  const TP_SHOULDER_X     = 1.0;   // right-shoulder offset hip-fire
+  // ADS keeps the same shoulder offset as hip-fire so the camera only pulls
+  // forward (arm shortens) and FOV narrows — no lateral slide. That way the
+  // crosshair ray stays on the same world point through the whole transition.
+  const TP_SHOULDER_X_ADS = 1.0;
+  const TP_PIVOT_H        = 1.7;   // pivot height above player feet
+  const TP_LOOK_FWD       = 2.0;   // look-at forward shift (pushes char left of centre)
+  const TP_FOV            = 65;    // hip-fire FOV
+  const TP_FOV_ADS        = 45;    // ADS FOV (zoomed in)
+  const TP_LERP           = 25;    // camera position lerp speed (high enough
+                                   // that fast mouse swings can't leave the
+                                   // character behind the FOV; ADS bumps even
+                                   // higher — see followLerp below)
+  const TP_ADS_SPEED      = 7;     // ADS transition speed (lower = slower/weightier)
+  const TP_PITCH_MIN      = -Math.PI / 3;  // −60°
+  const TP_PITCH_MAX      =  Math.PI / 3;  // +60°
+  const TP_TRANS_RATE     = 4;     // FP↔TP transition speed (units/sec). 1/4 = 0.25s
+
+  // _tpTarget is what scroll wants (0 = FP, 1 = TP). _tpMix is the eased
+  // runtime value that steps toward the target each frame. The camera state
+  // is computed as a smoothstep blend of the FP and TP solutions using _tpMix,
+  // so both FP→TP and TP→FP transitions glide smoothly.
+  let   _tpTarget      = 0;
+  let   _tpMix         = 0;
+  let   _tpSnap        = false;               // (re)snap smooth pivot/pos when entering TP
+  let   _tpADS         = false;               // RMB held in TP mode
+  let   _tpADST        = 0;                   // 0 = hip, 1 = full ADS (smoothstepped)
+  const _tpSmoothPos   = new THREE.Vector3(); // lerped camera position
+  const _tpSmoothPivot = new THREE.Vector3(); // lerped pivot — drives both cam pos + look-at
+  const _tpRaycaster   = new THREE.Raycaster();
+  let   _tpCollidables = [];
+  let   _tpCollidableKey = '';
+
+  function _rebuildTPCollidables() {
+    _tpCollidables = [];
+    // Only the static room geometry — NOT the whole scene. The scene contains
+    // the camera-attached viewWeapon, the Gantz ball, character meshes, etc.
+    // A raycast from the camera along its forward axis would otherwise hit the
+    // viewWeapon (mounted on the camera, so always directly in front) producing
+    // a near-zero hit distance and garbage aim direction.
+    const root = currentRoomGroup;
+    if (!root) return;
+    root.traverse(o => {
+      if (o.isMesh && !o.isSkinnedMesh && o.visible !== false) _tpCollidables.push(o);
+    });
+  }
+
+  renderer.domElement.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (e.deltaY > 0 && _tpTarget === 0) {
+      _tpTarget = 1;
+      // Snap smooth pivot/pos to fresh TP values when we start the transition
+      // so _tpSmoothPos doesn't lerp in from stale leftovers of a prior exit.
+      if (_tpMix <= 0.001) _tpSnap = true;
+    } else if (e.deltaY < 0 && _tpTarget === 1) {
+      _tpTarget = 0;
+      _tpADS    = false;  // clear ADS if we're leaving TP
+    }
+  }, { passive: false });
+
+  renderer.domElement.addEventListener('mousedown', e => {
+    if (e.button === 2 && _tpTarget === 1) _tpADS = true;
+  });
+  renderer.domElement.addEventListener('mouseup', e => {
+    if (e.button === 2) _tpADS = false;
+  });
+  renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+  // ── World-space gun template (for attaching to character hand bones) ──────
+  // Populated when the X-Gun GLB loads. Cloned per-character in mission phase.
+  let _worldGunTemplate = null;
+  let _worldGunScale = 1; // the _s factor (0.32/maxDim) — applied when cloning
 
   // ── Character model (FBX) ────────────────────────────────────────────────
   let _charTemplate = null;  // loaded FBX root Object3D (not added to scene)
@@ -515,6 +652,11 @@ export function createScene3d({ canvas }) {
     entry.mixer.stopAllAction();
     entry.currentAnim = null;
     entry.deathAnim = null;
+    // Detach hand gun before recycling so the pool instance is clean.
+    if (entry.handGun) {
+      entry.handGun.bone.remove(entry.handGun.mesh);
+      entry.handGun = null;
+    }
     // Remove name label and chat bubble so the recycled group is clean.
     const toStrip = entry.group.children.filter(
       c => c.userData.isNameLabel || c.userData.isChatBubble
@@ -522,6 +664,84 @@ export function createScene3d({ canvas }) {
     for (const c of toStrip) { entry.group.remove(c); disposeGroup(c); }
     scene.remove(entry.group);
     _charPool.push({ group: entry.group, mixer: entry.mixer, actions: entry.actions, currentAnim: null });
+  }
+
+  // ── Hand gun attachment ────────────────────────────────────────────────────
+  // Find a bone by the bare name after any namespace prefix.
+  // Mixamo FBX-with-mesh uses 'mixamorig:RightHand' (colon namespace).
+  // Animation-only FBX uses 'mixamorigRightHand' (no colon).
+  // We strip everything up to and including the colon/last non-alpha char so both match.
+  function _findBone(root, bareName) {
+    const target = bareName.toLowerCase();
+    let found = null;
+    // First pass: exact match
+    root.traverse(o => {
+      if (found || !o.isBone) return;
+      if (o.name === bareName) found = o;
+    });
+    if (found) return found;
+    // Second pass: match bare name after namespace prefix (strips 'mixamorig:' or 'mixamorig')
+    root.traverse(o => {
+      if (found || !o.isBone) return;
+      const bare = o.name.replace(/^mixamorig[^a-zA-Z]*/i, '').toLowerCase();
+      const tgt  = target.replace(/^mixamorig[^a-zA-Z]*/i, '');
+      if (bare === tgt) found = o;
+    });
+    if (!found) console.warn('[scene3d] hand-gun: bone not found:', bareName);
+    return found;
+  }
+
+  // Log all bone names once (dev helper — fires the first time a character attaches).
+  let _boneNamesLogged = false;
+  function _logBoneNames(root) {
+    if (_boneNamesLogged) return;
+    _boneNamesLogged = true;
+    const names = [];
+    root.traverse(o => { if (o.isBone) names.push(o.name); });
+    console.log('[scene3d] skeleton bone names:', names.join(', '));
+  }
+
+  // Attach or detach the X-Gun world-mesh from a character's right hand bone.
+  // Call with show=true when the character is in a mission and alive,
+  // show=false to remove the gun (lobby, dead, civilian).
+  //
+  // Scale maths: the gun template has scale = _worldGunScale (~0.32/maxDim) so it
+  // renders as ~0.32m in world space.  The Mixamo FBX root is scaled 0.01, so the
+  // bone's local-space unit is 0.01 world-m.  Multiplying by 1/0.01 = 100 cancels
+  // the FBX scale and leaves the gun at its correct ~0.32m world size.
+  //
+  // Position/rotation are first-pass — tune via scene3d.setHandGunOffset/Rotation().
+  // Bone local units: 1 unit = 0.01 world metres (FBX 0.01 scale).
+  // Bone -Y ≈ finger/forearm direction (forward), bone -X ≈ world up.
+  // Rz(-π/2) rotates GLB +X (barrel) → bone -Y (forward), GLB +Y (slide) → bone -X (up).
+  const _HAND_GUN_POS = new THREE.Vector3(0, 12, 0);
+  const _HAND_GUN_ROT = new THREE.Euler(0, 0, -Math.PI / 2);
+
+  function _setHandGun(entry, show) {
+    if (!entry.isFbx) return;
+    if (!show) {
+      if (entry.handGun) {
+        entry.handGun.bone.remove(entry.handGun.mesh);
+        entry.handGun = null;
+      }
+      return;
+    }
+    if (!_worldGunTemplate) return; // GLB not loaded yet
+    if (entry.handGun) return;      // already attached
+
+    _logBoneNames(entry.group);
+    const bone = _findBone(entry.group, 'RightHand');
+    if (!bone) return;
+
+    const gunMesh = _worldGunTemplate.clone(true);
+    // Cancel accumulated FBX 0.01 scale so the gun appears ~0.32m in world space.
+    gunMesh.scale.setScalar(_worldGunScale * 100);
+    gunMesh.position.copy(_HAND_GUN_POS);
+    gunMesh.rotation.copy(_HAND_GUN_ROT);
+    gunMesh.traverse(o => { o.frustumCulled = false; });
+    bone.add(gunMesh);
+    entry.handGun = { bone, mesh: gunMesh };
+    console.log('[scene3d] hand-gun attached to bone:', bone.name, 'scale:', (_worldGunScale * 100).toFixed(3));
   }
 
   function _resampleClip(clip, fps) {
@@ -559,23 +779,28 @@ export function createScene3d({ canvas }) {
     lobby_jog_sr:     'assets/models/character/male1/Lobby/jog_strafe_right.fbx',
     lobby_run:        'assets/models/character/male1/Lobby/male1_standard_run.fbx',
     lobby_run_back:   'assets/models/character/male1/Lobby/male1_standard_run_backwards.fbx',
-    lobby_sprint_l:   'assets/models/character/male1/Lobby/male1_left_strafe.fbx',
-    lobby_sprint_r:   'assets/models/character/male1/Lobby/male1_right_strafe.fbx',
-    lobby_jump:       'assets/models/character/male1/Lobby/male1_jump_forwards.fbx',
+    lobby_sprint_l:   'assets/models/character/male1/Lobby/male1_running_left_strafe.fbx',
+    lobby_sprint_r:   'assets/models/character/male1/Lobby/male1_running_right_strafe.fbx',
+    lobby_jump:       'assets/models/character/male1/Lobby/male1_jump_standing.fbx',
     lobby_jump_fwd:   'assets/models/character/male1/Lobby/male1_jump_forwards.fbx',
     lobby_jump_back:  'assets/models/character/male1/Lobby/male1_jump_backwards.fbx',
-    pistol_idle:          'assets/models/character/male1/Mission/pistol_idle.fbx',
-    pistol_walk:          'assets/models/character/male1/Mission/pistol_walk.fbx',
-    pistol_walk_back:     'assets/models/character/male1/Mission/pistol_walk_backward.fbx',
-    pistol_run:           'assets/models/character/male1/Mission/pistol_run.fbx',
+    pistol_idle:          'assets/models/character/male1/Mission/pistol idle.fbx',
+    pistol_walk:          'assets/models/character/male1/Mission/pistol walk.fbx',
+    pistol_walk_back:     'assets/models/character/male1/Mission/pistol walk backward.fbx',
+    pistol_run:           'assets/models/character/male1/Mission/pistol run.fbx',
     pistol_strafe_l:      'assets/models/character/male1/Mission/pistol_strafe_left.fbx',
     pistol_strafe_r:      'assets/models/character/male1/Mission/pistol_strafe_right.fbx',
+    pistol_walk_arc_l:    'assets/models/character/male1/Mission/Pistol Walk Arc Left.fbx',
+    pistol_walk_arc_r:    'assets/models/character/male1/Mission/Pistol Walk Arc Right.fbx',
+    pistol_run_arc_l:     'assets/models/character/male1/Mission/Pistol Run Arc Left.fbx',
+    pistol_run_arc_r:     'assets/models/character/male1/Mission/Pistol Run Arc Right.fbx',
+    pistol_run_back_arc_l:'assets/models/character/male1/Mission/Pistol Run Backward Arc Left.fbx',
+    pistol_run_back_arc_r:'assets/models/character/male1/Mission/Pistol Run Backward Arc Right.fbx',
+    pistol_walk_back_arc_l:'assets/models/character/male1/Mission/Pistol Walk Backward Arc Left.fbx',
+    pistol_walk_back_arc_r:'assets/models/character/male1/Mission/Pistol Walk Backward Arc Right.fbx',
     pistol_jump:          'assets/models/character/male1/Mission/pistol_jump_standing.fbx',
     pistol_jump_fwd:      'assets/models/character/male1/Mission/pistol_jump_moving.fbx',
-    pistol_shoot:         'assets/models/character/male1/Mission/pistol_shooting.fbx',
-    pistol_kneel_idle:    'assets/models/character/male1/Mission/pistol_kneeling_idle.fbx',
-    pistol_stand_to_kneel:'assets/models/character/male1/Mission/pistol_stand_to_kneel.fbx',
-    pistol_kneel_to_stand:'assets/models/character/male1/Mission/pistol_kneel_to_stand.fbx',
+    pistol_shoot:         'assets/models/character/male1/Mission/pistol shooting.fbx',
     death_1:  'assets/models/character/male1/Dying/player_dying1.fbx',
     death_2:  'assets/models/character/male1/Dying/player_dying2.fbx',
     death_3:  'assets/models/character/male1/Dying/player_dying3.fbx',
@@ -606,11 +831,9 @@ export function createScene3d({ canvas }) {
             clip.tracks = clip.tracks.filter(t => {
               const bone = t.name.split('.')[0].toLowerCase();
               if (t.name.endsWith('.position') && (bone.includes('hips') || bone === 'root')) {
-                const needsY = name.startsWith('death_') ||
-                               name === 'pistol_stand_to_kneel' ||
-                               name === 'pistol_kneel_to_stand';
+                const needsY = name.startsWith('death_');
                 if (needsY) {
-                  // Keep Y for vertical motion (fall/kneel); zero XZ to prevent horizontal drift
+                  // Keep Y for vertical motion (fall); zero XZ to prevent horizontal drift
                   for (let i = 0; i < t.values.length; i += 3) {
                     t.values[i]   = 0; // X
                     t.values[i+2] = 0; // Z
@@ -625,7 +848,6 @@ export function createScene3d({ canvas }) {
             // Other one-shots: 60fps is sufficient.
             if (name.includes('jump')) _resampleClip(clip, 120);
             else if (name === 'pistol_shoot' ||
-                name === 'pistol_stand_to_kneel' || name === 'pistol_kneel_to_stand' ||
                 name.startsWith('death_')) _resampleClip(clip, 60);
           }
           _charClips = clips;
@@ -637,9 +859,21 @@ export function createScene3d({ canvas }) {
             if (_poolBuilt >= _POOL_SIZE) return;
             const inst = _createCharInstance();
             if (_poolBuilt === 0) {
-              // Compile GPU shaders now using the first instance.
+              // Compile GPU shaders now using the first instance. Prefer
+              // compileAsync — the skinned character shader is one of the
+              // heaviest programs in the scene and the sync compile here is
+              // a major contributor to the startup stall. three captures the
+              // scene state synchronously at the call site, so removing the
+              // temp instance right after is safe and prevents it getting
+              // yanked out later if it's already been handed to a human.
               scene.add(inst.group);
-              renderer.compile(scene, camera);
+              if (typeof renderer.compileAsync === 'function') {
+                renderer.compileAsync(scene, camera).catch(() => {
+                  try { renderer.compile(scene, camera); } catch (e) { /**/ }
+                });
+              } else {
+                try { renderer.compile(scene, camera); } catch (e) { /**/ }
+              }
               scene.remove(inst.group);
             }
             _charPool.push(inst);
@@ -671,6 +905,9 @@ export function createScene3d({ canvas }) {
       for (const mat of mats) {
         // DoubleSide prevents hair/thin geometry from vanishing when viewed from behind
         mat.side = THREE.DoubleSide;
+        // Kill any emissive baked into the FBX — prevents the character self-glowing.
+        if (mat.emissive) mat.emissive.set(0, 0, 0);
+        mat.emissiveIntensity = 0;
         if (mat.alphaMap) {
           // Hair: alpha-cutout mode with minimal threshold so near-fully-transparent
           // edge pixels are the only ones discarded.  transparent=false keeps depth
@@ -702,8 +939,13 @@ export function createScene3d({ canvas }) {
 
   function _pickGroundAnim(phase, h) {
     const moving    = Math.abs(h.moveFwd || 0) > 0.05 || Math.abs(h.moveSide || 0) > 0.05;
-    const sprinting = !!h.sprinting;
-    const walking   = !!h.walking;
+    // While the player is aiming down sights, force the "walking" gait
+    // regardless of sprint input so the 3rd-person model reads as carefully
+    // aimed instead of sprinting with a scope up. Applies to both the local
+    // player (via _adsActive) and remote peers (via pose-broadcast h.ads).
+    const adsOverride = (h._id === '__player__' && _adsActive) || !!h.ads;
+    const sprinting = adsOverride ? false : !!h.sprinting;
+    const walking   = adsOverride ? true  : !!h.walking;
     const fwd  = h.moveFwd  || 0;
     const side = h.moveSide || 0;
     const pureStrafe = Math.abs(fwd) < 0.3;
@@ -711,9 +953,16 @@ export function createScene3d({ canvas }) {
     if (phase !== 'MISSION') {
       if (!moving) return 'lobby_idle';
       if (sprinting) {
+        // Back-diagonals: reuse the jog back-diagonal clips (no dedicated
+        // sprint-back-diagonal animation exists; the jog variant reads fine
+        // at sprint speed).
+        if (fwd < -0.15 && side < -0.15) return 'lobby_jog_diag_bl';
+        if (fwd < -0.15 && side >  0.15) return 'lobby_jog_diag_br';
         if (fwd < -0.2)  return 'lobby_run_back';
-        if (side < -0.3 && pureStrafe) return 'lobby_sprint_l';
-        if (side >  0.3 && pureStrafe) return 'lobby_sprint_r';
+        // Use running-strafe animations any time sprinting with meaningful
+        // sideways input, including forward+side diagonals (not just pure strafe).
+        if (side < -0.3) return 'lobby_sprint_l';
+        if (side >  0.3) return 'lobby_sprint_r';
         return 'lobby_run';
       }
       if (walking) {
@@ -733,9 +982,15 @@ export function createScene3d({ canvas }) {
       return 'lobby_jog';
     }
     if (!moving) return 'pistol_idle';
+    // Back diagonals — dedicated arc clips for both sprint and walk pacing.
+    if (fwd < -0.15 && side < -0.15) return sprinting ? 'pistol_run_back_arc_l' : 'pistol_walk_back_arc_l';
+    if (fwd < -0.15 && side >  0.15) return sprinting ? 'pistol_run_back_arc_r' : 'pistol_walk_back_arc_r';
     if (fwd < -0.2 && !pureStrafe) return 'pistol_walk_back';
     if (side < -0.3 && pureStrafe) return 'pistol_strafe_l';
     if (side >  0.3 && pureStrafe) return 'pistol_strafe_r';
+    // Forward diagonals — separate arc clips for walk vs sprint pacing.
+    if (fwd > 0.15 && side < -0.15) return sprinting ? 'pistol_run_arc_l' : 'pistol_walk_arc_l';
+    if (fwd > 0.15 && side >  0.15) return sprinting ? 'pistol_run_arc_r' : 'pistol_walk_arc_r';
     return sprinting ? 'pistol_run' : 'pistol_walk';
   }
 
@@ -757,11 +1012,30 @@ export function createScene3d({ canvas }) {
     const prev = entry.actions[entry.currentAnim];
     const next = entry.actions[name];
     if (!next) return;
-    const fadeTime = oneShot ? 0.08 : 0.2;
-    if (prev) prev.fadeOut(fadeTime);
-    next.reset().setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
-    next.clampWhenFinished = oneShot;
-    next.fadeIn(fadeTime).play();
+    if (oneShot) {
+      // One-shots (jump, shoot) must not fade in. A fadeIn ramps the new
+      // action's weight 0→1 while the previous action fades out 1→0, and the
+      // total weight dips below 1 in the middle — three.js fills that deficit
+      // with the bind pose, which shows as a T-pose flash at the start of the
+      // new anim. Instead, put the new action at full weight immediately and
+      // just fade the previous one out underneath it.
+      //
+      // Only fade the previous when it's actually a different action — on a
+      // force-restart (e.g. rapid fire → same pistol_shoot re-triggered), prev
+      // === next, and fading it out would drop the sole-acting weight to 0,
+      // exposing bind pose all over again.
+      if (prev && prev !== next) prev.fadeOut(0.08);
+      next.stopFading();                                 // cancel any prior fade-out on next
+      next.reset().setLoop(THREE.LoopOnce, Infinity);
+      next.clampWhenFinished = true;
+      next.setEffectiveWeight(1).play();
+    } else {
+      const fadeTime = 0.2;
+      if (prev) prev.fadeOut(fadeTime);
+      next.reset().setLoop(THREE.LoopRepeat, Infinity);
+      next.clampWhenFinished = false;
+      next.fadeIn(fadeTime).play();
+    }
     entry.currentAnim = name;
   }
 
@@ -771,7 +1045,180 @@ export function createScene3d({ canvas }) {
   const props = new Map();
   let gantzBall = null;
   let ballDisplay = null;
-  const tracers = [];  // {mesh, age, ttl}
+  // Energy-bullet pool. Each projectile is a small glowing sphere with an
+  // attached point light. The bullet flies from origin toward endpoint at a
+  // fixed speed, and is destroyed on arrival (the endpoint is the first
+  // collision point reported by the game-side hitscan, so the bullet stops at
+  // walls, props, players, civilians, aliens — i.e. everything listed in
+  // _buildFireTargets + activeColliders).
+  const bullets = [];  // { mesh, light, dx, dy, dz, remaining }
+  const BULLET_SPEED   = 80;   // m/s
+  const BULLET_RADIUS  = 0.06;
+  const BULLET_MUZZLE_Y = 1.35; // approx gun height off the ground
+  const BULLET_MAX_DIST = 50;   // bullets fly this far before despawning,
+                                // regardless of what they visually pass through
+  const _bulletGeom = new THREE.SphereGeometry(BULLET_RADIUS, 12, 10);
+  const _bulletHaloGeom = new THREE.SphereGeometry(BULLET_RADIUS * 2.4, 12, 10);
+  // Shared bullet materials. Reusing a single MeshBasicMaterial avoids the
+  // per-shot program-cache churn that caused a hitch on the first several
+  // shots. Color is applied per-instance via `mesh.material = <clone>` only
+  // when it differs from the default.
+  const _bulletCoreMat = new THREE.MeshBasicMaterial({ color: 0x66ddff });
+  const _bulletHaloMat = new THREE.MeshBasicMaterial({
+    color: 0x66ddff, transparent: true, opacity: 0.4,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+
+  // Point-light pool. Adding a new THREE.PointLight to the scene forces a
+  // shader recompile on every lit material because the lightsHash changes;
+  // removing one does the same. Instead we allocate a fixed pool up front
+  // and just toggle intensity/position — the lightsHash stays constant, so
+  // no recompile hitches when firing.
+  // Kept small on purpose: every pooled light iterates in the lit fragment
+  // shader on every skinned character / wall pixel even when its intensity
+  // is 0 and it's parked below the map, so a large pool literally scales
+  // per-frame fragment cost. 4 covers the normal in-flight bullet count
+  // for single-shot and small spreads; any extra bullets render without a
+  // light which is visually negligible for a single frame.
+  const BULLET_LIGHT_POOL_SIZE = 4;
+  const _bulletLightPool = [];
+  for (let i = 0; i < BULLET_LIGHT_POOL_SIZE; i++) {
+    const pl = new THREE.PointLight(0x66ddff, 0, 3.0, 2);
+    pl.position.set(0, -1000, 0); // parked far below the map
+    pl.userData._inUse = false;
+    scene.add(pl);
+    _bulletLightPool.push(pl);
+  }
+  function _acquireBulletLight() {
+    for (const pl of _bulletLightPool) {
+      if (!pl.userData._inUse) {
+        pl.userData._inUse = true;
+        return pl;
+      }
+    }
+    return null; // pool exhausted — bullet renders without light
+  }
+  function _releaseBulletLight(pl) {
+    if (!pl) return;
+    pl.intensity = 0;
+    pl.position.set(0, -1000, 0);
+    pl.userData._inUse = false;
+  }
+
+  // Returns the viewmodel muzzle's current world-space position. Used by
+  // game.js so the local FP bullet actually emerges from the gun barrel
+  // instead of the middle of the screen.
+  const _muzzleWorldV = new THREE.Vector3();
+  const _muzzleWorldV2 = new THREE.Vector3();
+  function getMuzzleWorldPosition() {
+    // Make sure the viewWeapon's world matrix reflects this frame's camera
+    // transform (camera is updated once per render before bullets spawn).
+    _barrelTip.updateWorldMatrix(true, false);
+    muzzleLight.updateWorldMatrix(true, false);
+    // Hip: _barrelTip (visible barrel end). ADS: muzzleLight (calibrated to
+    // sit on the screen center / crosshair). Lerp by smoothstepped _adsT so
+    // aim-down-sights fire reads as coming from the middle of the screen.
+    const e = _adsT * _adsT * (3 - 2 * _adsT);
+    _muzzleWorldV.setFromMatrixPosition(_barrelTip.matrixWorld);   // hip
+    _muzzleWorldV2.setFromMatrixPosition(muzzleLight.matrixWorld); // ads
+    const x = _muzzleWorldV.x + (_muzzleWorldV2.x - _muzzleWorldV.x) * e;
+    const y = _muzzleWorldV.y + (_muzzleWorldV2.y - _muzzleWorldV.y) * e;
+    const z = _muzzleWorldV.z + (_muzzleWorldV2.z - _muzzleWorldV.z) * e;
+    return { x, y, z };
+  }
+
+  function spawnBullet(x1, y1, z1, x2, y2, z2, colorHex) {
+    // Shared materials; color is set on the pooled light and passed via the
+    // material's color uniform only if it actually differs from the default
+    // (most shots use the default X-Gun cyan).
+    const mesh = new THREE.Mesh(_bulletGeom, _bulletCoreMat);
+    mesh.position.set(x1, y1, z1);
+    const halo = new THREE.Mesh(_bulletHaloGeom, _bulletHaloMat);
+    mesh.add(halo);
+    scene.add(mesh);
+
+    // Grab a pooled point light (no scene graph add/remove, so no shader
+    // program churn). The light is parented to the scene, not the mesh, so
+    // we update its position each frame alongside the bullet.
+    const light = _acquireBulletLight();
+    if (light) {
+      const col = new THREE.Color(colorHex || '#66ddff');
+      light.color.copy(col);
+      light.intensity = 2.2;
+      light.position.set(x1, y1, z1);
+    }
+
+    // Direction comes from the endpoint payload; distance is fixed —
+    // bullets pass through level geometry and despawn at max range or on
+    // hitting a living character.
+    const dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+    const dist = Math.hypot(dx, dy, dz) || 0.001;
+    bullets.push({
+      mesh, light,
+      dx: dx / dist, dy: dy / dist, dz: dz / dist,
+      remaining: BULLET_MAX_DIST,
+    });
+  }
+
+  // Characters bullets should stop on (living civilians / aliens / players).
+  // Walls and props are deliberately excluded — bullets pass through level
+  // geometry until they reach BULLET_MAX_DIST.
+  const BULLET_HIT_RADIUS = 0.45;              // fudge so near-misses still pop
+  const BULLET_SELF_IGNORE_DIST = 0.9;         // ignore hits on shooter for
+                                               // the first ~1m of travel
+  function _stepBullets(dt, state) {
+    const civs    = state?.civilians || [];
+    const aliens  = state?.aliens    || [];
+    const remotes = state?.remotes   || [];
+    const self    = state?.player;
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      const step = Math.min(b.remaining, BULLET_SPEED * dt);
+      b.mesh.position.x += b.dx * step;
+      b.mesh.position.y += b.dy * step;
+      b.mesh.position.z += b.dz * step;
+      if (b.light) b.light.position.copy(b.mesh.position);
+      b.remaining -= step;
+      b.traveled  = (b.traveled || 0) + step;
+
+      // Collision vs living characters. XZ is a circle test (footprint);
+      // the bullet's Y must also be inside the character's vertical extent
+      // or a shot aimed well above/below the target despawns on frame 1
+      // (bullet starts at the shooter's muzzle near the target's footprint
+      // but climbs out immediately) — that's why high-angle shots weren't
+      // visible to other peers: the remote bullet was culled the instant
+      // it spawned because we only compared XZ.
+      let hitChar = false;
+      const bx = b.mesh.position.x, by = b.mesh.position.y, bz = b.mesh.position.z;
+      const checkHit = (e, extra = 0) => {
+        if (!e || e.alive === false) return false;
+        const r = (e.radius || 0.4) + BULLET_HIT_RADIUS + extra;
+        const dx = e.x - bx, dy = e.y - bz;
+        if ((dx * dx + dy * dy) > r * r) return false;
+        // Vertical extent: humans ~0..1.9m, aliens up to ~2.5m. Feet at 0
+        // (add jumpY for jumping players). A small fudge under the feet
+        // keeps leg shots landing.
+        const top = e.kind === 'alien' ? 2.5 : 1.9;
+        const bot = -0.2 + (e.jumpY || 0);
+        return by >= bot && by <= top + (e.jumpY || 0);
+      };
+      for (const c of civs)    { if (checkHit(c)) { hitChar = true; break; } }
+      if (!hitChar) for (const a of aliens)  { if (checkHit(a)) { hitChar = true; break; } }
+      if (!hitChar) for (const r of remotes) { if (checkHit(r)) { hitChar = true; break; } }
+      if (!hitChar && self && b.traveled > BULLET_SELF_IGNORE_DIST) {
+        if (checkHit(self)) hitChar = true;
+      }
+
+      if (hitChar || b.remaining <= 0.001) {
+        scene.remove(b.mesh);
+        _releaseBulletLight(b.light);
+        // Materials/geometry are shared across all bullets — nothing to
+        // dispose per-bullet. The mesh itself is GC'd by removal from scene.
+        bullets.splice(i, 1);
+      }
+    }
+  }
 
   function getOrCreateHuman(id, spec, opts) {
     let entry = humans.get(id);
@@ -791,7 +1238,7 @@ export function createScene3d({ canvas }) {
         }
         const inst = _acquireCharInstance(); // instant from pool; clone only if pool drained
         scene.add(inst.group);
-        entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null };
+        entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null, handGun: null };
         humans.set(id, entry);
       }
     } else {
@@ -808,6 +1255,18 @@ export function createScene3d({ canvas }) {
     return entry;
   }
 
+  // Compensate for the FBX character's 0.01 parent scale so the sprite ends
+  // up at its designed world-space position and size. makeNameLabel/
+  // makeChatBubble author position + scale in metres assuming a unit-scaled
+  // parent; an FBX root is scaled to 0.01 (cm → m) which would otherwise
+  // shrink the pill to ~1cm tall at ground level and make it invisible.
+  function _compensateForParentScale(sprite, entry) {
+    if (!entry.isFbx) return;
+    const k = 100; // inverse of 0.01
+    sprite.position.multiplyScalar(k);
+    sprite.scale.multiplyScalar(k);
+  }
+
   function updateNameLabel(entry, text, color, visible) {
     const textStr = String(text || '');
     const colorStr = String(color || '');
@@ -817,6 +1276,7 @@ export function createScene3d({ canvas }) {
       if (old) { entry.group.remove(old); disposeGroup(old); }
       if (textStr) {
         const label = makeNameLabel(textStr, colorStr);
+        _compensateForParentScale(label, entry);
         entry.group.add(label);
       }
       entry.labelText = textStr;
@@ -835,6 +1295,7 @@ export function createScene3d({ canvas }) {
       if (old) { entry.group.remove(old); disposeGroup(old); }
       if (textStr) {
         const bubble = makeChatBubble(textStr);
+        _compensateForParentScale(bubble, entry);
         entry.group.add(bubble);
       }
       entry.bubbleText = textStr;
@@ -905,9 +1366,15 @@ export function createScene3d({ canvas }) {
     }
   }
 
-  function updateEntityTransform(group, e, isFbx) {
+  function updateEntityTransform(group, e, isFbx, dt) {
     const jy = e.jumpY || 0;
-    group.position.set(e.x, jy, e.y);
+    // Lerp at a rate high enough to be imperceptible at 60 fps (factor ≈ 1)
+    // but which smoothly interpolates sub-tick movement at higher refresh rates.
+    // This eliminates the "fuzzy" jitter caused by physics-tick position snapping.
+    const lerpFactor = dt !== undefined ? Math.min(1, 60 * dt) : 1;
+    group.position.x += (e.x - group.position.x) * lerpFactor;
+    group.position.y += (jy - group.position.y) * lerpFactor;
+    group.position.z += (e.y - group.position.z) * lerpFactor;
     group.rotation.y = facingToRotY(e.facing || 0);
     group.rotation.x = 0;
 
@@ -1177,17 +1644,20 @@ export function createScene3d({ canvas }) {
     }
 
     // Humans (player + civilians + remotes).
-    // In first-person mode, skip the local player mesh (camera is in their head).
+    // Always include the local player so its FBX instance stays resident in the
+    // scene — toggling into third-person just flips `.visible`, with no shader
+    // compile / scene-add hitch on the first TP switch. In first-person mode
+    // the mesh is hidden below (see `isLocalFP` visibility handling).
     const keepHumans = new Set();
     const humanEntries = [
-      ...(state.player && !state.firstPerson ? [{ ...state.player, _id: '__player__', _suit: !!state.player.suit }] : []),
+      ...(state.player ? [{ ...state.player, _id: '__player__', _suit: !!state.player.suit }] : []),
       ...(state.civilians || []).map(c => ({ ...c, _id: c.id, _suit: false, _isCivilian: true })),
       ...(state.remotes || []).map(r => ({ ...r, _id: r.peerId, _suit: !!r.suit })),
     ];
     for (const h of humanEntries) {
       if (!h.spec) continue;
       const entry = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
-      updateEntityTransform(entry.group, h, entry.isFbx);
+      updateEntityTransform(entry.group, h, entry.isFbx, dt);
       // Civilians: use the vx/vy stamped by planCivilian — direct, no position-delta fragility.
       // They move at walk speed (1.5–2.6 m/s) so keep the walk tier to avoid foot-sliding.
       if (h._isCivilian && entry.isFbx) {
@@ -1210,44 +1680,87 @@ export function createScene3d({ canvas }) {
           // Civilians always use lobby animations regardless of mission phase
           const phase     = h._isCivilian ? 'LOBBY' : state.phase;
           const jumpId    = h.jumpId    || 0;
-          const crouchId  = h.crouchId  || 0;
           const fireId    = h.fireId    || 0;
           const cur       = entry.currentAnim || '';
           const curAction = entry.actions[cur];
           const curRunning = curAction?.isRunning();
           const isJumpAnim    = cur.includes('jump');
-          const isCrouchTrans = cur === 'pistol_stand_to_kneel' || cur === 'pistol_kneel_to_stand';
           const isShootAnim   = cur === 'pistol_shoot';
 
           if (jumpId !== entry.lastJumpId) {
             // New jump — always takes priority, force-restarts
             entry.lastJumpId = jumpId;
+            entry.jumpStartT = state.t || performance.now() / 1000;
             _crossfadeAnim(entry, _pickJumpAnim(phase, h), true, true);
           } else if (isJumpAnim && curRunning) {
-            // Let jump finish
-          } else if (phase === 'MISSION' && crouchId !== entry.lastCrouchId) {
-            // Crouch toggled — play stand↔kneel transition
-            entry.lastCrouchId = crouchId;
-            _crossfadeAnim(entry, h.crouching ? 'pistol_stand_to_kneel' : 'pistol_kneel_to_stand', true, true);
-          } else if (phase === 'MISSION' && isCrouchTrans && curRunning) {
-            // Let crouch transition finish
-          } else if (phase === 'MISSION' && h.crouching) {
-            // Settled into crouch
-            _crossfadeAnim(entry, 'pistol_kneel_idle');
+            // Exit the jump anim as soon as physics has landed (jumpY=0) and
+            // the takeoff frames have played — otherwise the Mixamo clip keeps
+            // playing its mid-air pose after the character is already grounded,
+            // which looks like "floating". Hold for 0.15s minimum so we don't
+            // cut the very first frame when jumpY can still be 0 due to rounding.
+            const now = state.t || performance.now() / 1000;
+            const held = now - (entry.jumpStartT || 0);
+            if ((h.jumpY || 0) === 0 && held > 0.15) {
+              _crossfadeAnim(entry, _pickGroundAnim(phase, h));
+            }
+            // else: let jump anim keep playing through the airborne arc
           } else if (phase === 'MISSION' && fireId !== entry.lastFireId) {
-            // New shot fired
+            // New shot fired. Only play the pistol shoot animation when the
+            // character is standing still and on the ground — while moving or
+            // airborne the shoot clip overrides the movement/jump pose and
+            // looks jarring. We still record the fireId so a later shot while
+            // idle doesn't get treated as a stale one.
             entry.lastFireId = fireId;
-            _crossfadeAnim(entry, 'pistol_shoot', true, true);
+            const moving = Math.abs(h.moveFwd || 0) > 0.05 || Math.abs(h.moveSide || 0) > 0.05;
+            const airborne = (h.jumpY || 0) > 0;
+            if (!moving && !airborne) {
+              _crossfadeAnim(entry, 'pistol_shoot', true, true);
+            } else {
+              _crossfadeAnim(entry, _pickGroundAnim(phase, h));
+            }
           } else if (phase === 'MISSION' && isShootAnim && curRunning) {
-            // Let shoot finish
+            // Interrupt the shoot clip the moment the player starts moving —
+            // running while a standing-aim fire pose plays looks broken.
+            const movingNow = Math.abs(h.moveFwd || 0) > 0.05 || Math.abs(h.moveSide || 0) > 0.05;
+            if (movingNow) {
+              _crossfadeAnim(entry, _pickGroundAnim(phase, h));
+            }
+            // else: let shoot finish
           } else {
             _crossfadeAnim(entry, _pickGroundAnim(phase, h));
           }
         }
         entry.mixer.update(dt);
       }
+      // Attach X-Gun mesh to right hand bone during missions; remove in lobby/death.
+      const showHandGun = state.phase === 'MISSION' && h.alive !== false && !h._isCivilian;
+      _setHandGun(entry, showHandGun);
+
       // Show name label for remotes and third-person local; hide for dead or local FP
       const isLocalFP = h._id === '__player__' && state.firstPerson;
+      // Hide the local player mesh in first-person instead of removing it from
+      // the scene — keeps the skinned-mesh shader/draw-state warm so toggling
+      // to third-person doesn't hitch on a fresh scene.add + shader compile.
+      entry.group.visible = !isLocalFP;
+      // One-time: warm the shader programs AND the shadow-map depth pass for
+      // the local-player skinned mesh against the real scene. `renderer.compile`
+      // alone doesn't always cover skinning-depth variants for the shadow pass
+      // — the hitch shows up the first time the shadow map has to render this
+      // mesh. To guarantee every program is live, we do a throwaway full
+      // render with the mesh temporarily visible. The user sees at most one
+      // frame of their own character in front of the FP camera (near the
+      // camera origin, mostly inside the head), which is imperceptible; what
+      // matters is that the first real FP→TP toggle is then free.
+      if (h._id === '__player__' && !entry.compiledOnce) {
+        const wasVisible = entry.group.visible;
+        entry.group.visible = true;
+        renderer.shadowMap.needsUpdate = true;
+        renderer.compile(scene, camera);
+        renderer.render(scene, camera);           // forces shadow + main pass compile
+        renderer.shadowMap.needsUpdate = true;    // let real frame rebuild shadows normally
+        entry.group.visible = wasVisible;
+        entry.compiledOnce = true;
+      }
       const showLabel = !isLocalFP && h.alive !== false && !!h.username;
       updateNameLabel(entry, h.username, h.color, showLabel);
       updateChatBubble(entry, h.alive !== false ? (h.chatText || '') : '', h.chatAlpha || 0);
@@ -1260,7 +1773,10 @@ export function createScene3d({ canvas }) {
     for (const a of state.aliens || []) {
       if (!a.spec) continue;
       const g = getOrCreateAlien(a.id, a.spec);
-      g.position.set(a.x, 0, a.y);
+      const _alf = Math.min(1, 60 * dt);
+      g.position.x += (a.x - g.position.x) * _alf;
+      g.position.y += (0   - g.position.y) * _alf;
+      g.position.z += (a.y - g.position.z) * _alf;
       g.rotation.y = facingToRotY(a.facing || 0);
       const mark = g.userData.markRing;
       if (mark) {
@@ -1283,30 +1799,179 @@ export function createScene3d({ canvas }) {
     }
     prune(props, keepProps);
 
-    // Tracers: add new, age old
+    // Bullets: spawn new projectiles for each fired shot, then step existing
+    // ones forward. Each shot payload carries the 2D origin (x1, y1) and the
+    // hitscan endpoint (x2, y2); we lift both to the muzzle height so the
+    // projectile reads as leaving the gun rather than the floor.
     if (state.newTracers) {
       for (const t of state.newTracers) {
-        const m = buildTracerMesh(t.x1, t.y1, t.x2, t.y2, t.color || '#ff2030');
-        scene.add(m);
-        tracers.push({ mesh: m, age: 0, ttl: t.ttl || 0.18 });
+        // If the shooter provided a 3D muzzle origin (local FP shot), use it
+        // so the bullet emerges from the actual gun barrel. Otherwise fall
+        // back to the 2D shot origin lifted to a default gun height.
+        const ox = (t.ox != null) ? t.ox : t.x1;
+        const oy = (t.oy != null) ? t.oy : BULLET_MUZZLE_Y;
+        const oz = (t.oz != null) ? t.oz : t.y1;
+        const ex = (t.ex != null) ? t.ex : t.x2;
+        const ey = (t.ey != null) ? t.ey : BULLET_MUZZLE_Y;
+        const ez = (t.ez != null) ? t.ez : t.y2;
+        spawnBullet(
+          ox, oy, oz,
+          ex, ey, ez,
+          t.color || '#66ddff',
+        );
       }
     }
-    for (let i = tracers.length - 1; i >= 0; i--) {
-      const t = tracers[i];
-      t.age += dt;
-      const a = Math.max(0, 1 - t.age / t.ttl);
-      t.mesh.userData.mat.opacity = a;
-      if (a <= 0) {
-        scene.remove(t.mesh);
-        disposeGroup(t.mesh);
-        tracers.splice(i, 1);
-      }
-    }
+    _stepBullets(dt, state);
 
     // Camera
     const focus = state.focus || state.player;
     if (focus) {
-      if (state.firstPerson) {
+      // Step the FP↔TP transition value toward the scroll target.
+      {
+        const step = TP_TRANS_RATE * dt;
+        if (_tpMix < _tpTarget)      _tpMix = Math.min(_tpTarget, _tpMix + step);
+        else if (_tpMix > _tpTarget) _tpMix = Math.max(_tpTarget, _tpMix - step);
+      }
+
+      if (_tpMix > 0.001) {
+        // ── THIRD-PERSON (spring arm, Fortnite-style) ─────────────────────
+        // When _tpMix < 1 we're mid-transition: the final camera state is a
+        // smoothstep blend between the FP solution and the TP solution, so
+        // both FP→TP and TP→FP glides are perfectly smooth.
+
+        const yaw   = state.yaw   || 0;
+        const pitch = Math.max(TP_PITCH_MIN, Math.min(TP_PITCH_MAX, -(state.pitch || 0)));
+
+        // Direction vectors (game 2D x,y → Three.js x,z)
+        const sinYaw = Math.sin(yaw), cosYaw = Math.cos(yaw);
+        const fwdX   = -sinYaw, fwdZ = -cosYaw;   // forward in XZ
+        const rtX    =  cosYaw, rtZ  = -sinYaw;   // right   in XZ
+
+        // Raw pivot = player's shoulder/chest height (the orbit centre)
+        const rawPivotX = focus.x;
+        const rawPivotY = TP_PIVOT_H + (state.jumpY || 0);
+        const rawPivotZ = focus.y;
+
+        // Smooth the pivot position — this is the root fix for jitter.
+        // Both the camera arm origin AND the look-at target derive from this
+        // smoothed value, so they can never diverge and cause judder.
+        if (_tpSnap) {
+          _tpSmoothPivot.set(rawPivotX, rawPivotY, rawPivotZ);
+        } else {
+          _tpSmoothPivot.lerp(
+            new THREE.Vector3(rawPivotX, rawPivotY, rawPivotZ),
+            Math.min(1, TP_LERP * dt)
+          );
+        }
+        const pivotX = _tpSmoothPivot.x;
+        const pivotY = _tpSmoothPivot.y;
+        const pivotZ = _tpSmoothPivot.z;
+
+        // ADS transition — smoothstep 0→1
+        _tpADST += (_tpADS ? 1 : -1) * TP_ADS_SPEED * dt;
+        _tpADST  = Math.max(0, Math.min(1, _tpADST));
+        const _tpADSE = _tpADST * _tpADST * (3 - 2 * _tpADST); // smoothstep easing
+
+        // Lerp arm length + shoulder offset between hip and ADS values
+        const armLength = TP_ARM_LENGTH + (TP_ARM_LENGTH_ADS - TP_ARM_LENGTH) * _tpADSE;
+        const shoulderX = TP_SHOULDER_X + (TP_SHOULDER_X_ADS - TP_SHOULDER_X) * _tpADSE;
+
+        // Spherical spring arm: pitch angles camera up/down while keeping orbit
+        const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch);
+        const backDir  = new THREE.Vector3(
+          sinYaw * cosPitch,   // X
+          sinPitch,            // Y  (rises with positive pitch)
+          cosYaw * cosPitch    // Z
+        );
+
+        // Ideal cam = smoothed pivot + arm + shoulder offset
+        const idealX = pivotX + backDir.x * armLength + rtX * shoulderX;
+        const idealY = pivotY + backDir.y * armLength;
+        const idealZ = pivotZ + backDir.z * armLength + rtZ * shoulderX;
+
+        // Wall collision: ray from smoothed pivot → ideal camera position
+        const roomKey = (currentRoomKind || 'lobby') + (currentRoomSeed || '');
+        if (roomKey !== _tpCollidableKey) {
+          _rebuildTPCollidables();
+          _tpCollidableKey = roomKey;
+        }
+        const pivotV  = new THREE.Vector3(pivotX, pivotY, pivotZ);
+        const idealV  = new THREE.Vector3(idealX, idealY, idealZ);
+        const toIdeal = new THREE.Vector3().subVectors(idealV, pivotV);
+        const armLen  = toIdeal.length();
+        const armDir  = toIdeal.clone().normalize();
+        _tpRaycaster.set(pivotV, armDir);
+        _tpRaycaster.near = 0.15;
+        _tpRaycaster.far  = armLen;
+        const hits    = _tpRaycaster.intersectObjects(_tpCollidables, false);
+        let   safePos = idealV;
+        for (const h of hits) {
+          const sd = h.distance - 0.3;
+          if (sd < armLen) {
+            safePos = pivotV.clone().addScaledVector(armDir, Math.max(0.3, sd));
+            break;
+          }
+        }
+
+        // Snap on the very first TP frame (fresh entry) so smoothed values
+        // don't carry over stale state from a previous TP session.
+        if (_tpSnap) {
+          _tpSmoothPos.copy(safePos);
+          _tpSnap = false;
+        }
+
+        // Smooth follow — lerp gives the camera arm its "weight". During ADS
+        // the arm becomes (nearly) rigid so fast mouse swings can't leave the
+        // character behind the camera's FOV; lerps TP_LERP → 40 across _tpADSE.
+        const followLerp = TP_LERP + (40 - TP_LERP) * _tpADSE;
+        _tpSmoothPos.lerp(safePos, Math.min(1, followLerp * dt));
+
+        // TP look-at target: forward + matching shoulder offset (prevents the
+        // camera from tilting left to compensate for its rightward position).
+        const tpLookX = pivotX + fwdX * TP_LOOK_FWD + rtX * shoulderX;
+        const tpLookY = pivotY;
+        const tpLookZ = pivotZ + fwdZ * TP_LOOK_FWD + rtZ * shoulderX;
+        const tpFov   = TP_FOV + (TP_FOV_ADS - TP_FOV) * _tpADSE;
+
+        // ── FP solution (for blending during transition) ────────────────
+        const bob    = state.bob || 0;
+        const fpEyeY = EYE_HEIGHT + bob + (state.jumpY || 0);
+        const fpPitch = state.pitch || 0;
+        const cosFPp  = Math.cos(fpPitch), sinFPp = Math.sin(fpPitch);
+        // FP forward from YXZ Euler (pitch, yaw, 0) applied to -Z
+        const fpFwdX = -sinYaw * cosFPp;
+        const fpFwdY =  sinFPp;
+        const fpFwdZ = -cosYaw * cosFPp;
+        const LOOK_DIST = 10;
+        const fpLookX = focus.x + fpFwdX * LOOK_DIST;
+        const fpLookY = fpEyeY  + fpFwdY * LOOK_DIST;
+        const fpLookZ = focus.y + fpFwdZ * LOOK_DIST;
+        const fpFov   = 72;
+
+        // Smoothstep the blend weight so FP↔TP eases in/out of the motion.
+        const e = _tpMix * _tpMix * (3 - 2 * _tpMix);
+
+        camera.position.set(
+          focus.x + (_tpSmoothPos.x - focus.x) * e,
+          fpEyeY  + (_tpSmoothPos.y - fpEyeY)  * e,
+          focus.y + (_tpSmoothPos.z - focus.y) * e
+        );
+        camera.lookAt(
+          fpLookX + (tpLookX - fpLookX) * e,
+          fpLookY + (tpLookY - fpLookY) * e,
+          fpLookZ + (tpLookZ - fpLookZ) * e
+        );
+        camera.fov = fpFov + (tpFov - fpFov) * e;
+        camera.updateProjectionMatrix();
+
+        // Viewmodel: visible during the first chunk of the transition so there's
+        // no hard pop, then hidden once the camera is past the halfway point.
+        viewWeapon.visible = (e < 0.4) && (state.playerAlive !== false);
+        if (viewWeapon.visible) _drawGantzScreen(dt, state);
+        muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 60);
+
+      } else {
+        // ── FIRST-PERSON ──────────────────────────────────────────────────
         const bob = state.bob || 0;
         camera.position.set(focus.x, EYE_HEIGHT + bob + (state.jumpY || 0), focus.y);
         camera.rotation.order = 'YXZ';
@@ -1316,10 +1981,8 @@ export function createScene3d({ canvas }) {
         viewWeapon.visible = (state.playerAlive !== false);
         // Update Gantz HUD screen texture every frame
         if (viewWeapon.visible) _drawGantzScreen(dt, state);
-        // Muzzle flash decays every frame
-        const mMat = muzzle.material;
-        mMat.opacity = Math.max(0, (mMat.opacity || 0) - dt * 8);
-        muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 30);
+        // Muzzle flash — light decays every frame
+        muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 60);
 
         // ── ADS transition ────────────────────────────────────────────────
         _adsT += (_adsActive && viewWeapon.visible ? 1 : -1) * dt * 8;
@@ -1331,10 +1994,10 @@ export function createScene3d({ canvas }) {
         wd.idleTime = (wd.idleTime || 0) + dt;
 
         // Spring-decay all recoil axes
-        const sp = dt * 9;
-        wd.recoil     = Math.max(0, (wd.recoil     || 0) - sp * 0.7);
-        wd.recoilY    = Math.max(0, (wd.recoilY    || 0) - sp);
-        wd.recoilRot  = Math.max(0, (wd.recoilRot  || 0) - sp);
+        const sp = dt * 1.2;
+        wd.recoil     = Math.max(0, (wd.recoil     || 0) - sp * 0.6);
+        wd.recoilY    = Math.max(0, (wd.recoilY    || 0) - sp * 0.8);
+        wd.recoilRot  = Math.max(0, (wd.recoilRot  || 0) - sp * 0.8);
         wd.recoilRoll = (wd.recoilRoll || 0) * Math.max(0, 1 - sp * 1.2);
 
         // Idle sway + walk bob — suppressed during ADS
@@ -1347,18 +2010,17 @@ export function createScene3d({ canvas }) {
         // ADS: side-profile centred on screen, barrel aligned with crosshair.
         viewWeapon.position.set(
           0.46 + (0.128 - 0.46) * _adsE + swayX,
-          -0.38 + (-0.31 - -0.38) * _adsE + swayY + walkBob - (wd.recoilY || 0),
+          -0.38 + (-0.31 - -0.38) * _adsE + swayY + walkBob + (wd.recoilY || 0),
           -0.55 + (-0.45 - -0.55) * _adsE + (wd.recoil || 0),
         );
         viewWeapon.rotation.set(
-          -0.15 * _adsE - (wd.recoilRot  || 0),
+          -0.15 * _adsE + (wd.recoilRot  || 0),
           -0.35 * _adsE,
           -0.04 * _adsE + (wd.recoilRoll || 0) * hipAmt,
         );
 
-        // Muzzle lerps to dead-centre in ADS (measured via UV world-pos)
-        muzzle.position.x = -0.14 + (-0.188 - -0.14) * _adsE;
-        muzzleLight.position.x = muzzle.position.x;
+        // Muzzle light stays at barrel tip (hip and ADS both use same x since tip = -0.188).
+        muzzleLight.position.x = MUZZLE_TIP.x;
 
         // ── Barrel panel extension ───────────────────────────────────────
         // Lazily resolve panel refs on first render after GLB loads
@@ -1380,29 +2042,41 @@ export function createScene3d({ canvas }) {
         const fovTarget = 72 - 17 * _adsE;
         camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 10);
         camera.updateProjectionMatrix();
-      } else {
-        viewWeapon.visible = false;
-        const desired = new THREE.Vector3(focus.x, 10, focus.y + 9);
-        const k = Math.min(1, dt * 5);
-        camera.position.lerp(desired, k);
-        camera.lookAt(focus.x, 0.8, focus.y);
       }
     }
 
+    // Pass 1 — main scene on layer 0 (viewmodel + vm lights excluded).
+    camera.layers.set(0);
     renderer.render(scene, camera);
+    // Pass 2 — viewmodel on layer 2, lit only by vm lights. Disable autoClear
+    // AND null out scene.background (three.js still clears to bg color on
+    // render() even with autoClear=false), then only clear depth so the gun
+    // draws on top of the scene without z-fighting at low ADS FOV.
+    const _prevAutoClear = renderer.autoClear;
+    const _prevBackground = scene.background;
+    const _prevFog = scene.fog;
+    renderer.autoClear = false;
+    scene.background = null;
+    scene.fog = null; // fog would darken the gun as if it were at scene depth
+    renderer.clearDepth();
+    camera.layers.set(VIEWMODEL_LAYER);
+    renderer.render(scene, camera);
+    scene.background = _prevBackground;
+    scene.fog = _prevFog;
+    renderer.autoClear = _prevAutoClear;
+    camera.layers.set(0); // restore for any post-render layer-sensitive logic
   }
 
   function triggerMuzzleFlash() {
-    muzzle.material.opacity = 0.9;
-    muzzleLight.intensity = 4.0;
+    muzzleLight.intensity = 20.0;
     // Trigger barrel panel extension
     _barrelExtend = 1;
     // ADS tightens recoil — scale down to 50% at full ADS
     const adsScale = 1 - 0.5 * _adsT;
-    viewWeapon.userData.recoil     = 0.08  * adsScale;  // z kick back
-    viewWeapon.userData.recoilY    = 0.035 * adsScale;  // gun rises on fire
-    viewWeapon.userData.recoilRot  = 0.22  * adsScale;  // barrel pitches up
-    viewWeapon.userData.recoilRoll = -0.07;              // roll suppressed by hipAmt anyway
+    viewWeapon.userData.recoil     = 0.22  * adsScale;  // z kick back
+    viewWeapon.userData.recoilY    = 0.10  * adsScale;  // gun kicks up
+    viewWeapon.userData.recoilRot  = 0.45  * adsScale;  // barrel pitches up
+    viewWeapon.userData.recoilRoll = -0.10;              // roll suppressed by hipAmt anyway
   }
 
   // Camera forward vector projected to the XZ (game) plane.
@@ -1413,6 +2087,29 @@ export function createScene3d({ canvas }) {
     let x = _forwardV.x, z = _forwardV.z;
     const len = Math.hypot(x, z) || 1;
     return { x: x / len, y: z / len };
+  }
+
+  // Full 3D camera forward (includes pitch). Used by the local shooter to
+  // make bullets fly exactly along the crosshair direction, not along the
+  // muzzle→hitpoint line (those two diverge slightly because the muzzle is
+  // offset from the camera).
+  function getCameraForward3D() {
+    camera.getWorldDirection(_forwardV);
+    return { x: _forwardV.x, y: _forwardV.y, z: _forwardV.z };
+  }
+
+  // Camera origin projected to the XZ (game) plane. Used together with
+  // getCameraForwardXZ() by game.js to run a 2D hitscan from the camera's
+  // actual world position — this is what the crosshair is looking along.
+  // In FP camera ≈ player head so origin ≈ player; in TP the camera sits
+  // behind+right of the player and the hitscan picks up the correct target.
+  function getCameraOriginXZ() {
+    return { x: camera.position.x, y: camera.position.z };
+  }
+
+  // Full 3D camera position.
+  function getCameraOrigin3D() {
+    return { x: camera.position.x, y: camera.position.y, z: camera.position.z };
   }
 
   // Mouse raycast against ground plane (y = 0)
@@ -1466,10 +2163,49 @@ export function createScene3d({ canvas }) {
   addEventListener('resize', resize);
   resize();
 
+  // Pre-warm the bullet materials so the first shot doesn't pay the shader
+  // program compile cost. We add a throwaway bullet mesh to the scene just
+  // long enough for renderer.compile() to include it in its walk, then
+  // remove it. Pooled lights already force the scene's lightsHash to its
+  // final value, so compile() here produces the exact programs every lit
+  // material will need at runtime.
+  {
+    const warmCore = new THREE.Mesh(_bulletGeom, _bulletCoreMat);
+    const warmHalo = new THREE.Mesh(_bulletHaloGeom, _bulletHaloMat);
+    warmCore.position.set(0, -2000, 0); warmCore.add(warmHalo);
+    scene.add(warmCore);
+    if (typeof renderer.compileAsync === 'function') {
+      renderer.compileAsync(scene, camera).catch(() => {
+        try { renderer.compile(scene, camera); } catch (e) { /**/ }
+      });
+    } else {
+      try { renderer.compile(scene, camera); } catch (e) { /* ignore */ }
+    }
+    scene.remove(warmCore);
+  }
+
   return {
     render,
     screenToGround,
     getCameraForwardXZ,
+    getCameraForward3D,
+    getCameraOriginXZ,
+    getCameraOrigin3D,
+    getMuzzleWorldPosition,
+    // Returns the world-space position of a remote peer's (or NPC's) hand
+    // gun, so their fired bullets can visually emerge from their weapon
+    // instead of their chest. Returns null if the peer hasn't been
+    // instantiated yet or doesn't have a gun attached.
+    getRemoteMuzzleWorldPosition(id) {
+      const entry = humans.get(id);
+      if (!entry || !entry.handGun) return null;
+      entry.handGun.mesh.updateWorldMatrix(true, false);
+      _muzzleWorldV.setFromMatrixPosition(entry.handGun.mesh.matrixWorld);
+      return { x: _muzzleWorldV.x, y: _muzzleWorldV.y, z: _muzzleWorldV.z };
+    },
+    // DEV: live-tune the bullet spawn anchor. Example in console:
+    //   __gantz.scene3d.setBarrelTipOffset(-0.188, 0.24, 0.05)
+    setBarrelTipOffset(x, y, z) { _barrelTip.position.set(x, y, z); },
     triggerMuzzleFlash,
     worldToScreen,
     raycastBallDisplay,
@@ -1477,5 +2213,42 @@ export function createScene3d({ canvas }) {
     resize,
     get camera() { return camera; },
     get scene() { return scene; },
+    // True while transitioning to or holding third-person, so game.js hides the
+    // FP overlays and scene3d shows the local player mesh for the entire glide.
+    isThirdPerson() { return _tpTarget === 1 || _tpMix > 0.001; },
+    // True while the local player is holding right-mouse (aim-down-sights).
+    // Exposed so game.js can gate sprint while aiming.
+    isAds() { return _adsActive; },
+    // DEV: live-tune the hand gun position/rotation from the browser console.
+    // Example: scene3d.setHandGunOffset(0, 5, -3); scene3d.reattachHandGuns()
+    setHandGunOffset(x, y, z) { _HAND_GUN_POS.set(x, y, z); },
+    setHandGunRotation(x, y, z) { _HAND_GUN_ROT.set(x, y, z); },
+    debugAnimState(id) {
+      const e = id ? humans.get(id) : [...humans.values()][0];
+      if (!e) return 'entry not found';
+      return {
+        currentAnim:  e.currentAnim,
+        lastJumpId:   e.lastJumpId,
+        hasLobbyJump: 'lobby_jump' in (e.actions || {}),
+        actionKeys:   Object.keys(e.actions || {}),
+      };
+    },
+    debugGunState() {
+      const entries = [...humans.entries()].map(([id, e]) => ({
+        id, isFbx: e.isFbx, hasGun: !!e.handGun, hasBone: !!_findBone(e.group, 'RightHand'),
+      }));
+      return { templateLoaded: !!_worldGunTemplate, worldGunScale: _worldGunScale, entries };
+    },
+    // Force-reattach all live hand guns with current offset/rotation values.
+    // Also forces a detach+reattach so new rotation is applied from scratch.
+    reattachHandGuns() {
+      for (const entry of humans.values()) {
+        if (entry.handGun) {
+          entry.handGun.bone.remove(entry.handGun.mesh);
+          entry.handGun = null;
+        }
+      }
+      // _setHandGun will re-attach on next render tick
+    },
   };
 }

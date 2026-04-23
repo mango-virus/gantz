@@ -4,6 +4,7 @@ import {
   setInputSuspended, wasPressed, isDown,
 } from './src/engine/input.js';
 import { startLoop } from './src/engine/loop.js';
+import { audio } from './src/engine/audio.js';
 import { Phase, makePhaseMachine } from './src/engine/state.js';
 import { makeWorld } from './src/engine/world.js';
 import { createScene3d } from './src/render3d/scene3d.js';
@@ -2003,8 +2004,29 @@ let _briefingContentDoneAt = -1;
 let _gantzOpenProgress = 0;
 let _gantzWasOpening   = false;   // rising-edge tracker for open sound
 let _debugGantzForceOpen = false;
-const _gantzOpenSfx = new Audio('audio/gantz-open.mp3');
-_gantzOpenSfx.volume = 0.12;
+// Audio file URLs — loaded into the proximity-audio buffer cache on first use.
+const SFX_GUN_SHOOT  = 'assets/audio/x-gun-shoot.mp3';
+const SFX_GANTZ_OPEN = 'audio/gantz-open.mp3';
+audio.preload([SFX_GUN_SHOOT, SFX_GANTZ_OPEN]);
+const _gunFlashEl = document.getElementById('gun-flash');
+
+// ── Dynamic crosshair state ───────────────────────────────────────────────
+// Pixels the four crosshair ticks are pushed outward from center. Each shot
+// adds `bumpCrosshairSpread(amount)` and the value lerps back to 0 every
+// render frame. Kept purely client-local — no networking.
+const _crosshairEl        = document.getElementById('crosshair');
+const CROSSHAIR_SPREAD_MAX   = 44;   // px — cap on how far ticks can splay
+const CROSSHAIR_SPREAD_DECAY = 90;   // px/sec — rate of return to rest
+let   _crosshairSpread    = 0;
+function bumpCrosshairSpread(amount) {
+  _crosshairSpread = Math.min(CROSSHAIR_SPREAD_MAX, _crosshairSpread + amount);
+}
+function updateCrosshairSpread(dt) {
+  if (_crosshairSpread > 0) {
+    _crosshairSpread = Math.max(0, _crosshairSpread - CROSSHAIR_SPREAD_DECAY * dt);
+  }
+  if (_crosshairEl) _crosshairEl.style.setProperty('--spread', _crosshairSpread.toFixed(2) + 'px');
+}
 let _briefingSnappedTIdx = -1;
 let _briefingIntroIdx = -1;
 let _briefingCharIdx  = -1;
@@ -3068,14 +3090,17 @@ let jumpMoveFwd  = 0;  // moveFwd captured at liftoff (not updated until next ju
 let jumpMoveSide = 0;  // moveSide captured at liftoff
 let sprinting = false;
 let walking   = false;
-let crouching = false;
-let crouchId  = 0;
 let fireId    = 0;
 let moveFwd  = 0;  // -1=back, 0=still, +1=fwd (relative to facing)
 let moveSide = 0;  // -1=left, 0=still, +1=right (relative to facing)
 const JUMP_SPEED = 5.5;
 const GRAVITY    = 18;
 const MOUSE_SENS = 0.0022;
+// While aiming down sights the FOV narrows, so the same mouse delta rotates
+// the camera across a larger fraction of the visible view — it feels loose /
+// twitchy (especially in TP, which drops to 45° FOV). Scale sensitivity down
+// while ADS is held to keep the on-screen angular speed roughly consistent.
+const ADS_SENS_SCALE = 0.45;
 const PITCH_LIMIT = Math.PI / 2 - 0.05;
 let pointerLocked = false;
 
@@ -3084,8 +3109,9 @@ document.addEventListener('pointerlockchange', () => {
 });
 canvas.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
-  yaw -= e.movementX * MOUSE_SENS;
-  pitch -= e.movementY * MOUSE_SENS;
+  const sens = MOUSE_SENS * (scene3d?.isAds?.() ? ADS_SENS_SCALE : 1);
+  yaw -= e.movementX * sens;
+  pitch -= e.movementY * sens;
   if (pitch >  PITCH_LIMIT) pitch =  PITCH_LIMIT;
   if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
 });
@@ -3218,6 +3244,8 @@ let _bonusBossSpawned = false;
 let tracers = []; // {x1,y1,x2,y2,color,age,ttl}
 let activeColliders = lobbyColliders;
 let lastAliensBroadcast = 0;
+let lastCivsBroadcast = 0;
+const CIVS_BROADCAST_MS = 100;
 let fireCooldown = 0;
 
 // ---- Session state (host-authoritative) ----
@@ -3390,6 +3418,13 @@ const net = createNetwork({
     color: player.color,
     points: player.points,
     ready: player.ready,
+    // Authoritative per-peer "zone" flag: true iff this player is physically
+    // running the mission, false iff they're in the lobby room. The rendering
+    // cull uses this to hide cross-zone peers WITHOUT depending on
+    // session.phase (which can lag during host migration or phase-transition
+    // races and cause lobby clients to see mission players). See
+    // project_gantz.md: "Cross-zone visibility cull".
+    inMission: session.phase === Phase.MISSION && localIsParticipant(),
     lifetimePoints: stats.lifetimePoints,
     jumpY: jumpY,
     jumpId,
@@ -3397,8 +3432,9 @@ const net = createNetwork({
     jumpMoveSide,
     sprinting: sprinting,
     walking,
-    crouching,
-    crouchId,
+    // Broadcast ADS so remote clients can force the walk-pace animation on
+    // this peer's 3rd-person model while we're aiming down sights.
+    ads: scene3d.isAds?.() === true,
     fireId,
     moveFwd,
     moveSide,
@@ -3479,10 +3515,88 @@ net.onAliens((incoming) => {
   aliens = next;
 });
 
+// --- Civilian sync (host-authoritative) ---
+// Civilians were previously simulated independently on every peer from a shared
+// seed. That drifts in practice (peers join/tick at different times, shared rng
+// state drains unevenly), so peers would see civilians in different places.
+// Now host is authoritative: it runs planCivilian + broadcasts, non-host mirrors.
+function broadcastCivs() {
+  if (!net.isHost) return;
+  if (session.phase !== Phase.MISSION) return;
+  const payload = civilians.map(c => ({
+    id: c.id, x: c.x, y: c.y, facing: c.facing, walkPhase: c.walkPhase,
+    vx: c.vx || 0, vy: c.vy || 0, alive: c.alive !== false,
+    behavior: c.behavior, kind: 'civilian',
+  }));
+  net.sendCivs(payload);
+  lastCivsBroadcast = performance.now();
+}
+
+net.onCivs((incoming) => {
+  if (net.isHost) return;
+  if (!Array.isArray(incoming)) return;
+  // Only mirror civilians while we're physically in the mission. Lobby peers
+  // keep civilians=[] so the cross-zone cull / collider list stays clean.
+  if (!(session.phase === Phase.MISSION && localIsParticipant())) return;
+  // Civilian specs/ids/behaviors are seed-derived (generateMissionMap), so
+  // every participant already has matching entries. We just overwrite the
+  // volatile fields in place so visuals + animations match the host.
+  const byId = new Map(civilians.map(c => [c.id, c]));
+  for (const d of incoming) {
+    const c = byId.get(d.id);
+    if (!c) continue; // entry not yet locally generated — next broadcast will catch it
+    c.x = d.x; c.y = d.y; c.facing = d.facing;
+    c.walkPhase = d.walkPhase;
+    c.vx = d.vx; c.vy = d.vy;
+    c.alive = d.alive;
+  }
+});
+
 // --- Fire / hit / kill ---
 net.onShot((msg, peerId) => {
   // Tracers disabled — will be replaced with a new shooting effect later.
+  // Play the shot sound positionally so other hunters' gunfire comes through
+  // attenuated + stereo-panned based on where the shooter is relative to us.
+  // Suppress if the shooter is in a different zone (mission vs lobby) — a
+  // lobby spectator shouldn't hear gunfire from a mission in progress, and
+  // vice versa.
+  if (!sameZoneAsLocal(peerId)) return;
+  if (typeof msg?.x1 === 'number' && typeof msg?.y1 === 'number') {
+    audio.playAt(SFX_GUN_SHOOT, msg.x1, msg.y1, { volume: 0.7 });
+    if (typeof msg.x2 === 'number' && typeof msg.y2 === 'number') {
+      // Try to spawn the bullet from the peer's actual hand-gun position in
+      // our scene so their shots read as coming out of their weapon. If the
+      // peer's character hasn't been built yet (or no gun is attached), we
+      // fall back to their 2D position at muzzle height.
+      const muz = scene3d.getRemoteMuzzleWorldPosition?.(peerId);
+      const payload = { x1: msg.x1, y1: msg.y1, x2: msg.x2, y2: msg.y2, color: msg.color };
+      if (muz) {
+        payload.ox = muz.x; payload.oy = muz.y; payload.oz = muz.z;
+      }
+      // Shooter included a 3D endpoint — pass it through so the bullet flies
+      // along the actual camera ray (including pitch) instead of a flat
+      // horizontal path. Without this, all remote shots look like ground-
+      // level tracers regardless of whether the shooter was aiming up / down.
+      if (msg.ex != null) { payload.ex = msg.ex; payload.ey = msg.ey; payload.ez = msg.ez; }
+      emitTracer(payload);
+    }
+  }
 });
+
+// Returns true iff the given peer is in the same zone (lobby or mission) as
+// the local player. Uses the same layered-signal logic as the render cull
+// (see "Cross-zone visibility cull" in project_gantz.md). Runs every phase
+// because the local client's phase can lag behind peers during transitions.
+function sameZoneAsLocal(peerId) {
+  const peer = net.peers.get(peerId);
+  if (!peer) return false;
+  const localInMission = session.phase === Phase.MISSION && localIsParticipant();
+  const peerInMission =
+    (peer.inMission === true)
+    || (session.participants?.includes(peerId) ?? false)
+    || (session.phase === Phase.MISSION && !!peer.ready);
+  return localInMission === peerInMission;
+}
 
 net.onHit((msg) => {
   if (!net.isHost) return;
@@ -3496,8 +3610,19 @@ net.onHit((msg) => {
     a._pointsReward = ALIEN_KILL_POINTS_DEFAULT;
     broadcastAliens();
   } else if (msg.kind === 'civilian') {
+    // Host is now authoritative for civilian state (broadcastCivs), so we MUST
+    // flip alive=false here or the next civ broadcast would resurrect the victim
+    // on all peers. Also stop velocity so the corpse doesn't slide.
+    const c = civilians.find(c => c.id === msg.id);
+    if (c) { c.alive = false; c.vx = 0; c.vy = 0; }
     // Host tracks penalty — it just re-broadcasts back to the shooter
     net.sendKill({ kind: 'civilianPenalty', shooterId: msg.shooterId });
+    // Broadcast civilian death to EVERY participant so their local sim turns
+    // that civilian into a ragdoll — otherwise only the shooter sees it die.
+    net.sendKill({ kind: 'civilianDeath', id: msg.id, shooterId: msg.shooterId });
+    // Immediate civ broadcast so remote peers see alive=false without waiting
+    // up to 100ms for the next scheduled tick.
+    broadcastCivs();
   }
   // human friendly fire could be added here
 });
@@ -3523,6 +3648,10 @@ net.onKill((msg) => {
       const peer = net.peers.get(msg.shooterId);
       if (peer) peer.points = Math.max(0, (peer.points || 0) - CIVILIAN_PENALTY);
     }
+  } else if (msg.kind === 'civilianDeath') {
+    // Mirror the civilian's death locally so non-shooters see the ragdoll.
+    const c = civilians.find(c => c.id === msg.id);
+    if (c) c.alive = false;
   }
   updateWeaponHUD();
 });
@@ -3581,6 +3710,7 @@ function enterPhase(newPhase) {
         aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp);
         _bonusBossSpawned = false;
         broadcastAliens();
+        broadcastCivs();
       } else {
         aliens = [];
       }
@@ -3600,10 +3730,15 @@ function enterPhase(newPhase) {
         aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp);
         _bonusBossSpawned = false;
         broadcastAliens();
+        // Non-participant host must STILL simulate + broadcast civilians so
+        // participants (on other peers) see them. Civs live in the mission
+        // world, not the lobby — the local lobby render filters them out via
+        // `localInMission ? civilians : []` in getRenderState.
+        broadcastCivs();
       } else {
         aliens = [];
+        civilians = []; // Non-host non-participant: mission world not locally visible
       }
-      civilians = []; // Non-participants don't simulate mission civilians
       tracers = [];
       // Keep lobby colliders and position — player stays where they are
       activeColliders = lobbyColliders;
@@ -3835,7 +3970,7 @@ function hostTick(nowMs) {
     const allHumansDead = localDead && peersDead;
     if (allHumansDead) {
       hostEndMission(nowMs, 'wiped');
-    } else if (nowMs >= session.missionEndsAt) {
+    } else if (false && nowMs >= session.missionEndsAt) { // DEV: timer disabled
       hostEndMission(nowMs, 'wiped');
     } else if (aliens.length > 0 && aliens.every(a => !a.alive)) {
       if (session.bonusBossRolled && !_bonusBossSpawned) {
@@ -3968,7 +4103,8 @@ const CHAT_BUBBLE_MS = 7000;
 
 net.onChat(msg => {
   chat.add(msg);
-  if (msg.peerId) {
+  // Gantz chants go to the chat log only — no speech bubble above a character.
+  if (msg.peerId && msg.username !== 'GANTZ') {
     _chatBubbles.set(msg.peerId, { text: msg.text, expiresAt: performance.now() + CHAT_BUBBLE_MS });
   }
 });
@@ -4008,17 +4144,24 @@ net.onPeerLeave((id, peer) => {
   const name = peer?.username;
   if (name) chat.addSystem(`${name} has left the game.`);
 });
-net.onNudge((msg) => {
+net.onNudge((msg, peerId) => {
   if (!msg || typeof msg.dx !== 'number' || typeof msg.dy !== 'number') return;
   if (msg.kind === 'civ') {
     // Another player nudged a civilian — apply to our local copy by ID.
+    // Ignore civilian nudges from cross-zone peers; mission civilians don't
+    // exist for lobby clients and vice versa.
+    if (peerId && !sameZoneAsLocal(peerId)) return;
     const civ = civilians.find(c => c.id === msg.id);
     if (civ && civ.alive !== false) {
       civ.x += msg.dx;
       civ.y += msg.dy;
     }
   } else {
-    // Targeted nudge — this message was sent to us specifically, move our player.
+    // Targeted nudge — this message was sent to us specifically. Reject if
+    // it came from a peer in a different zone; a lobby player can't push a
+    // mission player (or vice versa) even though their world coords might
+    // momentarily overlap across the two rooms.
+    if (peerId && !sameZoneAsLocal(peerId)) return;
     if (!player.alive) return;
     player.x += msg.dx;
     player.y += msg.dy;
@@ -4160,50 +4303,166 @@ function activeWeaponId() {
   return slots[player.activeSlot || 0] || slots.find(Boolean);
 }
 
-function fireRay(originX, originY, dirX, dirY, w, shooterId = net.selfId) {
-  const targets = [
+function _buildFireTargets() {
+  // Remote human peers are intentionally NOT included — players shoot through
+  // each other. (Previously they were included as non-damaging blockers; that
+  // meant a teammate between you and an alien could absorb your shot.)
+  return [
     ...aliens,
     ...civilians,
-    ...[...net.peers.values()].filter(p => p.x != null).map(p => ({
-      id: '_peer_' + (p.peerId || 'x'),
-      x: p.renderX, y: p.renderY, radius: 0.35, alive: p.alive !== false,
-      kind: 'remote_human', peer: p,
-    })),
   ];
-  const hit = hitscan(originX, originY, dirX, dirY, w.range, activeColliders, targets);
-  // Local tracer omitted in first-person — other players see it via net.sendShot
-  net.sendShot({ x1: originX, y1: originY, x2: hit.point.x, y2: hit.point.y, color: w.tracerColor });
-  if (hit.target) {
-    if (hit.target.kind === 'alien') {
-      // Only send hit message when local player is the shooter; NPC hits are host-local
+}
+
+// Queue of hits waiting for their bullets to visually reach the target
+// before any damage / marks / deaths are applied. Entries:
+//   { appliesAt, hit, w, shooterId }
+// Processed once per frame by processPendingHits() from update().
+const _pendingHits = [];
+// Must match BULLET_SPEED in scene3d.js — used to compute travel time so
+// damage lands the instant the visible bullet arrives.
+const BULLET_TRAVEL_SPEED = 80;
+
+// Apply the gameplay effects of a single hitscan result (alien mark, civilian
+// kill, tracer broadcast). `tracerFrom` is where to draw the visible tracer
+// FROM — usually the shooter's position (not necessarily the hitscan origin;
+// in TP we do the hitscan from the camera but the tracer still originates at
+// the player so remote clients see a plausible shot).
+function applyHitResult(hit, w, shooterId, tracerFromX, tracerFromY) {
+  // Spawn our own visible bullet locally — peers spawn theirs via onShot.
+  // In first-person, the bullet should exit the gun's barrel, not the middle
+  // of the screen, so we pull the viewmodel muzzle's world position and pass
+  // it as an explicit 3D origin override on the tracer payload.
+  if (shooterId === net.selfId) {
+    const payload = { x1: tracerFromX, y1: tracerFromY, x2: hit.point.x, y2: hit.point.y, color: w.tracerColor };
+    // Origin: FP uses the viewmodel muzzle (gun in front of camera); TP uses
+    // the local character's hand gun so the bullet exits the weapon the
+    // player sees on their own 3rd-person model.
+    const isTP = scene3d.isThirdPerson?.();
+    const muz = isTP
+      ? scene3d.getRemoteMuzzleWorldPosition?.('__player__')
+      : scene3d.getMuzzleWorldPosition?.();
+    if (muz) {
+      payload.ox = muz.x; payload.oy = muz.y; payload.oz = muz.z;
+    }
+    // Bullet endpoint controls BOTH direction (scene3d normalizes endpoint−
+    // origin) and how far the bullet can travel (scene3d caps `remaining` at
+    // the endpoint distance). Two situations need different strategies:
+    //
+    // 1) Hitscan landed on a LIVING TARGET (hit.target set): aim the bullet
+    //    at the actual 3D crosshair target point so it converges exactly on
+    //    that target. The endpoint is the 3D point on the camera ray at the
+    //    2D hit distance (horizLen correction so the vertical/horizontal
+    //    components scale together — without this, pitched shots fall short
+    //    horizontally and the bullet flies at a wrong angle).
+    //
+    // 2) Hitscan hit only a WALL or nothing: aim the bullet along camFwd
+    //    starting at the muzzle. Using muzzle→wall-point here makes the
+    //    bullet fly at a visibly steep angle (and continue that angle past
+    //    the wall for the rest of BULLET_MAX_DIST) — the "going off in
+    //    another direction" bug. Flying straight along camFwd from the
+    //    muzzle looks correct; the small parallel offset from the actual
+    //    crosshair ray is acceptable when there's no target to miss.
+    const fwd = scene3d.getCameraForward3D?.();
+    const camO = scene3d.getCameraOrigin3D?.();
+    if (fwd && camO && payload.ox != null) {
+      if (hit.target) {
+        // Aim at the 3D crosshair point — horizLen scales the 3D unit fwd
+        // vector so its horizontal component equals the 2D hit distance.
+        const dist = Math.hypot(hit.point.x - camO.x, hit.point.y - camO.z);
+        const horizLen = Math.hypot(fwd.x, fwd.z) || 1;
+        const s = dist / horizLen;
+        payload.ex = camO.x + fwd.x * s;
+        payload.ey = camO.y + fwd.y * s;
+        payload.ez = camO.z + fwd.z * s;
+      } else {
+        // No target → just fly straight along the crosshair.
+        const K = 50; // ≥ BULLET_MAX_DIST so direction dominates
+        payload.ex = payload.ox + fwd.x * K;
+        payload.ey = payload.oy + fwd.y * K;
+        payload.ez = payload.oz + fwd.z * K;
+      }
+    }
+    emitTracer(payload);
+    // Broadcast the shot to remote peers so they see the bullet travel in the
+    // correct 3D direction (with pitch), not as a flat horizontal tracer. We
+    // include the 3D endpoint (ex, ey, ez) computed above; peers derive their
+    // own bullet origin from OUR remote muzzle position in their scene, so we
+    // don't send ox/oy/oz. Falls back to 2D fields if the 3D computation was
+    // skipped (no camera forward available).
+    const shotMsg = { x1: tracerFromX, y1: tracerFromY, x2: hit.point.x, y2: hit.point.y, color: w.tracerColor };
+    if (payload.ex != null) { shotMsg.ex = payload.ex; shotMsg.ey = payload.ey; shotMsg.ez = payload.ez; }
+    net.sendShot(shotMsg);
+  } else {
+    // NPC / AI shooter path — still broadcast 2D so sound + a horizontal
+    // tracer play on remote peers (no 3D info available here).
+    net.sendShot({ x1: tracerFromX, y1: tracerFromY, x2: hit.point.x, y2: hit.point.y, color: w.tracerColor });
+  }
+  if (!hit.target) return;
+  // Defer the damage / mark / kill effects until the bullet's visual has
+  // had time to travel from the shooter to the hit point. Travel distance
+  // is computed in the 2D game plane — matches how scene3d steps bullets.
+  const dx = hit.point.x - tracerFromX;
+  const dy = hit.point.y - tracerFromY;
+  const dist = Math.hypot(dx, dy);
+  const delayMs = (dist / BULLET_TRAVEL_SPEED) * 1000;
+  _pendingHits.push({
+    appliesAt: performance.now() + delayMs,
+    hit, w, shooterId,
+  });
+}
+
+// Actually apply the gameplay consequences of a hit. Called once the
+// corresponding bullet has traveled long enough to visually reach the
+// target.
+function _applyHitNow(hit, w, shooterId) {
+  if (!hit?.target) return;
+  if (hit.target.kind === 'alien') {
+    if (shooterId === net.selfId) {
+      net.sendHit({ kind: 'alien', id: hit.target.id, shooterId, markMs: w.markTime * 1000 });
+    }
+    if (net.isHost) {
+      const a = aliens.find(a => a.id === hit.target.id && a.alive);
+      if (a && !a.marked) {
+        a.marked = true;
+        a.markedAt = performance.now();
+        a._killerId = shooterId;
+        a._markTimeMs = w.markTime * 1000;
+        broadcastAliens();
+      }
+    }
+  } else if (hit.target.kind === 'civilian') {
+    hit.target.alive = false;
+    if (shooterId === net.selfId) {
+      net.sendHit({ kind: 'civilian', id: hit.target.id, shooterId });
+    }
+    if (net.isHost) {
       if (shooterId === net.selfId) {
-        net.sendHit({ kind: 'alien', id: hit.target.id, shooterId, markMs: w.markTime * 1000 });
-      }
-      if (net.isHost) {
-        const a = aliens.find(a => a.id === hit.target.id && a.alive);
-        if (a && !a.marked) {
-          a.marked = true;
-          a.markedAt = performance.now();
-          a._killerId = shooterId;
-          a._markTimeMs = w.markTime * 1000;
-          broadcastAliens();
-        }
-      }
-    } else if (hit.target.kind === 'civilian') {
-      hit.target.alive = false;
-      if (shooterId === net.selfId) {
-        net.sendHit({ kind: 'civilian', id: hit.target.id, shooterId });
-      }
-      if (net.isHost) {
-        if (shooterId === net.selfId) {
-          player.points = Math.max(0, player.points - CIVILIAN_PENALTY);
-          player.civiliansKilled += 1;
-          missionCivilianKills += 1;
-          toast(`-${CIVILIAN_PENALTY} · civilian killed`, 'warn');
-        }
+        player.points = Math.max(0, player.points - CIVILIAN_PENALTY);
+        player.civiliansKilled += 1;
+        missionCivilianKills += 1;
+        toast(`-${CIVILIAN_PENALTY} · civilian killed`, 'warn');
       }
     }
   }
+}
+
+// Flush any bullets that have reached their targets this frame.
+function processPendingHits() {
+  if (_pendingHits.length === 0) return;
+  const now = performance.now();
+  for (let i = _pendingHits.length - 1; i >= 0; i--) {
+    const p = _pendingHits[i];
+    if (now >= p.appliesAt) {
+      _applyHitNow(p.hit, p.w, p.shooterId);
+      _pendingHits.splice(i, 1);
+    }
+  }
+}
+
+function fireRay(originX, originY, dirX, dirY, w, shooterId = net.selfId) {
+  const targets = _buildFireTargets();
+  const hit = hitscan(originX, originY, dirX, dirY, w.range, activeColliders, targets);
+  applyHitResult(hit, w, shooterId, originX, originY);
 }
 
 function tryFire() {
@@ -4216,24 +4475,98 @@ function tryFire() {
   if (!w) return;
   fireCooldown = w.cooldown;
 
-  // FPS feedback: muzzle flash + recoil
+  // FPS feedback: muzzle flash + screen tint + sound
   scene3d.triggerMuzzleFlash?.();
+  _gunFlashEl.classList.remove('active');
+  void _gunFlashEl.offsetWidth; // reflow to restart animation
+  _gunFlashEl.classList.add('active');
+  // Own gunshot: always full volume, no pan — the sound is "in your hands",
+  // not in the world from your listener's POV. Remote peers still hear it
+  // positionally via the onShot broadcast.
+  audio.play(SFX_GUN_SHOOT, 0.7);
   fireId++;
+  // Dynamic crosshair: each shot pushes the four ticks outward. Spread decays
+  // back to 0 every frame in render() when not firing.
+  bumpCrosshairSpread(w.mode === 'spread' ? 28 : 18);
 
-  // Aim direction from camera forward (first-person aim)
-  const fwd = scene3d.getCameraForwardXZ();
-  const dirX = fwd.x, dirY = fwd.y;
-  const ang = Math.atan2(dirY, dirX);
+  // The bullet hits whatever the CROSSHAIR is actually over. We hitscan from
+  // the camera's XZ position along its forward axis (the same 2D collision
+  // set the bullet uses) and apply the damage/mark to that target directly.
+  // This avoids the parallax problem a second hitscan from the player would
+  // cause — the player and the camera are offset by the TP shoulder rig, so
+  // a ray from the player aimed at the crosshair point passes through
+  // different space than the camera's ray and could clip objects that are
+  // left/right of the crosshair but on the player→aim-point line.
+  const camFwd = scene3d.getCameraForwardXZ();
+  const camOrg = scene3d.getCameraOriginXZ();
+  const allTargets = _buildFireTargets();
+
+  // Targeting filter: keep only entities that are in front of the PLAYER
+  // along the aim direction, past the player's body. This is what blocks
+  // the TP shoulder-offset camera ray from hitting NPCs that stand beside
+  // or behind the player — they project negative (behind player) or near
+  // zero (adjacent) on the aim axis even though the camera ray happens to
+  // graze their body circle. Crosshair accuracy is preserved because the
+  // ray we then cast is still from the camera origin along camFwd (the
+  // true crosshair ray) — we're just denying the ray access to entities
+  // the player couldn't reasonably be shooting at.
+  const bodyClear = (player.radius || 0.35) + 0.2;
+  const targets = allTargets.filter(t => {
+    if (!t || t.alive === false) return false;
+    const proj = (t.x - player.x) * camFwd.x + (t.y - player.y) * camFwd.y;
+    return proj >= bodyClear;
+  });
+
+  // Vertical hit check: the hitscan is 2D (XZ plane only) so without this a
+  // shot aimed high above/below an NPC still lands whenever the crosshair's
+  // horizontal direction crosses the target's footprint. Reconstruct the
+  // camera ray's Y at the TARGET's position and reject the target hit if Y
+  // is outside the NPC's vertical extent. We use the target's own x,y
+  // (not hit.point) so the check is invariant to how the hitscan snapped
+  // the intersection — hit.point is often at the target circle's near edge
+  // which can sit closer than the center at oblique angles.
+  const cam3D = scene3d.getCameraOrigin3D?.();
+  const fwd3D = scene3d.getCameraForward3D?.();
+  function verticalCheck(hit) {
+    if (!hit || !hit.target || !cam3D || !fwd3D) return hit;
+    const t = hit.target;
+    // Use the target's body center (2D) for the distance, not the ray
+    // intersection point on its circle.
+    const dx = (t.x != null ? t.x : hit.point.x) - cam3D.x;
+    const dz = (t.y != null ? t.y : hit.point.y) - cam3D.z;
+    const dist2D = Math.hypot(dx, dz);
+    const horizLen = Math.hypot(fwd3D.x, fwd3D.z) || 1;
+    const yAtTarget = cam3D.y + fwd3D.y * (dist2D / horizLen);
+    // Per-target vertical extent. Humans/civilians stand ~1.8m; aliens vary
+    // but rarely exceed 2.5m. Add the target's body radius as a fudge so
+    // graze-the-head shots still count. Feet at 0; subtract a little for
+    // stance variance.
+    const bodyTop =
+      t.kind === 'alien' ? 2.5 :
+      /* human / civilian / remote */ 1.9;
+    const bodyBot = -0.2;
+    const fudge = (t.radius || 0.35) * 0.5;
+    if (yAtTarget < bodyBot - fudge || yAtTarget > bodyTop + fudge) {
+      return { ...hit, target: null };
+    }
+    return hit;
+  }
 
   if (w.mode === 'spread') {
+    // Shotgun: pellets spread around the crosshair direction from the camera
+    // origin so each pellet's aim matches what it "points at" on screen.
+    const baseAng = Math.atan2(camFwd.y, camFwd.x);
     const n = w.spreadCount || 3;
     for (let i = 0; i < n; i++) {
       const t = n === 1 ? 0 : (i / (n - 1)) - 0.5;
-      const a = ang + t * w.spreadAngle;
-      fireRay(player.x, player.y, Math.cos(a), Math.sin(a), w);
+      const a = baseAng + t * w.spreadAngle;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      const hit = verticalCheck(hitscan(camOrg.x, camOrg.y, dx, dy, w.range, activeColliders, targets));
+      applyHitResult(hit, w, net.selfId, player.x, player.y);
     }
   } else {
-    fireRay(player.x, player.y, dirX, dirY, w);
+    const hit = verticalCheck(hitscan(camOrg.x, camOrg.y, camFwd.x, camFwd.y, w.range, activeColliders, targets));
+    applyHitResult(hit, w, net.selfId, player.x, player.y);
   }
 
   noteActivity();
@@ -4296,6 +4629,10 @@ chatInputEl?.addEventListener('focus', () => {
 
 
 function update(dt) {
+  // Flush any pending hits whose bullets have now reached their targets.
+  // This must run before AI ticks so a civilian/alien that just died still
+  // gets to run its death animation frame this tick.
+  processPendingHits();
   // Announce peers the first time their username is known (arrives via pose, not raw join).
   for (const [id, p] of net.peers) {
     if (p.username && !_announcedPeers.has(id)) {
@@ -4316,13 +4653,20 @@ function update(dt) {
   const vx = fx * wsIn + rx * adIn;
   const vz = fz * wsIn + rz * adIn;
   const moving = (vx !== 0 || vz !== 0);
-  sprinting = moving && isDown('shift');
+  // ADS disables sprint — aiming down sights forces careful movement in both
+  // FP and TP. Any shift input while aiming is ignored for sprint purposes.
+  const adsHeld = scene3d.isAds?.() === true;
+  sprinting = moving && isDown('shift') && !adsHeld;
   if (wasPressed('x')) walking = !walking;
   if (sprinting) walking = false;
-  if (wasPressed('c')) { crouching = !crouching; crouchId++; }
   moveFwd  = moving ? wsIn : 0;
   moveSide = moving ? adIn : 0;
-  const speedMul = sprinting ? 1.7 : walking ? 0.5 : 1.0;
+  // ADS slows movement to a deliberate creep in both FP and TP — aiming
+  // should trade off mobility for accuracy. Stacks on top of the walk tier
+  // so toggled-walk while ADS stays slow, not slower-than-walk×ADS.
+  const ADS_SPEED_MUL = 0.5;
+  let speedMul = sprinting ? 1.7 : walking ? 0.5 : 1.0;
+  if (adsHeld) speedMul = Math.min(speedMul, ADS_SPEED_MUL);
   if (moving) noteActivity();
   // Dead players cannot move in the lobby (alive is only reset to true on MISSION enter)
   if (player.alive) {
@@ -4355,29 +4699,41 @@ function update(dt) {
   }
 
   if (session.phase === Phase.MISSION) {
-    for (const civ of civilians) {
-      if (!civ.alive) continue;
-      prevPos.set(civ, { x: civ.x, y: civ.y });
-      const v = planCivilian(civ, dt, wanderRng, MISSION_BOUNDS, planWanderer);
-      civ.x  += v.vx * dt;
-      civ.y  += v.vy * dt;
-      civ.vx  = v.vx;   // expose velocity so scene3d can pick the right animation
-      civ.vy  = v.vy;
+    // Civilians are host-authoritative (see broadcastCivs / net.onCivs). Non-host
+    // peers receive position + velocity + walkPhase each broadcast and just
+    // interpolate visuals from those fields; they must NOT re-simulate locally
+    // or they'd diverge from the host's sim.
+    if (net.isHost) {
+      for (const civ of civilians) {
+        if (!civ.alive) continue;
+        prevPos.set(civ, { x: civ.x, y: civ.y });
+        const v = planCivilian(civ, dt, wanderRng, MISSION_BOUNDS, planWanderer);
+        civ.x  += v.vx * dt;
+        civ.y  += v.vy * dt;
+        civ.vx  = v.vx;   // expose velocity so scene3d can pick the right animation
+        civ.vy  = v.vy;
+        // Advance walkPhase so legs animate. planWanderer updates it on some
+        // branches; for belt-and-braces bump it with current speed here too.
+        const spd = Math.hypot(v.vx, v.vy);
+        if (spd > 0.1) civ.walkPhase = (civ.walkPhase || 0) + dt * 6;
+      }
+      if (performance.now() - lastCivsBroadcast > CIVS_BROADCAST_MS) broadcastCivs();
+    } else {
+      // Non-host: extrapolate between broadcasts using the last-known velocity
+      // so civilians glide smoothly. Broadcasts arrive every 100 ms and snap
+      // position + velocity back to authoritative values.
+      for (const civ of civilians) {
+        if (!civ.alive) continue;
+        civ.x += (civ.vx || 0) * dt;
+        civ.y += (civ.vy || 0) * dt;
+        const spd = Math.hypot(civ.vx || 0, civ.vy || 0);
+        if (spd > 0.1) civ.walkPhase = (civ.walkPhase || 0) + dt * 6;
+      }
     }
 
     // Alien AI (host authoritative)
     if (net.isHost && aliens.length > 0) {
-      const humanTargets = [
-        // Only include local player if they are in the mission (not a lobby spectator)
-        ...(localIsParticipant() ? [player] : []),
-        ...[...net.peers.entries()]
-          .filter(([id, p]) => {
-            // Only peer IDs that are mission participants
-            if (session.participants && !session.participants.includes(id)) return false;
-            return p.alive !== false && p.x != null;
-          })
-          .map(([peerId, p]) => ({ id: peerId, x: p.renderX, y: p.renderY, alive: p.alive !== false })),
-      ].filter(t => t.alive !== false);
+      const humanTargets = []; // DEV: aliens ignore all players for testing
       for (const a of aliens) {
         if (!a.alive) continue;
         const v = planAlien(a, dt, wanderRng, MISSION_BOUNDS, humanTargets);
@@ -4518,8 +4874,12 @@ function update(dt) {
     // Remote players: check against rendered position, but nudge the lerp TARGET (pr.x/pr.y)
     // so the render follows smoothly and doesn't snap back every frame.
     // Also send a nudge message to that peer so they move in their own game.
+    // Cross-zone peers (lobby ↔ mission) have no physical interaction — their
+    // rendered position lives in a different room and pushing each other
+    // would make lobby players drag mission players around (and vice versa).
     for (const [peerId, pr] of net.peers) {
       if (pr.renderX == null || pr.alive === false) continue;
+      if (!sameZoneAsLocal(peerId)) continue;
       const hit = circleVsCircle(
         player.x,   player.y,   player.radius || 0.35,
         pr.renderX, pr.renderY, 0.35,
@@ -4642,26 +5002,53 @@ function update(dt) {
 let _pendingTracers = [];
 function emitTracer(t) { _pendingTracers.push(t); }
 
-function render(dt) {
+function render(dt, alpha = 1) {
   const inMission = session.phase === Phase.MISSION;
   const _now = performance.now();
+
+  // Fixed-timestep render interpolation for the local player's pose. The
+  // simulation advances at 60Hz but displays commonly run at 120–165Hz, so
+  // between update ticks player.x/y is stale for several render frames —
+  // which reads as strafe-stutter relative to objects that are interpolated
+  // every render frame. Lerp player.x/y from their pre-update snapshot
+  // (prevPos) toward the current value by `alpha` (fraction into the next
+  // fixed step). We temporarily overwrite player.x/y so downstream camera
+  // + remotes-list code consumes the smoothed values, then restore after.
+  const _pp = prevPos.get(player);
+  let _realPx, _realPy;
+  if (_pp && alpha < 1) {
+    _realPx = player.x; _realPy = player.y;
+    player.x = _pp.x + (_realPx - _pp.x) * alpha;
+    player.y = _pp.y + (_realPy - _pp.y) * alpha;
+  }
 
   // localInMission: true only when this player physically entered the mission.
   // Non-participants keep their lobby position + lobby room even while phase === MISSION.
   const localInMission = inMission && localIsParticipant();
 
-  // Cross-zone cull: hide players who are in a different zone than the local player.
-  // If the local player is in the lobby (non-participant), hide mission players; vice versa.
-  const parts = inMission ? session.participants : null; // null = all in same space
+  // Cross-zone cull: hide any peer whose zone differs from the local player's.
+  // This MUST run every frame regardless of local phase — a lobby client's
+  // session.phase can lag behind the host's transition to MISSION, so gating
+  // the cull on `inMission` (local's phase) lets mission players render in
+  // the lobby during the transition window. We now use a per-peer broadcast
+  // flag (`p.inMission`) as the primary truth source and OR it with the
+  // legacy signals so old clients / races still cull correctly.
+  // Failure modes this guards against (all previously seen as bugs):
+  //   • Host migration leaving session.participants briefly stale.
+  //   • Local client hasn't received session broadcast for MISSION yet while
+  //     remote peer has already teleported into the mission.
+  //   • Remote peer's `ready` flag lags relative to their physical position.
+  // See project_gantz.md: "Cross-zone visibility cull".
+  const parts = session.participants;
 
   const remotes = [];
   for (const [peerId, p] of net.peers) {
     if (p.x == null) continue;
-    // Cross-zone cull: skip remotes who are in a different zone than the local player
-    if (parts) {
-      const peerInMission = parts.includes(peerId);
-      if (localInMission !== peerInMission) continue;
-    }
+    const peerInMission =
+      (p.inMission === true)
+      || (parts ? parts.includes(peerId) : false)
+      || (session.phase === Phase.MISSION && !!p.ready);
+    if (localInMission !== peerInMission) continue;
     const bubble = _chatBubbles.get(peerId);
     const bubbleAlive = bubble && _now < bubble.expiresAt;
     remotes.push({
@@ -4679,8 +5066,7 @@ function render(dt) {
       jumpMoveSide: p.jumpMoveSide || 0,
       sprinting:  !!p.sprinting,
       walking:    !!p.walking,
-      crouching:  !!p.crouching,
-      crouchId:   p.crouchId  || 0,
+      ads:        !!p.ads,
       fireId:     p.fireId    || 0,
       moveFwd:  p.moveFwd  || 0,
       moveSide: p.moveSide || 0,
@@ -4710,15 +5096,13 @@ function render(dt) {
     if (wantOpen) {
       if (!_gantzWasOpening) {
         // Rising edge — ball just started opening
-        _gantzOpenSfx.currentTime = 0;
-        _gantzOpenSfx.play().catch(() => {});
+        audio.playAt(SFX_GANTZ_OPEN, GANTZ_BALL.x, GANTZ_BALL.y, { volume: 0.12, maxDist: 60 });
       }
       _gantzOpenProgress = Math.min(1, _gantzOpenProgress + dt * OPEN_SPEED);
     } else {
       if (_gantzWasOpening && session.phase !== Phase.MISSION) {
         // Falling edge — ball just started closing (suppress during mission entry)
-        _gantzOpenSfx.currentTime = 0;
-        _gantzOpenSfx.play().catch(() => {});
+        audio.playAt(SFX_GANTZ_OPEN, GANTZ_BALL.x, GANTZ_BALL.y, { volume: 0.12, maxDist: 60 });
       }
       _gantzOpenProgress = Math.max(0, _gantzOpenProgress - dt * CLOSE_SPEED);
     }
@@ -4739,6 +5123,10 @@ function render(dt) {
     player: {
       ...player,
       suit: player.loadout?.suit && player.loadout.suit !== 'basic',
+      moveFwd, moveSide, walking, sprinting,
+      jumpId, fireId,
+      jumpMoveFwd, jumpMoveSide,
+      jumpY,
     },
     civilians: localInMission ? civilians : [],
     aliens: localInMission ? aliens : [],
@@ -4746,7 +5134,7 @@ function render(dt) {
     newTracers,
     focus: { x: focus.x, y: focus.y },
     time: world.time,
-    firstPerson: true,
+    firstPerson: !scene3d.isThirdPerson(),
     yaw,
     pitch,
     bob,
@@ -4755,11 +5143,22 @@ function render(dt) {
     doorStates: _doorOpen.map(o => o ? 1 : 0),
   }, dt || 1 / 60);
 
+  // Decay the dynamic crosshair spread toward resting and push to CSS.
+  updateCrosshairSpread(dt || 1 / 60);
+
+  // Update the proximity-audio listener so every sound this frame attenuates
+  // / pans relative to the local player's current position + facing.
+  audio.setListener(player.x, player.y, yaw);
+
   // Draw menu content onto the ball surface canvas
   _drawBallMenu();
 
   // update Gantz-prompt and spectate HTML overlays
   updateWorldHtmlOverlays();
+
+  // Restore the simulation-authoritative player pose so the next update()
+  // step runs against the real state, not our interpolated render copy.
+  if (_realPx !== undefined) { player.x = _realPx; player.y = _realPy; }
 }
 
 function applyDamageToPlayer(amount) {
@@ -4802,6 +5201,20 @@ function updateMissionTargetsHUD() {
 
 refreshPhaseOverlay();
 startLoop({ update, render });
+
+// ── DEV: instant-mission button ─────────────────────────────────────────────
+// Bypasses briefing countdown so weapon/animation work can be tested quickly.
+// The button is removed from index.html before shipping.
+document.getElementById('debug-mission-btn')?.addEventListener('click', () => {
+  const nowMs = Date.now();
+  // Mark local player ready so localIsParticipant() returns true,
+  // and collect participants so enterPhase(MISSION) teleports the player.
+  player.ready = true;
+  session.participants = collectParticipants();
+  if (!session.participants.length) session.participants = null;
+  hostStartBriefing(nowMs);
+  hostStartMission(nowMs);
+});
 
 window.__gantz = {
   player, props, walls: lobbyWalls, staticColliders: lobbyColliders, world, renderer,

@@ -14,6 +14,7 @@
   <div id="peers">connecting…</div>
   <div id="phase">LOBBY</div>
   <button id="reconnect-btn" title="Reconnect to the room" style="display:none;">↻ reconnect</button>
+  <button id="debug-mission-btn" title="[DEV] Skip directly to mission">⚡ MISSION</button>
 </div>
 <div id="hint">WASD / arrows — walk · E — interact · T / Enter — chat · <a href="/3d.html" style="color:#c8142b;">[3D preview]</a></div>
 <div id="chat">
@@ -69,11 +70,18 @@
   <div class="wh-points" id="wh-points">0 pt</div>
 </div>
 <div id="toast-log"></div>
-<div id="crosshair"></div>
+<div id="crosshair">
+  <div class="ch-dot"></div>
+  <div class="ch-tick ch-top"></div>
+  <div class="ch-tick ch-bottom"></div>
+  <div class="ch-tick ch-left"></div>
+  <div class="ch-tick ch-right"></div>
+</div>
 <div id="gantz-prompt" class="world-prompt" style="display: none;">[E] Talk to Gantz</div>
 <div id="door-prompt" class="world-prompt" style="display: none;">[E] Open door</div>
 <div id="portal-prompt" class="world-prompt" style="display: none;">[E] Enter Jam Portal</div>
 <div id="spectate-prompt" class="world-prompt spectate" style="display: none;"></div>
+<div id="gun-flash"></div>
 <canvas id="game"></canvas>
 <script src="portal.js"></script>
 <script type="module" src="game.js"></script>

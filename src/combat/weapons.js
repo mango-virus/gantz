@@ -7,7 +7,7 @@ export const WEAPONS = {
     cooldown: 0,
     markTime: 1.5,
     mode: 'single',
-    tracerColor: '#ff2030',
+    tracerColor: '#66ddff',
     hint: 'Single-shot mark. 1.5s fuse.',
   },
   xshot: {

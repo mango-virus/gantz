@@ -155,7 +155,9 @@ export function generateMissionMap(seed, bounds) {
       x, y,
       facing: rng.range(0, Math.PI * 2),
       walkPhase: 0,
-      radius: 0.32,
+      // Bullet-hit radius (a bit larger than character collision so tight aim
+      // on a civilian's visible silhouette reliably registers as a hit).
+      radius: 0.5,
       speed: rng.range(0.7, 1.1),
       alive: true,
       behavior: rng.weighted(CIV_BEHAVIORS),

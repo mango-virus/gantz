@@ -31,6 +31,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
   const rosterFullListeners = new Set();
   const sessionListeners = new Set();
   const aliensListeners = new Set();
+  const civsListeners = new Set();
   const shotListeners = new Set();
   const hitListeners = new Set();
   const killListeners = new Set();
@@ -39,6 +40,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
   let sendRosterFull = null;
   let sendSession = null;
   let sendAliens = null;
+  let sendCivs = null;
   let sendShot = null;
   let sendHit = null;
   let sendKill = null;
@@ -79,6 +81,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
       const [srf, grf] = room.makeAction('rosterF');
       const [sse, gse] = room.makeAction('session');
       const [sa, ga]   = room.makeAction('aliens');
+      const [sCv, gCv] = room.makeAction('civs');
       const [sSh, gSh] = room.makeAction('shot');
       const [sHt, gHt] = room.makeAction('hit');
       const [sKl, gKl] = room.makeAction('kill');
@@ -89,6 +92,7 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
       sendRosterFull = srf;
       sendSession = sse;
       sendAliens = sa;
+      sendCivs = sCv;
       sendShot = sSh;
       sendHit = sHt;
       sendKill = sKl;
@@ -101,6 +105,10 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
       ga((msg, peerId) => {
         if (!msg) return;
         for (const l of aliensListeners) l(msg, peerId);
+      });
+      gCv((msg, peerId) => {
+        if (!msg) return;
+        for (const l of civsListeners) l(msg, peerId);
       });
       gSh((msg, peerId) => {
         if (!msg) return;
@@ -245,6 +253,8 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
     onSession(fn) { sessionListeners.add(fn); return () => sessionListeners.delete(fn); },
     sendAliens: (msg, target) => { if (sendAliens) try { sendAliens(msg, target); } catch {} },
     onAliens(fn) { aliensListeners.add(fn); return () => aliensListeners.delete(fn); },
+    sendCivs: (msg, target) => { if (sendCivs) try { sendCivs(msg, target); } catch {} },
+    onCivs(fn) { civsListeners.add(fn); return () => civsListeners.delete(fn); },
     sendShot: (msg, target) => { if (sendShot) try { sendShot(msg, target); } catch {} },
     onShot(fn) { shotListeners.add(fn); return () => shotListeners.delete(fn); },
     sendHit: (msg, target) => { if (sendHit) try { sendHit(msg, target); } catch {} },
