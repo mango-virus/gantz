@@ -3411,6 +3411,8 @@ const net = createNetwork({
     x: player.x,
     y: player.y,
     facing: player.facing,
+    aimYaw: player.aimYaw ?? player.facing,
+    aimPitch: player.aimPitch ?? 0,
     walkPhase: player.walkPhase,
     alive: player.alive,
     specSeed: player.spec.seed,
@@ -4673,8 +4675,26 @@ function update(dt) {
     player.x += vx * player.speed * speedMul * dt;
     player.y += vz * player.speed * speedMul * dt;
   }
-  // facing follows camera yaw regardless of movement (first-person)
-  player.facing = Math.atan2(fz, fx);
+  // Aim direction = camera. Feet (player.facing) lag behind aim like a typical
+  // third-person shooter: hold when idle, rotate toward aim while moving, and
+  // snap to catch up if the torso twist gets too extreme.
+  const aimFacing = Math.atan2(fz, fx);
+  player.aimYaw   = aimFacing;
+  player.aimPitch = pitch;
+  // Wrap delta into [-π, π]
+  let twistDelta = aimFacing - player.facing;
+  while (twistDelta >  Math.PI) twistDelta -= 2 * Math.PI;
+  while (twistDelta < -Math.PI) twistDelta += 2 * Math.PI;
+  const TWIST_LIMIT = Math.PI * 0.55; // ~100°
+  if (moving) {
+    // Rotate feet toward aim at a rate that catches up smoothly (~0.25 s).
+    const k = Math.min(1, dt * 8);
+    player.facing += twistDelta * k;
+  } else if (Math.abs(twistDelta) > TWIST_LIMIT) {
+    // Over-twist snap: rotate feet just enough to stay within the limit.
+    const excess = twistDelta - Math.sign(twistDelta) * TWIST_LIMIT;
+    player.facing += excess * Math.min(1, dt * 6);
+  }
   if (moving) {
     player.walkPhase += dt * (sprinting ? 14 : walking ? 6 : 9);
     bobPhase += dt * (sprinting ? 16 : walking ? 7 : 10);
@@ -5056,6 +5076,8 @@ function render(dt, alpha = 1) {
       spec: getRemoteSpec(peerId, p.specSeed),
       x: p.renderX, y: p.renderY,
       facing: p.facing || 0,
+      aimYaw:   p.aimYaw   != null ? p.aimYaw   : (p.facing || 0),
+      aimPitch: p.aimPitch != null ? p.aimPitch : 0,
       walkPhase: p.walkPhase || 0,
       alive: p.alive !== false,
       username: p.username || '?',

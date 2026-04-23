@@ -746,6 +746,66 @@ export function createScene3d({ canvas }) {
     console.log('[scene3d] hand-gun attached to bone:', bone.name, 'scale:', (_worldGunScale * 100).toFixed(3));
   }
 
+  // Apply an aim-offset twist to the upper-body bones each frame AFTER the
+  // animation mixer runs. The mixer overwrites bone rotations every frame from
+  // the clip's tracks, so adding rotation here sticks for this frame only —
+  // next frame's mixer update re-bases, and we re-add. That's what we want.
+  //
+  // Bones are cached per-entry (`entry.aimBones`) so we don't re-traverse the
+  // skeleton every frame. `_findBone` handles the `mixamorig:` prefix.
+  //
+  // Pitch (look up/down) → local X on each spine bone (forward/back bend).
+  // Yaw  (body twist)    → local Y on each spine bone (rotate around spine).
+  // Weights sum to ~1 across the chain so the total reaches the aim.
+  const _AIM_PITCH_LIMIT = Math.PI * 0.33;   // ±60°
+  const _AIM_YAW_LIMIT   = Math.PI * 0.55;   // ±100° (feet catch up beyond this)
+  function _applyAimOffset(entry, h) {
+    if (!entry.isFbx) return;
+    if (h.alive === false || h._isCivilian) return;
+    // Lazy cache of the bone chain.
+    if (!entry.aimBones) {
+      const spine1 = _findBone(entry.group, 'Spine1');
+      const spine2 = _findBone(entry.group, 'Spine2');
+      const neck   = _findBone(entry.group, 'Neck');
+      if (!spine1 && !spine2 && !neck) return;
+      entry.aimBones = { spine1, spine2, neck };
+    }
+    const { spine1, spine2, neck } = entry.aimBones;
+
+    // Delta between aim and feet. If aim fields are missing (legacy peers),
+    // fall back to 0 twist and only use pitch.
+    const aimYaw   = h.aimYaw   != null ? h.aimYaw   : (h.facing || 0);
+    const aimPitch = h.aimPitch != null ? h.aimPitch : 0;
+    let yawDelta = aimYaw - (h.facing || 0);
+    while (yawDelta >  Math.PI) yawDelta -= 2 * Math.PI;
+    while (yawDelta < -Math.PI) yawDelta += 2 * Math.PI;
+    // Clamp so we don't twist into impossible poses.
+    if (yawDelta >  _AIM_YAW_LIMIT) yawDelta =  _AIM_YAW_LIMIT;
+    if (yawDelta < -_AIM_YAW_LIMIT) yawDelta = -_AIM_YAW_LIMIT;
+    let pitch = aimPitch;
+    if (pitch >  _AIM_PITCH_LIMIT) pitch =  _AIM_PITCH_LIMIT;
+    if (pitch < -_AIM_PITCH_LIMIT) pitch = -_AIM_PITCH_LIMIT;
+
+    // Distribute across the chain (weights sum to 1).
+    // Yaw: mostly Spine2 (below shoulders), some Spine1.
+    // Pitch: mostly Spine2 + Neck so the head tracks.
+    // Spine bones are oriented such that +Y rotation twists the torso opposite
+    // to world yaw, and +X rotation pitches backward — negate both so the
+    // upper body tracks aim naturally.
+    if (spine1) {
+      spine1.rotation.y -= yawDelta * 0.30;
+      spine1.rotation.x -= pitch    * 0.25;
+    }
+    if (spine2) {
+      spine2.rotation.y -= yawDelta * 0.50;
+      spine2.rotation.x -= pitch    * 0.40;
+    }
+    if (neck) {
+      neck.rotation.y -= yawDelta * 0.20;
+      neck.rotation.x -= pitch    * 0.35;
+    }
+  }
+
   function _resampleClip(clip, fps) {
     const dt = 1 / fps;
     const duration = clip.duration;
@@ -1733,6 +1793,11 @@ export function createScene3d({ canvas }) {
           }
         }
         entry.mixer.update(dt);
+        // Upper-body aim: after the mixer applies animation, add an aim offset
+        // to Spine1/Spine2/Neck so the torso/head twist toward where the player
+        // is actually looking. Twist is split across the chain for a natural
+        // bend; feet (group.rotation.y) handle base yaw.
+        _applyAimOffset(entry, h);
       }
       // Attach X-Gun mesh to right hand bone during missions; remove in lobby/death.
       const showHandGun = state.phase === 'MISSION' && h.alive !== false && !h._isCivilian;
