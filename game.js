@@ -4263,7 +4263,6 @@ let stats = getStats();
 let missionPointsEarned = 0;
 let missionBossKilled = false;
 let missionCivilianKills = 0;
-let spectateIndex = 0;
 let _menuClosedAt = -Infinity;
 let _menuFadeOutAt = -1;
 let _skipNextMenuFadeOut = false;
@@ -4723,7 +4722,6 @@ function enterPhase(newPhase) {
     _missionStartPts = new Map();
     _missionStartPts.set('local', player.points);
     for (const [id, p] of net.peers) _missionStartPts.set(id, p.points || 0);
-    spectateIndex = 0;
 
     _wasInMission = localIsParticipant();
     if (_wasInMission) {
@@ -5252,7 +5250,6 @@ addEventListener('mousedown', noteActivity);
 const gantzPromptEl  = document.getElementById('gantz-prompt');
 const doorPromptEl   = document.getElementById('door-prompt');
 const portalPromptEl = document.getElementById('portal-prompt');
-const spectatePromptEl = document.getElementById('spectate-prompt');
 
 function updateWorldHtmlOverlays() {
   // localInMission: true only when the player is physically present in the mission.
@@ -5299,19 +5296,6 @@ function updateWorldHtmlOverlays() {
     portalPromptEl.style.display = (dp < _PORTAL_RADIUS && !_portalBusy) ? 'block' : 'none';
   } else {
     portalPromptEl.style.display = 'none';
-  }
-
-  if (localInMission && !player.alive) {
-    const targets = spectateTargets();
-    if (targets.length > 0) {
-      const t = targets[spectateIndex % targets.length];
-      spectatePromptEl.textContent = `▼ SPECTATING ${t.name.toUpperCase()} — click to switch`;
-      spectatePromptEl.style.display = 'block';
-    } else {
-      spectatePromptEl.style.display = 'none';
-    }
-  } else {
-    spectatePromptEl.style.display = 'none';
   }
 
   // Hunters list — local player first, then connected peers
@@ -5884,11 +5868,10 @@ function tryFire() {
     const horizLen = Math.hypot(fwd3D.x, fwd3D.z) || 1;
     const yAtTarget = cam3D.y + fwd3D.y * (dist2D / horizLen);
     // Per-target vertical extent. Humans/civilians stand ~1.8m; aliens vary
-    // but rarely exceed 2.5m. Add the target's body radius as a fudge so
-    // graze-the-head shots still count. Feet at 0; subtract a little for
-    // stance variance.
+    // wildly (big boss can clear 4m). Scale by spec.size so tall aliens still
+    // take headshots. Feet at 0; subtract a little for stance variance.
     const bodyTop =
-      t.kind === 'alien' ? 2.5 :
+      t.kind === 'alien' ? Math.max(2.5, 2.2 * (t.spec?.size || 1)) :
       /* human / civilian / remote */ 1.9;
     const bodyBot = -0.2;
     const fudge = (t.radius || 0.35) * 0.5;
@@ -5970,16 +5953,6 @@ addEventListener('mousedown', (e) => {
   // Re-acquire pointer lock on any click, even if menu is open.
   if (!pointerLocked) requestLockIfAllowed();
   if (menu.isOpen()) return;
-  // Spectate cycling if dead in mission — cursor is visible, no lock needed
-  if (session.phase === Phase.MISSION && localIsParticipant() && !player.alive) {
-    const targets = spectateTargets();
-    if (targets.length > 0) {
-      if (e.button === 0) spectateIndex = (spectateIndex + 1) % targets.length;
-      else if (e.button === 2) spectateIndex = (spectateIndex - 1 + targets.length) % targets.length;
-    }
-    e.preventDefault();
-    return;
-  }
   if (e.button !== 0) return;
   tryFire();
 });
@@ -6173,7 +6146,19 @@ function update(dt) {
 
     // Alien AI (host authoritative)
     if (net.isHost && aliens.length > 0) {
-      const humanTargets = []; // DEV: aliens ignore all players for testing
+      // Gather every living mission-participant (local + peers) as alien fodder.
+      // Non-participants (still in the lobby) are excluded so aliens don't chase
+      // across phase boundaries when a player dies and pops back to the lobby.
+      const humanTargets = [];
+      if (player.alive && localIsParticipant()) {
+        humanTargets.push({ id: player.id, x: player.x, y: player.y, alive: true });
+      }
+      for (const [id, p] of net.peers) {
+        if (!p || p.alive === false) continue;
+        if (p.inMission !== true) continue;
+        if (p.x == null) continue;
+        humanTargets.push({ id, x: p.x, y: p.y, alive: true });
+      }
       for (const a of aliens) {
         if (!a.alive) continue;
         const v = planAlien(a, dt, wanderRng, MISSION_BOUNDS, humanTargets);
@@ -6419,17 +6404,9 @@ function update(dt) {
 
   const cam = renderer.getCamera();
   const k = Math.min(1, dt * 8);
-  let focusX = player.x, focusY = player.y;
-  if (session.phase === Phase.MISSION && localIsParticipant() && !player.alive) {
-    const targets = spectateTargets();
-    if (targets.length > 0) {
-      const t = targets[spectateIndex % targets.length];
-      focusX = t.x; focusY = t.y;
-    }
-  }
   renderer.setCamera({
-    x: cam.x + (focusX - cam.x) * k,
-    y: cam.y + (focusY - cam.y) * k,
+    x: cam.x + (player.x - cam.x) * k,
+    y: cam.y + (player.y - cam.y) * k,
     zoom: 1.1,
   });
 
@@ -6529,10 +6506,7 @@ function render(dt, alpha = 1) {
     });
   }
 
-  const focus = (!player.alive && localInMission) ? (() => {
-    const targets = spectateTargets();
-    return targets[spectateIndex % Math.max(1, targets.length)] || player;
-  })() : player;
+  const focus = player;
 
   const newTracers = _pendingTracers;
   _pendingTracers = [];
@@ -6607,7 +6581,7 @@ function render(dt, alpha = 1) {
   // Draw menu content onto the ball surface canvas
   _drawBallMenu();
 
-  // update Gantz-prompt and spectate HTML overlays
+  // update world-prompt HTML overlays (Gantz interact, door, portal)
   updateWorldHtmlOverlays();
 
   // Gantz Neural HUD (new)
@@ -6622,24 +6596,31 @@ function applyDamageToPlayer(amount) {
   if (!player.alive) return;
   player.hp = Math.max(0, player.hp - amount);
   if (player.hp <= 0) {
-    player.alive = false;
-    spectateIndex = 0;
-    toast('You died. Spectating.', 'warn');
-    net.broadcastPose();
+    toast('You died. Returning to lobby.', 'warn');
+    _sendLocalPlayerToLobby();
   } else {
     toast(`-${amount} hp`, 'warn');
   }
   updateWeaponHUD();
 }
 
-
-function spectateTargets() {
-  const alive = [];
-  if (player.alive) alive.push({ kind: 'self', x: player.x, y: player.y, name: player.username });
-  for (const [, p] of net.peers) if (p.alive !== false && p.x != null) {
-    alive.push({ kind: 'peer', x: p.renderX, y: p.renderY, name: p.username || '?' });
-  }
-  return alive;
+// Yank the local player out of the current mission and drop them in the lobby
+// alive. Mission continues for everyone else; session.participants is
+// host-authoritative so remote peers still treat us as a (temporarily absent)
+// participant until the host ends the mission and broadcasts DEBRIEF.
+function _sendLocalPlayerToLobby() {
+  const suit = SUITS[player.loadout?.suit || 'basic'];
+  player.hp = suit.maxHp;
+  player.alive = true;
+  player.ready = false;   // localIsParticipant() → false → localInMission flips off
+  player.afkReady = false;
+  _wasInMission = false;  // prevent enterPhase(LOBBY) from re-firing the lobby scan
+  teleportToLobby();
+  activeColliders = lobbyColliders;
+  tracers = [];
+  requestAnimationFrame(() => _triggerTransferScan('materialize'));
+  net.broadcastPose?.();
+  updateWeaponHUD();
 }
 
 // Update targets in mission HUD

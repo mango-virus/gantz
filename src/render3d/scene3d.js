@@ -1425,7 +1425,15 @@ export function createScene3d({ canvas }) {
       // the render loop falls back to visible=true after the grace elapses
       // for peers who don't scan in (civilians, existing peers).
       if (isFreshEntry) inst.group.visible = false;
-      entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null, handGun: null, __firstShowAt: isFreshEntry ? (performance.now() + 150) : 0 };
+      // Grace window: 150ms is plenty for peers (their scan relay lands on the
+      // next pose tick, max 66ms). For the LOCAL player, scheduleInitialScan in
+      // game.js can wait up to 6s for FBX+shader settle before firing; without
+      // a matching grace the local mesh reveals as a full un-scanned body the
+      // moment the 150ms window elapses. Scan.start() zeroes __firstShowAt as
+      // soon as it fires, so extending the ceiling costs nothing in the happy
+      // path — it just prevents a premature reveal if the scan is delayed.
+      const graceMs = id === '__player__' ? 7000 : 150;
+      entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null, handGun: null, __firstShowAt: isFreshEntry ? (performance.now() + graceMs) : 0 };
       humans.set(id, entry);
     }
     return entry;
@@ -2187,7 +2195,8 @@ export function createScene3d({ canvas }) {
 
         // Viewmodel: visible during the first chunk of the transition so there's
         // no hard pop, then hidden once the camera is past the halfway point.
-        viewWeapon.visible = (e < 0.4) && (state.playerAlive !== false);
+        // Also hidden entirely outside of missions (no gun in the lobby).
+        viewWeapon.visible = (e < 0.4) && (state.playerAlive !== false) && (state.phase === 'MISSION');
         if (viewWeapon.visible) _drawGantzScreen(dt, state);
         muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 60);
 
@@ -2199,7 +2208,7 @@ export function createScene3d({ canvas }) {
         camera.rotation.y = state.yaw || 0;
         camera.rotation.x = state.pitch || 0;
         camera.rotation.z = 0;
-        viewWeapon.visible = (state.playerAlive !== false);
+        viewWeapon.visible = (state.playerAlive !== false) && (state.phase === 'MISSION');
         // Update Gantz HUD screen texture every frame
         if (viewWeapon.visible) _drawGantzScreen(dt, state);
         // Muzzle flash — light decays every frame

@@ -29,17 +29,22 @@ export function spawnFromComposition(seed, bounds, composition) {
   const aliens = [];
   composition.forEach((archetype, i) => {
     const a = ARCHETYPES[archetype];
+    const spec = generateAlienSpec(`alien-${seed}-${i}-${archetype}`, archetype);
     const x = rng.range(bounds.minX + 3, bounds.maxX - 3);
     const y = rng.range(bounds.minY + 6, bounds.maxY - 3);
     aliens.push({
       id: `alien-${i}`,
       kind: 'alien',
       archetype,
-      spec: generateAlienSpec(`alien-${seed}-${i}-${archetype}`, archetype),
+      spec,
       x, y,
       facing: rng.range(0, Math.PI * 2),
       walkPhase: 0,
-      radius: a.radius,
+      // Hit-radius scales with the visual mesh size so the whole body is
+      // shootable, not just a sliver around the collision center. Alien
+      // movement collision isn't driven off this field (aliens aren't in
+      // activeColliders), so bumping it only affects hitscan.
+      radius: a.radius * (spec.size || 1),
       speed: a.speed,
       hp: a.hp,
       alive: true,
@@ -62,16 +67,17 @@ export function spawnFromComposition(seed, bounds, composition) {
 export function spawnBonusBoss(seed, bounds, idx) {
   const rng = makeRng((seed >>> 0) ^ 0xb055 ^ idx);
   const a = ARCHETYPES.boss;
+  const spec = generateAlienSpec(`boss-${seed}-${idx}`, 'boss');
   return {
     id: `boss-${idx}`,
     kind: 'alien',
     archetype: 'boss',
-    spec: generateAlienSpec(`boss-${seed}-${idx}`, 'boss'),
+    spec,
     x: rng.range(bounds.minX + 5, bounds.maxX - 5),
     y: rng.range(bounds.minY + 6, bounds.maxY - 6),
     facing: rng.range(0, Math.PI * 2),
     walkPhase: 0,
-    radius: a.radius,
+    radius: a.radius * (spec.size || 1),
     speed: a.speed,
     hp: a.hp,
     alive: true,
