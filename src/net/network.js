@@ -207,8 +207,16 @@ export function createNetwork({ appId, roomId, getLocalPose }) {
       if (p.x == null) continue;
       p.renderX     += (p.x          - p.renderX)     * k;
       p.renderY     += (p.y          - p.renderY)     * k;
-      // Smooth jumpY the same way — without this it snaps at 15 Hz and looks jittery
-      p.renderJumpY  = (p.renderJumpY || 0) + ((p.jumpY || 0) - (p.renderJumpY || 0)) * k;
+      // Smooth jumpY during the airborne phase only — snap to 0 the instant
+      // a broadcast shows the peer is grounded. The exponential lerp would
+      // otherwise asymptote, leaving the mesh 1–20 cm above the floor for
+      // hundreds of ms after landing (reads as "landing on thin air"). A
+      // broadcast-frame-aligned snap is imperceptible compared to that tail.
+      if ((p.jumpY || 0) === 0) {
+        p.renderJumpY = 0;
+      } else {
+        p.renderJumpY = (p.renderJumpY || 0) + ((p.jumpY || 0) - (p.renderJumpY || 0)) * k;
+      }
     }
   }
 
