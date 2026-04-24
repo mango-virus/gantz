@@ -1255,51 +1255,119 @@ export function createScene3d({ canvas }) {
   // lived burst of small meshes flying outward with gravity. No physics
   // collisions beyond a ground-plane stick at y=0.
   const _gibs = [];                                        // { mesh, vx, vy, vz, life, ttl, spin }
+  const _gibSplats = [];                                   // flat ground blood pools
   const _gibBoxGeom    = new THREE.BoxGeometry(0.18, 0.18, 0.18);
   const _gibSphereGeom = new THREE.SphereGeometry(0.12, 8, 6);
   const _gibShardGeom  = new THREE.BoxGeometry(0.08, 0.28, 0.08);
+  const _gibChunkGeom  = new THREE.BoxGeometry(0.34, 0.26, 0.30);   // meaty torso chunk
+  const _gibStringGeom = new THREE.BoxGeometry(0.04, 0.04, 0.55);   // viscera / entrails
+  const _gibSplatGeom  = new THREE.CircleGeometry(1, 20);
+  const _gibMistGeom   = new THREE.SphereGeometry(1, 14, 10);
   const GIB_GRAVITY    = 18;
   const GIB_GROUND_Y   = 0.02;
   function spawnGibs(x, y, opts = {}) {
-    const count = opts.count || 28;
     const centerY = opts.centerY != null ? opts.centerY : 1.1;
     const power = opts.power || 1;
+    const count = Math.round((opts.count || 28) * 2.2);             // denser burst
+
+    // ── Blood mist: short-lived expanding red fog at the detonation point.
+    {
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(0x5a000a),
+        transparent: true,
+        opacity: 0.6,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(_gibMistGeom, mat);
+      mesh.position.set(x, centerY, y);
+      mesh.scale.setScalar(0.2);
+      scene.add(mesh);
+      _gibs.push({
+        mesh, mat,
+        vx: 0, vy: 0, vz: 0, life: 0,
+        ttl: 0.85,
+        spin: { x: 0, y: 0, z: 0 },
+        grounded: true,
+        isMist: true,
+        mistPeak: (1.5 + Math.random() * 0.6) * power,
+      });
+    }
+
+    // ── Ground splats: three overlapping dark-red pools, persistent.
+    const splatCount = 3 + Math.floor(power * 1.5);
+    for (let s = 0; s < splatCount; s++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(`hsl(${348 + Math.random() * 12}, ${70 + Math.random() * 20}%, ${10 + Math.random() * 8}%)`),
+        transparent: true,
+        opacity: 0.88,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      });
+      const mesh = new THREE.Mesh(_gibSplatGeom, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = Math.random() * Math.PI * 2;
+      const jitter = 0.55 * power;
+      mesh.position.set(
+        x + (Math.random() - 0.5) * jitter,
+        0.012 + s * 0.003,
+        y + (Math.random() - 0.5) * jitter,
+      );
+      mesh.scale.setScalar(0.05);
+      scene.add(mesh);
+      _gibSplats.push({
+        mesh, mat, life: 0,
+        growTo: (0.55 + Math.random() * 0.55) * (1 + 0.5 * power),
+        ttl: 9 + Math.random() * 4,
+      });
+    }
+
+    // ── Chunks + shards + viscera flying outward.
     for (let i = 0; i < count; i++) {
       const pick = Math.random();
-      const geom = pick < 0.45 ? _gibSphereGeom : pick < 0.8 ? _gibBoxGeom : _gibShardGeom;
-      // Blood & meat palette — dark crimson to bright arterial red.
-      const hue = 350 + Math.random() * 15;
-      const sat = 70 + Math.random() * 25;
-      const lgt = 18 + Math.random() * 22;
+      let geom;
+      if      (pick < 0.32) geom = _gibSphereGeom;
+      else if (pick < 0.56) geom = _gibBoxGeom;
+      else if (pick < 0.78) geom = _gibShardGeom;
+      else if (pick < 0.92) geom = _gibStringGeom;
+      else                  geom = _gibChunkGeom;
+
+      // Two palettes: arterial red (bright) + dark viscera (maroon/purple).
+      const dark = Math.random() < 0.38;
+      const hue = dark ? 328 + Math.random() * 20 : 350 + Math.random() * 15;
+      const sat = dark ? 55 + Math.random() * 25 : 80 + Math.random() * 20;
+      const lgt = dark ? 10 + Math.random() * 14 : 22 + Math.random() * 22;
       const mat = new THREE.MeshBasicMaterial({
         color: new THREE.Color(`hsl(${hue}, ${sat}%, ${lgt}%)`),
         transparent: true,
         opacity: 1,
       });
       const mesh = new THREE.Mesh(geom, mat);
-      const jitter = 0.35;
+      const jitter = 0.4;
       mesh.position.set(
         x + (Math.random() - 0.5) * jitter,
-        centerY + (Math.random() - 0.5) * 0.5,
+        centerY + (Math.random() - 0.5) * 0.6,
         y + (Math.random() - 0.5) * jitter,
       );
       const ang = Math.random() * Math.PI * 2;
-      const speed = (3 + Math.random() * 6) * power;
-      const upBias = 3 + Math.random() * 5;
+      const speed = (4 + Math.random() * 8) * power;
+      const upBias = 4 + Math.random() * 6;
       const vx = Math.cos(ang) * speed;
       const vz = Math.sin(ang) * speed;
-      const vy = upBias + Math.random() * 2;
-      const ttl = 1.2 + Math.random() * 1.4;
-      const scl = 0.7 + Math.random() * 0.9;
+      const vy = upBias + Math.random() * 3;
+      const ttl = 1.6 + Math.random() * 1.8;
+      const scl = 0.7 + Math.random() * 1.1;
       mesh.scale.setScalar(scl);
       mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
       scene.add(mesh);
       _gibs.push({
-        mesh, vx, vy, vz, life: 0, ttl,
+        mesh, mat, vx, vy, vz, life: 0, ttl,
         spin: {
-          x: (Math.random() - 0.5) * 12,
-          y: (Math.random() - 0.5) * 12,
-          z: (Math.random() - 0.5) * 12,
+          x: (Math.random() - 0.5) * 14,
+          y: (Math.random() - 0.5) * 14,
+          z: (Math.random() - 0.5) * 14,
         },
         grounded: false,
       });
@@ -1309,6 +1377,18 @@ export function createScene3d({ canvas }) {
     for (let i = _gibs.length - 1; i >= 0; i--) {
       const g = _gibs[i];
       g.life += dt;
+      if (g.isMist) {
+        const t = g.life / g.ttl;
+        const s = 0.2 + (g.mistPeak - 0.2) * Math.min(1, t * 2.8);
+        g.mesh.scale.setScalar(s);
+        g.mat.opacity = Math.max(0, 0.6 * (1 - t) * (1 - t));
+        if (g.life >= g.ttl) {
+          scene.remove(g.mesh);
+          g.mat.dispose();
+          _gibs.splice(i, 1);
+        }
+        continue;
+      }
       if (!g.grounded) {
         g.vy -= GIB_GRAVITY * dt;
         g.mesh.position.x += g.vx * dt;
@@ -1321,6 +1401,30 @@ export function createScene3d({ canvas }) {
           g.mesh.position.y = GIB_GROUND_Y;
           g.grounded = true;
           g.vx *= 0.2; g.vz *= 0.2; g.vy = 0;
+          // Impact splat: tiny pool under whatever just landed.
+          if (Math.random() < 0.45) {
+            const mat = new THREE.MeshBasicMaterial({
+              color: new THREE.Color(`hsl(${348 + Math.random() * 12}, ${70 + Math.random() * 20}%, ${12 + Math.random() * 8}%)`),
+              transparent: true,
+              opacity: 0.8,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+              polygonOffset: true,
+              polygonOffsetFactor: -1,
+              polygonOffsetUnits: -1,
+            });
+            const mesh = new THREE.Mesh(_gibSplatGeom, mat);
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.rotation.z = Math.random() * Math.PI * 2;
+            mesh.position.set(g.mesh.position.x, 0.011, g.mesh.position.z);
+            mesh.scale.setScalar(0.05);
+            scene.add(mesh);
+            _gibSplats.push({
+              mesh, mat, life: 0,
+              growTo: 0.15 + Math.random() * 0.25,
+              ttl: 6 + Math.random() * 3,
+            });
+          }
         }
       }
       const remaining = g.ttl - g.life;
@@ -1331,6 +1435,23 @@ export function createScene3d({ canvas }) {
         scene.remove(g.mesh);
         g.mesh.material.dispose();
         _gibs.splice(i, 1);
+      }
+    }
+
+    // Ground blood pools: quick grow-in, long persistence, fade at end.
+    for (let i = _gibSplats.length - 1; i >= 0; i--) {
+      const sp = _gibSplats[i];
+      sp.life += dt;
+      const growT = Math.min(1, sp.life / 0.25);
+      sp.mesh.scale.setScalar(sp.growTo * (0.3 + 0.7 * growT));
+      const remaining = sp.ttl - sp.life;
+      if (remaining < 2.5) {
+        sp.mat.opacity = Math.max(0, (remaining / 2.5) * 0.88);
+      }
+      if (sp.life >= sp.ttl) {
+        scene.remove(sp.mesh);
+        sp.mat.dispose();
+        _gibSplats.splice(i, 1);
       }
     }
   }
