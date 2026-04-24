@@ -244,6 +244,9 @@ location.reload();
   readout, neon glow (`shadowBlur`), sweep line gradient, glitch flicker effect
   (safe draw region X 59–211, Y 4–31 derived from UV bounds U 0.204–0.839)
 - Shot tracers removed (local + network); new shooting effect TBD
+- Proximity audio (`src/engine/audio.js`): weather loops (rain/thunderstorm/blizzard),
+  lightning one-shots tied to lobby flash count, Gantz ball lobby music that kicks
+  in on queue arm, gunshot SFX. Listener updated every frame from player pos + yaw.
 
 **Disabled (re-enable when ready):**
 - NPC recruits (Mika/Rina/Nori/Hiro) — `const npcs = []` in game.js; roster
@@ -256,7 +259,6 @@ location.reload();
 - Proper gear drop-on-death + pickup UX (hooks are in place, no visual yet).
 - Revive flow from shop (points are deducted, but no "revive-on-next-mission"
   state carryover wired to enterPhase).
-- Audio (user is providing files).
 - Additional mission themes beyond shopping street (residential, park, subway, etc).
 - Dedicated crosshair + damage indicator + reload animations.
 - New shooting effect to replace removed tracers.

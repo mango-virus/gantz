@@ -83,7 +83,7 @@ const BRIEFING_MS = 30000;
 const MISSION_BASE_MS = 30000;
 const DEBRIEF_MS = 25000;
 const SESSION_REBROADCAST_MS = 1500;
-const READY_COUNTDOWN_MS = 10000;
+const READY_COUNTDOWN_MS = 40000;
 const ALIENS_BROADCAST_MS = 100;
 const CIVILIAN_PENALTY = 20;
 const ALIEN_KILL_POINTS_DEFAULT = 100;
@@ -300,6 +300,12 @@ let _introStartTime = -1;
 let _shopResultPrev = null; // tracks which result object is currently animating
 let _shopResultTs   = -1;  // performance.now() when that result started
 let _introDone = false;
+// Per-frame flag set true by _drawBallMenu whenever it is actively rendering a
+// skippable speech line (typing or holding before the next line). Reset every
+// frame at the top of _drawBallMenu. Used to gate the [E] Skip prompt + handler
+// so skip is only available while a line is genuinely playing — not during
+// fade-outs, idle cooldowns, or the name-input box.
+let _gantzSpeechPlaying = false;
 let _introLines = null;
 
 // ── Name prompt (first-ever open only; skipped for returning players) ──
@@ -2877,7 +2883,190 @@ const SFX_GUN_SHOOT  = 'assets/audio/x-gun-fire.mp3';
 const SFX_GANTZ_OPEN = 'audio/gantz-open.mp3';
 const SFX_POINT_GAIN = 'audio/point-gain.mp3';
 const SFX_POINT_LOSS = 'audio/point-loss.mp3';
-audio.preload([SFX_GUN_SHOOT, SFX_GANTZ_OPEN, SFX_POINT_GAIN, SFX_POINT_LOSS]);
+const SFX_SCAN       = 'assets/audio/gantz-scan.mp3';
+const SFX_MUSIC      = 'assets/audio/gantz-music.mp3';
+const SFX_STEP_WOOD  = [
+  'assets/audio/step-wood-01.mp3', 'assets/audio/step-wood-07.mp3',
+  'assets/audio/step-wood-12.mp3', 'assets/audio/step-wood-16.mp3',
+  'assets/audio/step-wood-17.mp3', 'assets/audio/step-wood-21.mp3',
+  'assets/audio/step-wood-22.mp3', 'assets/audio/step-wood-24.mp3',
+];
+const SFX_STEP_CONCRETE = [
+  'assets/audio/step-concrete-04.mp3', 'assets/audio/step-concrete-05.mp3',
+  'assets/audio/step-concrete-06.mp3', 'assets/audio/step-concrete-07.mp3',
+  'assets/audio/step-concrete-08.mp3', 'assets/audio/step-concrete-09.mp3',
+  'assets/audio/step-concrete-10.mp3', 'assets/audio/step-concrete-11.mp3',
+];
+// Both surfaces use split clips: takeoff fires on press, landing fires when
+// jumpY returns to 0. Decouples the audio from the fixed in-game airtime.
+const SFX_JUMP_WOOD_TAKEOFF = [
+  'assets/audio/jump-wood-takeoff-1.mp3',
+];
+const SFX_JUMP_WOOD_LAND = [
+  'assets/audio/jump-wood-land-1.mp3',
+];
+const SFX_JUMP_CONCRETE_TAKEOFF = [
+  'assets/audio/jump-concrete-takeoff-1.mp3',
+  'assets/audio/jump-concrete-takeoff-2.mp3',
+];
+const SFX_JUMP_CONCRETE_LAND = [
+  'assets/audio/jump-concrete-land-1.mp3',
+  'assets/audio/jump-concrete-land-2.mp3',
+];
+// Weather ambience loops — one per weather type. Chosen by the seeded lobby
+// weather pairing; only one loop runs at a time and only while the local
+// player is physically in the lobby scene.
+const SFX_WEATHER_LOOPS = {
+  rain:         'assets/audio/weather-rain.mp3',
+  thunderstorm: 'assets/audio/weather-thunderstorm.mp3',
+  blizzard:     'assets/audio/weather-blizzard.mp3',
+};
+const SFX_LIGHTNING_STRIKES = [
+  'assets/audio/weather-lightning-1.mp3',
+  'assets/audio/weather-lightning-2.mp3',
+];
+audio.preload([SFX_GUN_SHOOT, SFX_GANTZ_OPEN, SFX_POINT_GAIN, SFX_POINT_LOSS, SFX_SCAN, SFX_MUSIC,
+               ...SFX_STEP_WOOD, ...SFX_STEP_CONCRETE,
+               ...SFX_JUMP_WOOD_TAKEOFF, ...SFX_JUMP_WOOD_LAND,
+               ...SFX_JUMP_CONCRETE_TAKEOFF, ...SFX_JUMP_CONCRETE_LAND,
+               ...Object.values(SFX_WEATHER_LOOPS), ...SFX_LIGHTNING_STRIKES]);
+
+// Footstep sample selector — random pick that avoids repeating the previous
+// sample, so consecutive steps never use the same clip. Shared across local
+// player and remote peers; peers each have their own `_peerStepBucket`
+// tracking the last floor(walkPhase / π) bucket they were observed in.
+let _lastStepIdx = -1;
+let _lastJumpTakeoffIdx = -1;
+let _lastJumpLandIdx = -1;
+const _peerStepBucket = new Map();
+const _peerJumpId = new Map();
+// Track whether each peer was airborne last tick so we can fire a landing SFX
+// on the 1→0 jumpY transition (mirrors the local _prevJumpY check).
+const _peerAirborne = new Map();
+let _prevJumpY = 0;
+
+// Pick the surface pool from the current phase. Lobby/briefing/debrief use the
+// wooden tatami samples; mission maps use concrete.
+function _stepPoolForPhase() {
+  return session.phase === Phase.MISSION ? SFX_STEP_CONCRETE : SFX_STEP_WOOD;
+}
+function _jumpTakeoffPoolForPhase() {
+  return session.phase === Phase.MISSION ? SFX_JUMP_CONCRETE_TAKEOFF : SFX_JUMP_WOOD_TAKEOFF;
+}
+function _jumpLandPoolForPhase() {
+  return session.phase === Phase.MISSION ? SFX_JUMP_CONCRETE_LAND : SFX_JUMP_WOOD_LAND;
+}
+
+// Jump-takeoff SFX. Fires at the start of a jump — x/y optional like
+// _playFootstep.
+function _playJump(baseVolume, x, y) {
+  const list = _jumpTakeoffPoolForPhase();
+  if (!list || !list.length) return;
+  let idx = Math.floor(Math.random() * list.length);
+  if (idx === _lastJumpTakeoffIdx) idx = (idx + 1) % list.length;
+  _lastJumpTakeoffIdx = idx;
+  const url = list[idx];
+  const rate = 1 + (Math.random() * 2 - 1) * 0.06;
+  const surfaceMul = list === SFX_JUMP_WOOD_TAKEOFF ? 0.75 : 1;
+  const vol  = baseVolume * surfaceMul * (1 + (Math.random() * 2 - 1) * 0.1);
+  if (x == null) audio.play(url, vol, rate);
+  else audio.playAt(url, x, y, { volume: vol, rate, refDist: 1.8, maxDist: 18 });
+}
+
+// Jump-landing SFX. Fires when jumpY returns to 0 on surfaces whose takeoff
+// clip doesn't include a baked-in landing thud (concrete). Silently no-ops if
+// the current phase uses a self-contained takeoff clip.
+function _playJumpLand(baseVolume, x, y) {
+  const list = _jumpLandPoolForPhase();
+  if (!list || !list.length) return;
+  let idx = Math.floor(Math.random() * list.length);
+  if (idx === _lastJumpLandIdx) idx = (idx + 1) % list.length;
+  _lastJumpLandIdx = idx;
+  const url = list[idx];
+  const rate = 1 + (Math.random() * 2 - 1) * 0.06;
+  const surfaceMul = list === SFX_JUMP_WOOD_LAND ? 0.55 : 1;
+  const vol  = baseVolume * surfaceMul * (1 + (Math.random() * 2 - 1) * 0.1);
+  if (x == null) audio.play(url, vol, rate);
+  else audio.playAt(url, x, y, { volume: vol, rate, refDist: 1.8, maxDist: 18 });
+}
+
+// Per-step pitch + volume jitter on top of the pool keeps motion from feeling
+// mechanical. Rate ±8% is small enough that sprint still sounds urgent; ±15%
+// volume smooths the attack transients that give repetition away. x/y optional
+// — when omitted we play non-spatially (local player); otherwise we spatialize
+// at (x, y). Pool defaults to the current phase's surface.
+function _playFootstep(baseVolume, x, y, pool) {
+  const list = pool || _stepPoolForPhase();
+  let idx = Math.floor(Math.random() * list.length);
+  if (idx === _lastStepIdx) idx = (idx + 1) % list.length;
+  _lastStepIdx = idx;
+  const url = list[idx];
+  const rate = 1 + (Math.random() * 2 - 1) * 0.08;
+  // Concrete source recordings are quieter than the wood ones, so we bump them
+  // at the mixer layer rather than re-normalizing the files on disk.
+  const surfaceMul = list === SFX_STEP_CONCRETE ? 2.6 : 1.35;
+  const vol  = baseVolume * surfaceMul * (1 + (Math.random() * 2 - 1) * 0.15);
+  if (x == null) audio.play(url, vol, rate);
+  else audio.playAt(url, x, y, { volume: vol, rate, refDist: 1.5, maxDist: 14 });
+}
+
+// Gantz ball lobby music: looped proximity-attenuated track that kicks on when
+// the mission ready queue starts and drops when either the queue clears or the
+// pre-mission dematerialize scan fires. `_musicHandle` holds the active loop
+// from audio.startLoop; `_musicQueueWasArmed` tracks the prior-tick ready-queue
+// state so we only start/stop on edge transitions.
+let _musicHandle = null;
+let _musicQueueWasArmed = false;
+function _ensureMusicPlaying() {
+  if (_musicHandle) return;
+  _musicHandle = audio.startLoop(SFX_MUSIC, GANTZ_BALL.x, GANTZ_BALL.y, {
+    volume: 0.22,
+    refDist: 1.2,   // full volume only right up against the sphere
+    maxDist: 7.0,   // inaudible past 7m — tight bubble around Gantz
+    loop: false,    // play once through, no restart
+  });
+}
+function _stopMusic() {
+  if (!_musicHandle) return;
+  _musicHandle.stop();
+  _musicHandle = null;
+}
+
+// Weather ambience: tracks the currently-looping weather sound. Switches when
+// the player enters/leaves the lobby or when the lobby weather type changes
+// (it won't during a session — seeded once — but a peer could migrate host and
+// trigger a reseed on rejoin). Uses a very large refDist so the sound is
+// uniform everywhere in the lobby regardless of listener position.
+let _weatherHandle = null;
+let _weatherType   = null;           // currently-playing weather key
+let _lightningSeen = 0;              // last lightning-strike counter we saw
+const WEATHER_VOLUMES = { rain: 1.2, thunderstorm: 0.55, blizzard: 1.2 };
+function _syncWeatherAudio(inLobby) {
+  const wt = inLobby ? (scene3d?.getLobbyWeatherType?.() || null) : null;
+  const url = wt && SFX_WEATHER_LOOPS[wt] ? SFX_WEATHER_LOOPS[wt] : null;
+  if (url && _weatherType === wt) return;                      // already correct
+  if (_weatherHandle) { _weatherHandle.stop(); _weatherHandle = null; }
+  _weatherType = wt;
+  if (!url) return;
+  _weatherHandle = audio.startLoop(url, GANTZ_BALL.x, GANTZ_BALL.y, {
+    volume: WEATHER_VOLUMES[wt] ?? 0.55,
+    refDist: 30,    // whole lobby is within the full-volume bubble
+    maxDist: 60,
+    loop: true,
+  });
+}
+function _tickLightningAudio(inLobby) {
+  const n = scene3d?.getLightningStrikeCount?.() || 0;
+  if (n !== _lightningSeen) {
+    // Only play if the lightning strike happened while we're in the lobby —
+    // other peers' scenes still run, but the SFX is tied to seeing the flash.
+    if (inLobby && n > _lightningSeen) {
+      const url = SFX_LIGHTNING_STRIKES[(Math.random() * SFX_LIGHTNING_STRIKES.length) | 0];
+      audio.play(url, 0.75);
+    }
+    _lightningSeen = n;
+  }
+}
 const _gunFlashEl = document.getElementById('gun-flash');
 
 // ── Dynamic crosshair state ───────────────────────────────────────────────
@@ -2912,6 +3101,42 @@ let _missionStartPts = new Map();
 let _idleNextAt = -1;
 let _idleLineStart = -1;
 let _idleCurrentLines = null;
+
+// Lets the player skip Gantz's typewriter speech. Rewinds the active
+// sequence's start time far into the past so the next-frame rendering walks
+// past every line + fade and flags its completion flag normally (keeping all
+// side-effects like _gantzTalkDone transitions intact). The name prompt's
+// input/respond_wait phases are NOT skippable because they wait on the
+// player typing a name; ask and respond phases are. Briefing has its own flow.
+function _skipGantzSpeech() {
+  const FAR_PAST = performance.now() - 1e9;
+  let skipped = false;
+  if (_introStartTime !== -1 && !_introDone) {
+    _introStartTime = FAR_PAST; skipped = true;
+  }
+  if (!_gantzTalkDone && _gantzTalkLines) {
+    _gantzTalkStart = FAR_PAST; skipped = true;
+  }
+  if (!_gantzExitDone && _gantzExitStart !== -1) {
+    _gantzExitStart = FAR_PAST; skipped = true;
+  }
+  if (_idleLineStart >= 0) {
+    _idleLineStart = FAR_PAST; skipped = true;
+  }
+  if (_namePromptPhase === 'ask') {
+    _nameAskStart = FAR_PAST; skipped = true;
+  } else if (_namePromptPhase === 'respond') {
+    _nameRespondStart = FAR_PAST; skipped = true;
+  }
+  return skipped;
+}
+
+// Returns true when any skippable Gantz speech is currently rendering. Used
+// both as the skip-key gate and as the condition for drawing the hint.
+function _gantzSpeechSkippable() {
+  return _gantzSpeechPlaying;
+}
+
 function _drawBallMenu() {
   const isOpen = menu.isOpen();
   const p = session.phase;
@@ -2924,6 +3149,7 @@ function _drawBallMenu() {
   const justOpened = isOpen && !_menuWasOpenRaw;
   const justClosed = !isOpen && _menuWasOpenRaw;
   _menuWasOpenRaw = isOpen;
+  _gantzSpeechPlaying = false;
 
   if (justOpened || isBriefing || isDebrief) {
     _idleLineStart = -1;
@@ -3102,6 +3328,7 @@ function _drawBallMenu() {
           ctx.fillStyle = G; ctx.fillText('_', CX + tw / 2 + 3, cursorY);
         }
         _typeTickSound(activeLine, typing);
+        _gantzSpeechPlaying = true;
       }
       bt.needsUpdate = true;
       return;
@@ -3222,11 +3449,25 @@ function _drawBallMenu() {
       const sec    = Math.ceil(remain / 1000);
       const segW = 36, segH = 68, segT = 7;
       const segY   = S * 0.28;
-      const dOnCol  = R;
-      const dOffCol = 'rgba(180,20,40,0.10)';
+      const dOnCol  = '#ff1744';
+      const dOffCol = 'rgba(255,23,68,0.12)';
       ctx.save();
       ctx.globalAlpha *= clockAlpha;
       _draw7SegClock(ctx, sec, CX, segY, segW, segH, segT, dOnCol, dOffCol);
+
+      // ── Queued player list under clock ──
+      const queuedNames = [];
+      if (player.ready) queuedNames.push(player.username);
+      for (const pr of net.peers.values()) if (pr.ready && pr.username) queuedNames.push(pr.username);
+      const listY = segY + segH + 18;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL;
+      ctx.fillText('QUEUED', CX, listY);
+      ctx.font = `11px ${_PF}`;
+      for (let i = 0; i < queuedNames.length; i++) {
+        ctx.fillStyle = queuedNames[i] === player.username ? B : G;
+        ctx.fillText(queuedNames[i], CX, listY + 18 + i * 20);
+      }
       ctx.restore();
     }
 
@@ -3382,6 +3623,7 @@ function _drawBallMenu() {
           ctx.fillStyle = G; ctx.fillText('_', CX + tw / 2 + 3, cursorY);
         }
         _typeTickSound(activeLine, typing);
+        _gantzSpeechPlaying = true;
       }
       bt.needsUpdate = true;
       return;
@@ -3454,6 +3696,7 @@ function _drawBallMenu() {
         ctx.fillText('_', CX + tw / 2 + 3, cursorY);
       }
       _typeTickSound(activeLine, typing);
+      _gantzSpeechPlaying = true;
 
       bt.needsUpdate = true;
       return;
@@ -3523,6 +3766,7 @@ function _drawBallMenu() {
           ctx.fillText('_', CX + tw / 2 + 3, S * 0.22 + activeLine * 46);
         }
         _typeTickSound(activeLine, typing);
+        _gantzSpeechPlaying = true;
       } else {
         // Ask lines done — install key handler and transition to input
         _namePromptPhase = 'input';
@@ -3638,6 +3882,7 @@ function _drawBallMenu() {
           ctx.fillText('_', CX + tw / 2 + 3, S * 0.22 + activeLine * 46);
         }
         _typeTickSound(activeLine, typing);
+        _gantzSpeechPlaying = true;
       } else if (elapsed < t + RESP_FADE_MS) {
         // Fade out respond text
         const alpha = Math.max(0, 1 - (elapsed - t) / RESP_FADE_MS);
@@ -3697,6 +3942,7 @@ function _drawBallMenu() {
           ctx.fillStyle = G; ctx.fillText('_', CX + tw / 2 + 3, cursorY);
         }
         _typeTickSound(activeLine, typing);
+        _gantzSpeechPlaying = true;
       }
       bt.needsUpdate = true;
       return;
@@ -3713,43 +3959,34 @@ function _drawBallMenu() {
   if (countdownActive && !isOpen) {
     if (_countdownRevealAt < 0) _countdownRevealAt = performance.now();
     const cElapsed = performance.now() - _countdownRevealAt;
-    const LABEL    = 'MISSION QUEUE';
-    const CCHAR    = 40;
-    const labelChars = Math.min(LABEL.length, Math.floor(cElapsed / CCHAR));
-    const labelDone  = labelChars >= LABEL.length;
-    _typeTickSound(6000, !labelDone);
+    _typeTickSound(6000, false);
 
     const segW = 36, segH = 68, segT = 7;
     const segY = S * 0.22;
-    const offCol = 'rgba(0,180,60,0.12)';
+    const NEON_RED = '#ff1744';
+    const NEON_RED_OFF = 'rgba(255,23,68,0.12)';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.font = `10px ${_PF}`; ctx.fillStyle = labelDone ? DL : G;
-    ctx.fillText(LABEL.slice(0, labelChars), CX, segY - 24);
-    if (labelDone) {
-      const CLOCK_DELAY_MS = 1000;
-      const CLOCK_FADE_MS  = 1200;
-      const sinceLabel = cElapsed - LABEL.length * CCHAR;
-      const clockAlpha = Math.min(1, Math.max(0, (sinceLabel - CLOCK_DELAY_MS) / CLOCK_FADE_MS));
-      const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
-      ctx.save();
-      ctx.globalAlpha = clockAlpha;
-      _draw7SegClock(ctx, secs, CX, segY, segW, segH, segT, B, offCol);
+    const CLOCK_FADE_MS  = 1200;
+    const clockAlpha = Math.min(1, Math.max(0, cElapsed / CLOCK_FADE_MS));
+    const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
+    ctx.save();
+    ctx.globalAlpha = clockAlpha;
+    _draw7SegClock(ctx, secs, CX, segY, segW, segH, segT, NEON_RED, NEON_RED_OFF);
 
-      // ── Queued player list ──
-      const queuedNames = [];
-      if (player.ready) queuedNames.push(player.username);
-      for (const pr of net.peers.values()) if (pr.ready && pr.username) queuedNames.push(pr.username);
-      const listY = segY + segH + 18;
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText('QUEUED', CX, listY);
-      ctx.font = `11px ${_PF}`;
-      for (let i = 0; i < queuedNames.length; i++) {
-        ctx.fillStyle = queuedNames[i] === player.username ? B : G;
-        ctx.fillText(queuedNames[i], CX, listY + 18 + i * 20);
-      }
-
-      ctx.restore();
+    // ── Queued player list ──
+    const queuedNames = [];
+    if (player.ready) queuedNames.push(player.username);
+    for (const pr of net.peers.values()) if (pr.ready && pr.username) queuedNames.push(pr.username);
+    const listY = segY + segH + 18;
+    ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText('QUEUED', CX, listY);
+    ctx.font = `11px ${_PF}`;
+    for (let i = 0; i < queuedNames.length; i++) {
+      ctx.fillStyle = queuedNames[i] === player.username ? B : G;
+      ctx.fillText(queuedNames[i], CX, listY + 18 + i * 20);
     }
+
+    ctx.restore();
     bt.needsUpdate = true;
     return;
   }
@@ -3794,10 +4031,8 @@ function _drawBallMenu() {
     // Queue countdown + names shown above buttons when countdown is running
     if (showQueue) {
       const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
-      ctx.font = `10px ${_PF}`; ctx.fillStyle = DL; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText('MISSION QUEUE', CX, y);
-      y += 20;
-      ctx.font = `22px ${_PF}`; ctx.fillStyle = B;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = `22px ${_PF}`; ctx.fillStyle = '#ff1744';
       ctx.fillText(String(secs), CX, y);
       y += 36;
       ctx.font = `9px ${_PF}`; ctx.fillStyle = DL;
@@ -4045,6 +4280,7 @@ addEventListener('keydown', (e) => {
       opts.source = { x: player.x, y: 8, z: player.y };
     }
     scene3d.startTransferScan?.('__player__', opts);
+    audio.play(SFX_SCAN, 0.7);
     console.log('[transferScan] F8', type, opts);
   }
 }, true);
@@ -4595,9 +4831,13 @@ net.onHit((msg) => {
 
 net.onKill((msg) => {
   if (msg.kind === 'alienKilled') {
-    // Spawn gib burst on every peer at the authoritative death position.
+    // Spawn gib burst at the authoritative death position — but only for
+    // peers that are actually in the mission. A lobby spectator should never
+    // see blood spray from the ongoing hunt (nor hear it — the kill SFX is
+    // gated the same way via localIsParticipant / phase checks below).
     const dead = aliens.find(a => a.id === msg.alienId);
-    if (dead && scene3d.spawnGibs) {
+    const inMissionLocally = session.phase === Phase.MISSION && localIsParticipant();
+    if (dead && inMissionLocally && scene3d.spawnGibs) {
       scene3d.spawnGibs(dead.x, dead.y, {
         power: dead.archetype === 'boss' ? 1.7 : dead.archetype === 'brute' ? 1.3 : 1,
         count: dead.archetype === 'boss' ? 48 : dead.archetype === 'brute' ? 36 : 28,
@@ -4678,6 +4918,7 @@ function _triggerTransferScan(type, opts = {}) {
     }
   }
   scene3d.startTransferScan?.('__player__', scanOpts);
+  audio.play(SFX_SCAN, 0.7);
 
   // Compact pose-sized descriptor. `k: 'b'` = ball source (sx,sy,sz,sr).
   // `k: 'p'` = point source (sx,sy,sz). Date.now() is shared across peers so
@@ -4920,6 +5161,9 @@ function hostPickMissionDuration() {
 }
 
 function hostStartMission(nowMs) {
+  // Re-collect participants right before the teleport so join/leave queue
+  // actions taken during briefing apply to the actual mission roster.
+  session.participants = collectParticipants();
   session.missionEndsAt = nowMs + hostPickMissionDuration();
   session.phase = Phase.MISSION;
   session.version += 1;
@@ -5014,6 +5258,18 @@ function hostTick(nowMs) {
       hostReturnToLobby(nowMs);
     }
   } else if (p === Phase.BRIEFING) {
+    // If everyone has left the queue during briefing, cancel and return to lobby.
+    const anyReady = player.ready || [...net.peers.values()].some(pr => pr.ready);
+    if (!anyReady && session.scanPhase !== 'pre-mission') {
+      session.phase = Phase.LOBBY;
+      session.briefingEndsAt = 0;
+      session.readyCountdownEnd = -1;
+      session.participants = [];
+      session.version += 1;
+      enterPhase(Phase.LOBBY);
+      broadcastSession();
+      return;
+    }
     if (nowMs >= session.briefingEndsAt) {
       // Gate the teleport on a dematerialize scan. First crossing: open the
       // gate and broadcast so every peer fires its local scan. Second crossing:
@@ -5209,7 +5465,7 @@ net.onHostChange((hostId) => {
 });
 net.onPeerLeave((id, peer) => {
   const name = peer?.username;
-  if (name) chat.addSystem(`${name} has left the game.`);
+  if (name) chat.addSystem(`Data corrupted. ${name} has been erased.`);
   _remoteFirstSeen.delete(id);
   _remoteSawScan.delete(id);
   _remoteScansFired.delete(id);
@@ -5259,8 +5515,13 @@ function updateWorldHtmlOverlays() {
     const d = Math.hypot(player.x - GANTZ_BALL.x, player.y - GANTZ_BALL.y);
     const gantzTalking = (_introStartTime !== -1 && !_introDone) || (_namePromptPhase !== 'idle' && !_namePromptDone) || (!_gantzTalkDone && !!_gantzTalkLines) || (!_gantzExitDone && _gantzExitStart !== -1);
     const countdownActive = session.readyCountdownEnd >= 0 && session.phase !== Phase.BRIEFING && session.phase !== Phase.MISSION;
+    const briefingActive = session.phase === Phase.BRIEFING;
+    const queueToggleActive = countdownActive || briefingActive;
     const nearBall = d < INTERACT_RADIUS && !menu.isOpen() && !gantzTalking;
-    if (nearBall && countdownActive) {
+    if (d < INTERACT_RADIUS && _gantzSpeechSkippable()) {
+      gantzPromptEl.textContent = '[E] Skip';
+      gantzPromptEl.style.display = 'block';
+    } else if (nearBall && queueToggleActive) {
       gantzPromptEl.textContent = player.ready ? '[E] Leave Queue' : '[E] Join Queue';
       gantzPromptEl.style.display = 'block';
     } else {
@@ -5979,7 +6240,12 @@ function update(dt) {
     // entry). Only mark as fired on success so we retry next frame instead of
     // silently dropping the scan.
     const ok = scene3d.startTransferScan?.(peerId, opts);
-    if (ok) _remoteScansFired.set(peerId, s.t);
+    if (ok) {
+      _remoteScansFired.set(peerId, s.t);
+      const px = peer?.x ?? player.x;
+      const py = peer?.y ?? player.y;
+      audio.playAt(SFX_SCAN, px, py, { volume: 0.7 });
+    }
   }
 
   // Stage 3b: react to scan-phase transitions once per gate open. The host's
@@ -5992,6 +6258,10 @@ function update(dt) {
       _triggerTransferScan('dematerialize', {
         sourceBall: { x: GANTZ_BALL.x, y: 1.2, z: GANTZ_BALL.y, r: GANTZ_BALL.radius },
       });
+      // Stop the ball music a beat after the scan finishes — the scan default
+      // is 2.5s; we give the audio a small extra tail so the silence lands as
+      // the player has fully disappeared, not mid-beam.
+      setTimeout(_stopMusic, 2700);
     } else if (session.scanPhase === 'post-mission' && localIsParticipant()) {
       // Dematerialize out of the field from an overhead satellite beam.
       _triggerTransferScan('dematerialize', {
@@ -6007,7 +6277,7 @@ function update(dt) {
   for (const [id, p] of net.peers) {
     if (p.username && !_announcedPeers.has(id)) {
       _announcedPeers.add(id);
-      chat.addSystem(`${p.username} has entered the game.`);
+      chat.addSystem(`Biological data localized. Reconstructing ${p.username}...`);
     }
   }
 
@@ -6064,9 +6334,20 @@ function update(dt) {
     player.facing += excess * Math.min(1, dt * 6);
   }
   if (moving) {
+    const _prevBob = bobPhase;
     player.walkPhase += dt * (sprinting ? 14 : walking ? 6 : 9);
     bobPhase += dt * (sprinting ? 16 : walking ? 7 : 10);
     bob = Math.abs(Math.sin(bobPhase)) * (sprinting ? 0.055 : walking ? 0.02 : 0.035);
+    // Footstep trigger: bob = |sin(bobPhase)| returns to 0 every π radians,
+    // which is when a foot plants. Fire a step SFX each time the floor(φ/π)
+    // bucket increments — one per foot. _playFootstep picks a sample from the
+    // phase-appropriate pool (wood for lobby/briefing/debrief, concrete for
+    // mission) and applies per-step pitch/volume jitter. Suppressed while
+    // airborne so the jump clip isn't layered with stride samples.
+    if (jumpY === 0
+        && Math.floor(bobPhase / Math.PI) !== Math.floor(_prevBob / Math.PI)) {
+      _playFootstep(sprinting ? 0.55 : walking ? 0.3 : 0.45);
+    }
   } else {
     player.walkPhase *= Math.pow(0.05, dt);
     bobPhase *= Math.pow(0.05, dt);
@@ -6077,6 +6358,7 @@ function update(dt) {
   if (wasPressed(' ') && jumpY === 0 && player.alive) {
     jumpVY = JUMP_SPEED;
     jumpId++;
+    _playJump(0.7);
     jumpMoveFwd  = moveFwd;
     jumpMoveSide = moveSide;
   }
@@ -6085,6 +6367,13 @@ function update(dt) {
     jumpY = Math.max(0, jumpY + jumpVY * dt);
     if (jumpY === 0) jumpVY = 0;
   }
+  // Landing detection: fire the surface's land SFX on the airborne→grounded
+  // transition. No-ops for surfaces whose takeoff clip already includes the
+  // landing thud (wood).
+  if (_prevJumpY > 0 && jumpY === 0) {
+    _playJumpLand(0.7);
+  }
+  _prevJumpY = jumpY;
 
   if (session.phase === Phase.MISSION) {
     // Civilians are host-authoritative (see broadcastCivs / net.onCivs). Non-host
@@ -6173,13 +6462,17 @@ function update(dt) {
       }
 
       tickMarked(aliens, dt, (alien) => {
-        // alien died: spawn gib explosion at their last position, award points
+        // alien died: spawn gib explosion at their last position, award points.
+        // Only draw the burst locally if we're in the mission — the host may
+        // be spectating from the lobby and shouldn't see the gore.
         const arch = ARCHETYPES[alien.archetype];
-        scene3d.spawnGibs?.(alien.x, alien.y, {
-          power: alien.archetype === 'boss' ? 1.7 : alien.archetype === 'brute' ? 1.3 : 1,
-          count: alien.archetype === 'boss' ? 48 : alien.archetype === 'brute' ? 36 : 28,
-          centerY: (alien.radius || 0.55) * 1.8,
-        });
+        if (session.phase === Phase.MISSION && localIsParticipant()) {
+          scene3d.spawnGibs?.(alien.x, alien.y, {
+            power: alien.archetype === 'boss' ? 1.7 : alien.archetype === 'brute' ? 1.3 : 1,
+            count: alien.archetype === 'boss' ? 48 : alien.archetype === 'brute' ? 36 : 28,
+            centerY: (alien.radius || 0.55) * 1.8,
+          });
+        }
         const points = alien._pointsReward || arch.points || ALIEN_KILL_POINTS_DEFAULT;
         net.sendKill({
           kind: 'alienKilled',
@@ -6343,10 +6636,16 @@ function update(dt) {
     const dBall = Math.hypot(player.x - GANTZ_BALL.x, player.y - GANTZ_BALL.y);
     const gantzTalking = (_introStartTime !== -1 && !_introDone) || (_namePromptPhase !== 'idle' && !_namePromptDone) || (!_gantzTalkDone && !!_gantzTalkLines) || (!_gantzExitDone && _gantzExitStart !== -1);
     const _countdownNow = session.readyCountdownEnd >= 0 && session.phase !== Phase.BRIEFING && session.phase !== Phase.MISSION;
-    const _canInteract = !player.ready || _countdownNow; // ready players can still open menu during countdown to leave queue
-    if (dBall < INTERACT_RADIUS && wasPressed('e') && !menu.isOpen() && !chat.isOpen?.() && !gantzTalking && _canInteract && performance.now() - _menuClosedAt > 250) {
-      if (_countdownNow) {
-        // During the countdown, pressing E toggles the queue directly — no menu needed.
+    const _briefingNow = session.phase === Phase.BRIEFING;
+    // Queue toggle is available during the ready-countdown and during briefing —
+    // players can change their mind right up until the mission teleport fires.
+    const _queueToggleNow = _countdownNow || _briefingNow;
+    const _canInteract = !player.ready || _queueToggleNow;
+    if (dBall < INTERACT_RADIUS && wasPressed('e') && !chat.isOpen?.() && _gantzSpeechSkippable()) {
+      _skipGantzSpeech();
+    } else if (dBall < INTERACT_RADIUS && wasPressed('e') && !menu.isOpen() && !chat.isOpen?.() && !gantzTalking && _canInteract && performance.now() - _menuClosedAt > 250) {
+      if (_queueToggleNow) {
+        // During the countdown or briefing, pressing E toggles the queue directly.
         player.ready = !player.ready;
         if (!player.ready) player.afkReady = false;
         net.broadcastPose();
@@ -6576,6 +6875,69 @@ function render(dt, alpha = 1) {
   // Update the proximity-audio listener so every sound this frame attenuates
   // / pans relative to the local player's current position + facing.
   audio.setListener(player.x, player.y, yaw);
+
+  // Remote-peer footsteps: detect when any peer's walkPhase crosses a new
+  // π-bucket (one per foot) and play a positional step SFX at their spot.
+  // Gated on sameZoneAsLocal so lobby spectators don't hear mission steps
+  // and vice versa, and on the local surface phase being lobby-side (we
+  // don't have mission surface SFX yet).
+  {
+    for (const [peerId, peer] of net.peers) {
+      if (!peer) continue;
+      if (peer.x == null || peer.y == null) continue;
+      if (!sameZoneAsLocal(peerId)) continue;
+      const wp = peer.walkPhase || 0;
+      const bucket = Math.floor(wp / Math.PI);
+      const prev = _peerStepBucket.get(peerId);
+      const airborne = (peer.jumpY || 0) > 0;
+      if (!airborne && prev != null && bucket !== prev) {
+        _playFootstep(0.4, peer.x, peer.y);
+      }
+      _peerStepBucket.set(peerId, bucket);
+
+      const jid = peer.jumpId || 0;
+      const pjid = _peerJumpId.get(peerId);
+      if (pjid != null && jid > pjid) {
+        _playJump(0.5, peer.x, peer.y);
+      }
+      _peerJumpId.set(peerId, jid);
+
+      const wasAirborne = _peerAirborne.get(peerId) === true;
+      const isAirborne = (peer.jumpY || 0) > 0;
+      if (wasAirborne && !isAirborne) {
+        _playJumpLand(0.5, peer.x, peer.y);
+      }
+      _peerAirborne.set(peerId, isAirborne);
+    }
+  }
+
+  // Gantz ball music state machine. Music starts when a mission ready queue
+  // is running (LOBBY/DEBRIEF with readyCountdownEnd >= 0). It stops when the
+  // queue empties without a mission start; the pre-mission scan branch above
+  // handles stopping when players ARE sent away. Phase has to include BRIEFING
+  // because readyCountdownEnd is cleared the instant briefing begins — we
+  // keep the music alive through briefing until the dematerialize fires.
+  const _queueInLobbyPhase = session.phase === Phase.LOBBY
+                          || session.phase === Phase.DEBRIEF;
+  const _queueArmed = _queueInLobbyPhase && session.readyCountdownEnd >= 0;
+  if (_queueArmed && !_musicQueueWasArmed) {
+    _ensureMusicPlaying();
+  } else if (!_queueArmed && _musicQueueWasArmed) {
+    // Only stop here when the queue cleared while still in the lobby. When the
+    // queue drops because we advanced to BRIEFING/MISSION, the pre-mission
+    // scan path (above) is in charge of stopping the music instead.
+    if (_queueInLobbyPhase) _stopMusic();
+  }
+  _musicQueueWasArmed = _queueArmed;
+
+  // Weather ambience — ties the loop to physical presence in the lobby scene
+  // (non-participants during MISSION still hear lobby weather).
+  const _inLobbyForAudio = session.phase === Phase.LOBBY
+                        || session.phase === Phase.DEBRIEF
+                        || session.phase === Phase.BRIEFING
+                        || (session.phase === Phase.MISSION && !localIsParticipant());
+  _syncWeatherAudio(_inLobbyForAudio);
+  _tickLightningAudio(_inLobbyForAudio);
 
   // Draw menu content onto the ball surface canvas
   _drawBallMenu();

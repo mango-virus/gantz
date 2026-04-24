@@ -252,7 +252,7 @@ function _patchMaterial(mat, scanUniforms) {
     shader.uniforms.uScanCapThickness = scanUniforms.uScanCapThickness;
     shader.uniforms.uScanTrailOffset  = scanUniforms.uScanTrailOffset;
     shader.uniforms.uScanCapTex       = scanUniforms.uScanCapTex;
-    shader.uniforms.uScanFiberTex   = scanUniforms.uScanFiberTex;
+    shader.uniforms.uScanFiberTex     = scanUniforms.uScanFiberTex;
 
     shader.vertexShader = VERT_VARYING_DECL + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
@@ -315,7 +315,7 @@ function _attach(entry) {
 // the target (wider, covering the print line) and `radiusBottom` is at the
 // source (thin, at the Gantz sphere). Per-ray aim is recomputed each frame in
 // `_updateRayFanTransform` so the beams chase the clip-plane intersection.
-function _buildRayFan(sourceVec3) {
+function _buildRayFan(sourceVec3, withEmitter) {
   const group = new THREE.Group();
   const material = new THREE.MeshBasicMaterial({
     color: EDGE_COLOR,
@@ -342,6 +342,42 @@ function _buildRayFan(sourceVec3) {
     };
     mesh.renderOrder = 999;
     group.add(mesh);
+  }
+
+  // Bright emitter glow at the sphere-surface origin — a tiny additive sphere
+  // so the beams read as spawning from a single point on Gantz. Inner core is
+  // near-white; outer halo softens the edge. Only built for ball-surface
+  // sources; fixed-point (overhead satellite) scans skip this.
+  if (withEmitter) {
+    const emitterGroup = new THREE.Group();
+    const coreGeom = new THREE.SphereGeometry(0.028, 12, 10);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#d8f5ff'),
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const core = new THREE.Mesh(coreGeom, coreMat);
+    core.renderOrder = 1000;
+    emitterGroup.add(core);
+
+    const haloGeom = new THREE.SphereGeometry(0.075, 14, 12);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: EDGE_COLOR,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const halo = new THREE.Mesh(haloGeom, haloMat);
+    halo.renderOrder = 1000;
+    emitterGroup.add(halo);
+
+    group.userData.emitter = { group: emitterGroup, core, halo, coreGeom, coreMat, haloGeom, haloMat };
+    group.add(emitterGroup);
   }
   return group;
 }
@@ -424,12 +460,30 @@ function _updateRayFanOpacity(rays, t) {
   let k = 1;
   if (t < RAY_FADE_FRAC) k = t / RAY_FADE_FRAC;
   else if (t > 1 - RAY_FADE_FRAC) k = (1 - t) / RAY_FADE_FRAC;
-  mat.opacity = Math.max(0, Math.min(1, k)) * RAY_PEAK_OPACITY;
+  const fade = Math.max(0, Math.min(1, k));
+  mat.opacity = fade * RAY_PEAK_OPACITY;
+
+  const emitter = rays.userData.emitter;
+  if (emitter) {
+    // Core stays mostly solid so the point reads bright; halo bloom wider.
+    emitter.coreMat.opacity = fade;
+    emitter.haloMat.opacity = fade * 0.55;
+    // Subtle pulse so the point doesn't sit dead-still.
+    const pulse = 0.92 + 0.08 * Math.sin(performance.now() * 0.018);
+    emitter.group.scale.setScalar(pulse);
+  }
 }
 
 function _disposeRayFan(rays) {
   rays.userData.geometry?.dispose?.();
   rays.userData.material?.dispose?.();
+  const emitter = rays.userData.emitter;
+  if (emitter) {
+    emitter.coreGeom.dispose();
+    emitter.coreMat.dispose();
+    emitter.haloGeom.dispose();
+    emitter.haloMat.dispose();
+  }
   rays.parent?.remove(rays);
 }
 
@@ -497,7 +551,7 @@ export function createScanController(scene) {
         scan.sourceBall = null;
       }
       if (initialSource && scene) {
-        scan.rays = _buildRayFan(initialSource);
+        scan.rays = _buildRayFan(initialSource, !!opts.sourceBall);
         scene.add(scan.rays);
       }
     },
@@ -515,6 +569,7 @@ export function createScanController(scene) {
         const fromY = scan.direction > 0 ? SCAN_BOTTOM_Y : SCAN_TOP_Y;
         const toY   = scan.direction > 0 ? SCAN_TOP_Y : SCAN_BOTTOM_Y;
         scan.uniforms.uScanPlaneY.value = baseY + fromY + (toY - fromY) * t;
+
         if (scan.rays) {
           _rayTmpCenter.set(entry.group.position.x, 0, entry.group.position.z);
           const planeY = scan.uniforms.uScanPlaneY.value;
@@ -532,6 +587,8 @@ export function createScanController(scene) {
                 .addScaledVector(_rayTmpSrcDir, scan.sourceBall.radius);
             }
           }
+          const emitter = scan.rays.userData.emitter;
+          if (emitter) emitter.group.position.copy(scan.rays.userData.source);
           _updateRayFanTransform(scan.rays, _rayTmpCenter, planeY, SILHOUETTE_R, nowS - scan.startT);
           _updateRayFanOpacity(scan.rays, t);
         }

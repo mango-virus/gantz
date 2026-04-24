@@ -694,7 +694,7 @@ function _makeSkyTex(variant) {
 // Covers the full city Z spread (±260 m) so weather is visible in all pan directions.
 // Returns a Three.js Group with animation metadata in userData, or null for fog/clear.
 function _makeWeatherParticles(type, W, midZ, winSpan, STREET_Y) {
-  if (type === 'clear' || type === 'light_fog' || type === 'heavy_fog') return null;
+  if (type === 'clear' || type === 'light_fog') return null;
 
   const rng = _mkRng(0x9f4a2c1b);
   const X_MIN = W / 2 + 1.5, X_MAX = W / 2 + 50;
@@ -2477,7 +2477,6 @@ export function buildLobbyRoom(lobbySeed = 0) {
     ['day',          'clear',        6],
     ['day',          'light_fog',    2],
     ['overcast',     'light_fog',    2],
-    ['overcast',     'heavy_fog',    4],
     ['overcast',     'rain',         2],
     ['overcast',     'snow',         3],
     ['storm',        'thunderstorm', 8],
@@ -2504,7 +2503,6 @@ export function buildLobbyRoom(lobbySeed = 0) {
     rain:         { near: 180, far:  700, color: null  },
     snow:         { near: 120, far:  500, color: null  },
     light_fog:    { near:  18, far:   90, color: 0x5a6878 },
-    heavy_fog:    { near:   4, far:   22, color: 0x6e7e90 },
     blizzard:     { near:   6, far:   38, color: 0x8898b0 },
     thunderstorm: { near:  50, far:  280, color: 0x07090a },
   }[weatherType] ?? { near: 300, far: 1200, color: null };

@@ -503,6 +503,9 @@ export function createScene3d({ canvas }) {
 
   // Room switching
   let currentRoomKind = null;
+  // Increments once per lightning strike start in thunderstorm weather. Game
+  // code polls this to fire one-shot thunder SFX on the transition.
+  let _lightningStrikeCount = 0;
   let currentRoomSeed = null;
   let currentRoomGroup = null;
   const buildingMeshes = new Map();
@@ -518,6 +521,26 @@ export function createScene3d({ canvas }) {
       disposeGroup(m);
     }
     buildingMeshes.clear();
+    // Blood / gib particles are scene-level and outlive the room group, so
+    // returning to the lobby after a mission would otherwise leave splats and
+    // mist on the lobby floor. Purge them here.
+    for (const g of _gibs) {
+      scene.remove(g.mesh);
+      if (g.mesh.geometry && !g.mesh.geometry._shared) g.mesh.geometry.dispose?.();
+      g.mat?.dispose?.();
+    }
+    _gibs.length = 0;
+    for (const sp of _gibSplats) {
+      scene.remove(sp.mesh);
+      sp.mat?.dispose?.();
+    }
+    _gibSplats.length = 0;
+    // Active bullets likewise belong to the room they were fired in.
+    for (const b of bullets) {
+      scene.remove(b.mesh);
+      if (b.light) scene.remove(b.light);
+    }
+    bullets.length = 0;
   }
 
   function setRoom(kind, missionMap, lobbySeed) {
@@ -1268,7 +1291,10 @@ export function createScene3d({ canvas }) {
   function spawnGibs(x, y, opts = {}) {
     const centerY = opts.centerY != null ? opts.centerY : 1.1;
     const power = opts.power || 1;
-    const count = Math.round((opts.count || 28) * 2.2);             // denser burst
+    // Tighter explosion: slightly fewer chunks, much less outward travel so
+    // the burst reads as a focused splatter around the kill point, not a
+    // confetti cloud filling the room.
+    const count = Math.round((opts.count || 28) * 1.4);
 
     // ── Blood mist: short-lived expanding red fog at the detonation point.
     {
@@ -1289,12 +1315,12 @@ export function createScene3d({ canvas }) {
         spin: { x: 0, y: 0, z: 0 },
         grounded: true,
         isMist: true,
-        mistPeak: (1.5 + Math.random() * 0.6) * power,
+        mistPeak: (0.9 + Math.random() * 0.4) * power,
       });
     }
 
-    // ── Ground splats: three overlapping dark-red pools, persistent.
-    const splatCount = 3 + Math.floor(power * 1.5);
+    // ── Ground splats: a few overlapping dark-red pools, persistent.
+    const splatCount = 2 + Math.floor(power);
     for (let s = 0; s < splatCount; s++) {
       const mat = new THREE.MeshBasicMaterial({
         color: new THREE.Color(`hsl(${348 + Math.random() * 12}, ${70 + Math.random() * 20}%, ${10 + Math.random() * 8}%)`),
@@ -1309,7 +1335,7 @@ export function createScene3d({ canvas }) {
       const mesh = new THREE.Mesh(_gibSplatGeom, mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.rotation.z = Math.random() * Math.PI * 2;
-      const jitter = 0.55 * power;
+      const jitter = 0.28 * power;
       mesh.position.set(
         x + (Math.random() - 0.5) * jitter,
         0.012 + s * 0.003,
@@ -1319,7 +1345,7 @@ export function createScene3d({ canvas }) {
       scene.add(mesh);
       _gibSplats.push({
         mesh, mat, life: 0,
-        growTo: (0.55 + Math.random() * 0.55) * (1 + 0.5 * power),
+        growTo: (0.30 + Math.random() * 0.30) * (1 + 0.35 * power),
         ttl: 9 + Math.random() * 4,
       });
     }
@@ -1345,19 +1371,19 @@ export function createScene3d({ canvas }) {
         opacity: 1,
       });
       const mesh = new THREE.Mesh(geom, mat);
-      const jitter = 0.4;
+      const jitter = 0.22;
       mesh.position.set(
         x + (Math.random() - 0.5) * jitter,
-        centerY + (Math.random() - 0.5) * 0.6,
+        centerY + (Math.random() - 0.5) * 0.4,
         y + (Math.random() - 0.5) * jitter,
       );
       const ang = Math.random() * Math.PI * 2;
-      const speed = (4 + Math.random() * 8) * power;
-      const upBias = 4 + Math.random() * 6;
+      const speed = (1.8 + Math.random() * 3.2) * power;
+      const upBias = 2.2 + Math.random() * 2.8;
       const vx = Math.cos(ang) * speed;
       const vz = Math.sin(ang) * speed;
-      const vy = upBias + Math.random() * 3;
-      const ttl = 1.6 + Math.random() * 1.8;
+      const vy = upBias + Math.random() * 1.6;
+      const ttl = 1.1 + Math.random() * 1.2;
       const scl = 0.7 + Math.random() * 1.1;
       mesh.scale.setScalar(scl);
       mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
@@ -1799,6 +1825,7 @@ export function createScene3d({ canvas }) {
           if (wd.lightningCooldown <= 0) {
             wd.lightningFlash    = 0.09 + Math.random() * 0.10;
             wd.lightningCooldown = 1.5  + Math.random() * 7.0;
+            _lightningStrikeCount++;
             if (Math.random() < 0.45) wd.lightningDoubleDelay = 0.10 + Math.random() * 0.18;
             // Randomise strike position across the city
             const midZ = currentRoomGroup.userData._midZ ?? 0;
@@ -2591,6 +2618,14 @@ export function createScene3d({ canvas }) {
     worldToScreen,
     raycastBallDisplay,
     get ballDisplay() { return ballDisplay; },
+    // Current lobby weather key ('rain' | 'snow' | 'blizzard' | 'thunderstorm'
+    // | 'clear' | 'light_fog') while the lobby room is active;
+    // null otherwise. Used by game.js to pick the matching ambient loop.
+    getLobbyWeatherType() {
+      if (currentRoomKind !== 'lobby') return null;
+      return currentRoomGroup?.userData?.weatherType ?? null;
+    },
+    getLightningStrikeCount() { return _lightningStrikeCount; },
     resize,
     get camera() { return camera; },
     get scene() { return scene; },

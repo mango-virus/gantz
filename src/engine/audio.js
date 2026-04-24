@@ -21,6 +21,13 @@ const _pending = new Map();   // url -> Promise<AudioBuffer>
 // Listener state, updated every frame by the game loop.
 let _lx = 0, _ly = 0, _lYaw = 0;
 
+// Active looping sources (background music, ambient hum, etc). Their gains
+// recompute every frame when setListener runs. Each loop stays alive until
+// stopLoop is called, even while the audio context is suspended (pre-gesture).
+// A loop whose buffer hasn't decoded yet records `pending: true`; setListener
+// skips it until the src is wired up by the fulfilled _load promise.
+const _loops = new Set();
+
 function _getCtx() {
   if (_ctx) return _ctx;
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -51,10 +58,32 @@ async function _load(url) {
   return p;
 }
 
+function _computeProxGain(x, y, volume, refDist, maxDist) {
+  const dist = Math.hypot(x - _lx, y - _ly);
+  if (dist >= maxDist) return 0;
+  const atten = dist <= refDist ? 1 : 1 - (dist - refDist) / (maxDist - refDist);
+  return Math.max(0, Math.min(3, volume * atten));
+}
+
+function _updateLoops() {
+  for (const loop of _loops) {
+    if (loop.pending || !loop.gainNode) continue;
+    const g = _computeProxGain(loop.x, loop.y, loop.volume, loop.refDist, loop.maxDist);
+    // Short ramp so motion doesn't click.
+    const ctx = _ctx;
+    if (!ctx) continue;
+    loop.gainNode.gain.cancelScheduledValues(ctx.currentTime);
+    loop.gainNode.gain.linearRampToValueAtTime(g, ctx.currentTime + 0.06);
+  }
+}
+
 export const audio = {
   preload(urls) { for (const u of urls) _load(u); },
 
-  setListener(x, y, yaw) { _lx = x; _ly = y; _lYaw = yaw || 0; },
+  setListener(x, y, yaw) {
+    _lx = x; _ly = y; _lYaw = yaw || 0;
+    if (_loops.size > 0) _updateLoops();
+  },
 
   // Play a non-spatial sound (UI click, menu open, etc.).
   play(url, volume = 1, rate = 1) {
@@ -65,7 +94,7 @@ export const audio = {
       src.buffer = buf;
       src.playbackRate.value = rate;
       const g = ctx.createGain();
-      g.gain.value = Math.max(0, Math.min(1, volume));
+      g.gain.value = Math.max(0, Math.min(3, volume));
       src.connect(g).connect(ctx.destination);
       src.start(0);
     });
@@ -88,7 +117,7 @@ export const audio = {
     const atten = dist <= refDist
       ? 1
       : 1 - (dist - refDist) / (maxDist - refDist);
-    const vol = Math.max(0, Math.min(1, volume * atten));
+    const vol = Math.max(0, Math.min(3, volume * atten));
     if (vol <= 0.001) return;
 
     // Stereo pan: project the source direction onto the listener's right-axis.
@@ -121,5 +150,47 @@ export const audio = {
       }
       src.start(0);
     });
+  },
+
+  // Start a looped proximity-attenuated sound at a fixed world point. Returns
+  // a handle whose .setPosition(x, y) can be called if the source should move,
+  // and .stop() tears it down. Gain updates automatically every setListener.
+  startLoop(url, x, y, opts = {}) {
+    const ctx = _getCtx();
+    const volume  = opts.volume  != null ? opts.volume  : 1;
+    const refDist = opts.refDist != null ? opts.refDist : 2;
+    const maxDist = opts.maxDist != null ? opts.maxDist : 45;
+    const loop = {
+      url, x, y, volume, refDist, maxDist,
+      pending: true,
+      src: null,
+      gainNode: null,
+      stopped: false,
+      setPosition(nx, ny) { loop.x = nx; loop.y = ny; },
+      stop() {
+        if (loop.stopped) return;
+        loop.stopped = true;
+        _loops.delete(loop);
+        if (loop.src) { try { loop.src.stop(); } catch (_) {} }
+        if (loop.gainNode) { try { loop.gainNode.disconnect(); } catch (_) {} }
+      },
+    };
+    _loops.add(loop);
+    if (!ctx) return loop; // no audio: keep handle API stable, noop behaviour
+    _load(url).then(buf => {
+      if (loop.stopped || !buf) return;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = opts.loop !== false;
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      src.connect(g).connect(ctx.destination);
+      loop.src = src;
+      loop.gainNode = g;
+      loop.pending = false;
+      src.start(0);
+      _updateLoops();
+    });
+    return loop;
   },
 };
