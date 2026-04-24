@@ -38,11 +38,18 @@ html, body {
   line-height: 1.4;
 }
 
+/* When the new Gantz HUD is active (mission), hide the legacy HUD to avoid
+   stacking two identity/phase panels in the top-left. */
+#gz-hud[data-active="1"] ~ #hud,
+body:has(#gz-hud[data-active="1"]) #hud {
+  display: none;
+}
+
 #username {
   font-weight: 700;
-  color: var(--accent);
+  color: #00e05a;
   font-size: 1rem;
-  text-shadow: 0 0 10px rgba(200,20,43,0.55);
+  text-shadow: 0 0 10px rgba(0, 224, 90, 0.55);
   letter-spacing: 0.06em;
 }
 
@@ -55,19 +62,6 @@ html, body {
   color: #ff6b6b;
   opacity: 1;
 }
-
-#reconnect-btn {
-  margin-top: 0.3rem;
-  background: none;
-  border: 1px solid #c8142b;
-  color: #c8142b;
-  font-size: 0.65rem;
-  padding: 0.15rem 0.4rem;
-  cursor: pointer;
-  letter-spacing: 0.05em;
-  opacity: 0.8;
-}
-#reconnect-btn:hover { opacity: 1; background: rgba(200,20,43,0.12); }
 
 #phase {
   margin-top: 0.15rem;
@@ -100,7 +94,8 @@ html, body {
    --spread is updated per-frame from game.js: bumps up when firing, decays
    smoothly back to 0 when not. Each of the four ticks is pushed outward from
    center by (base gap + --spread). */
-#crosshair {
+#crosshair { display: none !important; } /* replaced by #gz-reticle */
+#crosshair.legacy-unused {
   --spread: 0px;
   --chg: #00e05a;
   position: fixed;
@@ -174,20 +169,23 @@ html, body {
   50%      { opacity: 1; }
 }
 
-/* ── Chat box — MMORPG panel (fades after 7s inactivity) ─────────── */
+/* ── Chat box — Gantz HUD panel (fades after 7s inactivity) ─────── */
 #chat {
   position: fixed;
   bottom: 1rem;
   left: 1rem;
-  width: 400px;
+  width: 560px;
   z-index: 10;
   pointer-events: auto;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 0.80rem;
+  font-family: 'Press Start 2P', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
   line-height: 1.45;
-  background: rgba(0, 3, 10, 0.96);
-  border: 1px solid var(--g);
-  box-shadow: 0 0 28px var(--g-glow), inset 0 0 50px rgba(0,0,0,0.65);
+  letter-spacing: 0.04em;
+  background: var(--gz-panel-bg);
+  border: 1px solid var(--gz-panel-br);
+  box-shadow: 0 0 14px var(--gz-glow), inset 0 0 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(1px);
+  color: var(--gz-ink);
   opacity: 1;
   transition: opacity 1.2s ease;
 }
@@ -196,17 +194,19 @@ html, body {
   pointer-events: none;
 }
 
-/* CRT scanlines */
-#chat::after {
+/* Scanline overlay — matches .gz-panel::before */
+#chat::before {
   content: '';
   position: absolute;
   inset: 0;
   background: repeating-linear-gradient(
     0deg,
-    transparent, transparent 3px,
-    rgba(0,0,0,0.13) 3px, rgba(0,0,0,0.13) 4px
+    transparent 0, transparent 3px,
+    rgba(0, 0, 0, 0.18) 3px, rgba(0, 0, 0, 0.18) 4px
   );
   pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.45;
   z-index: 20;
 }
 
@@ -215,17 +215,18 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.28rem 0.65rem;
-  border-bottom: 1px solid var(--g-dim);
-  background: rgba(0, 35, 15, 0.5);
-  color: var(--g-bright);
-  font-size: 0.72rem;
-  letter-spacing: 0.16em;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--gz-panel-br);
+  background: rgba(0, 35, 15, 0.35);
+  color: var(--gz-green);
+  font-size: 9px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
+  text-shadow: 0 0 6px rgba(0, 224, 90, 0.5);
   position: relative;
   z-index: 1;
 }
-#chat-esc-hint { color: var(--g-dim); font-size: 0.68em; }
+#chat-esc-hint { color: var(--gz-cyan-dim); font-size: 8px; letter-spacing: 0.18em; }
 
 /* Body: log + hunters sidebar */
 #chat-body {
@@ -238,7 +239,7 @@ html, body {
 /* Scrollable message area */
 #chat-log-wrap {
   flex: 1;
-  height: 17rem;     /* ~10 message rows visible at once; scrolls beyond that */
+  height: 13.25rem;  /* ~8 message rows visible; scrolls beyond that */
   overflow-y: auto;
   pointer-events: auto;
   scrollbar-width: thin;
@@ -246,7 +247,7 @@ html, body {
 }
 #chat-log-wrap::-webkit-scrollbar { width: 4px; }
 #chat-log-wrap::-webkit-scrollbar-track { background: rgba(0,0,0,0.4); }
-#chat-log-wrap::-webkit-scrollbar-thumb { background: rgba(0,224,90,0.4); border-radius: 2px; }
+#chat-log-wrap::-webkit-scrollbar-thumb { background: rgba(0,224,90,0.4); border-radius: 0; }
 
 #chat-log {
   display: flex;
@@ -257,23 +258,24 @@ html, body {
 
 /* Individual messages */
 .chat-msg {
-  color: var(--ink);
-  padding: 0.14rem 0.35rem;
-  border-left: 2px solid var(--g-dim);
+  color: var(--gz-ink);
+  padding: 3px 6px;
+  border-left: 2px solid var(--gz-panel-br);
   word-break: break-word;
 }
 .chat-ts {
-  color: #446644;
-  font-size: 0.75em;
+  color: var(--gz-cyan-dim);
+  font-size: 8px;
+  letter-spacing: 0.08em;
   margin-right: 0.3rem;
 }
 .chat-u {
   font-weight: 700;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.06em;
 }
 .chat-msg.chat-system {
-  border-left-color: #333;
-  color: var(--g-dim);
+  border-left-color: #666;
+  color: #888;
   font-style: italic;
 }
 
@@ -283,16 +285,17 @@ html, body {
   flex-direction: column;
   width: 138px;
   min-width: 138px;
-  border-left: 1px solid var(--g-dim);
+  border-left: 1px solid var(--gz-panel-br);
 }
 #chat-hunters-hdr {
-  padding: 0.28rem 0.5rem;
-  border-bottom: 1px solid var(--g-dim);
-  color: var(--g-bright);
-  font-size: 0.70rem;
-  letter-spacing: 0.16em;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--gz-panel-br);
+  color: var(--gz-green);
+  font-size: 9px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  background: rgba(0, 35, 15, 0.5);
+  background: rgba(0, 35, 15, 0.35);
+  text-shadow: 0 0 6px rgba(0, 224, 90, 0.5);
 }
 #chat-hunters-list {
   flex: 1;
@@ -329,37 +332,39 @@ html, body {
   margin: 0;
   display: none;
   flex-direction: row;
-  border-top: 1px solid var(--g-dim);
+  border-top: 1px solid var(--gz-panel-br);
   position: relative;
   z-index: 1;
 }
 #chat-input {
   flex: 1;
-  background: rgba(0, 8, 4, 0.97);
+  background: rgba(0, 8, 4, 0.9);
   border: none;
-  border-right: 1px solid var(--g-dim);
-  color: var(--g);
+  border-right: 1px solid var(--gz-panel-br);
+  color: var(--gz-green);
   font-family: inherit;
-  font-size: 0.78rem;
-  padding: 0.38rem 0.6rem;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding: 8px 10px;
   outline: none;
-  caret-color: var(--g);
+  caret-color: var(--gz-green);
 }
-#chat-input::placeholder { color: var(--g-dim); opacity: 1; }
-#chat-input:focus        { background: rgba(0, 14, 7, 0.97); }
+#chat-input::placeholder { color: var(--gz-cyan-dim); opacity: 1; letter-spacing: 0.12em; }
+#chat-input:focus        { background: rgba(0, 14, 7, 0.95); }
 #chat-send-btn {
   background: transparent;
   border: none;
-  color: var(--g);
+  color: var(--gz-green);
   font-family: inherit;
-  font-size: 0.70rem;
-  letter-spacing: 0.14em;
-  padding: 0.38rem 0.75rem;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  padding: 8px 12px;
   cursor: pointer;
   text-transform: uppercase;
+  text-shadow: 0 0 6px rgba(0, 224, 90, 0.5);
   transition: background 80ms, color 80ms;
 }
-#chat-send-btn:hover { background: var(--g); color: #000; }
+#chat-send-btn:hover { background: var(--gz-green); color: #000; text-shadow: none; }
 
 
 /* ── Gantz menu — CRT terminal aesthetic ─────────────────────────── */
@@ -733,8 +738,9 @@ html, body {
 
 .po-count .dim { opacity: 0.5; }
 
-/* Mission HUD (top center) */
-#mission-hud {
+/* Legacy mission HUD — fully replaced by #gz-hud */
+#mission-hud { display: none !important; }
+#mission-hud.legacy-unused {
   position: fixed;
   top: 0.75rem;
   left: 50%;
@@ -847,3 +853,606 @@ html, body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ─── Gantz Neural HUD ──────────────────────────────────────────────
+   Layout: five anchor zones (tl / tc / tr / bl / br) + center reticle.
+   Mode swap via `#gz-hud[data-view="fps" | "tps"]`.
+   Active gate via `#gz-hud[data-active="1"]` (set during MISSION).
+   Palette: cold cyan + Gantz red, on near-black, with phosphor green
+   for radar + civilian warning.                                       */
+:root {
+  --gz-ink:      #d6f2ff;
+  --gz-cyan:     #6ff0ff;
+  --gz-cyan-dim: #2a6c80;
+  --gz-cyan-bg:  rgba(20, 40, 56, 0.55);
+  --gz-red:      #ff2040;
+  --gz-red-dim:  #5a0b15;
+  --gz-amber:    #ffb040;
+  --gz-green:    #00e05a;
+  --gz-gold:     #ffd858;
+  --gz-panel-bg: rgba(3, 6, 12, 0.72);
+  --gz-panel-br: #00e05a;
+  --gz-glow:     rgba(0, 224, 90, 0.25);
+}
+
+#gz-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  font-family: 'Press Start 2P', ui-monospace, Menlo, Consolas, monospace;
+  color: var(--gz-ink);
+  opacity: 1;
+  transition: opacity 240ms ease;
+}
+
+/* Active gate hides every element individually (not just the container)
+   so the pre-mission frame doesn't flash any HUD. The reticle is exempt —
+   it stays visible in the lobby so the player still has a crosshair. */
+#gz-hud[data-active="0"] .gz-panel,
+#gz-hud[data-active="0"] .gz-visor,
+#gz-hud[data-active="0"] .gz-screen-flash,
+#gz-hud[data-active="0"] .gz-screen-edge,
+#gz-hud[data-active="0"] .gz-world-badges { opacity: 0 !important; }
+
+#gz-visor-filter {
+  position: fixed;
+  inset: 0;
+  width: 0; height: 0;
+  pointer-events: none;
+}
+
+/* ── FPS visor chrome ─────────────────────────────────────────── */
+.gz-visor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 280ms ease;
+}
+#gz-hud[data-view="fps"] .gz-visor { opacity: 1; }
+.gz-vignette {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 10, 20, 0.55) 100%),
+    radial-gradient(ellipse at center, rgba(111, 240, 255, 0.02) 50%, transparent 75%);
+}
+.gz-scanlines {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0, transparent 2px,
+    rgba(0, 0, 0, 0.22) 2px, rgba(0, 0, 0, 0.22) 3px
+  );
+  mix-blend-mode: multiply;
+  opacity: 0.55;
+}
+.gz-corner {
+  position: absolute;
+  width: 28px; height: 28px;
+  border: 1px solid var(--gz-cyan);
+  opacity: 0.55;
+  box-shadow: 0 0 6px var(--gz-glow);
+}
+.gz-tl { top: 14px;    left: 14px;    border-right: none; border-bottom: none; }
+.gz-tr { top: 14px;    right: 14px;   border-left: none;  border-bottom: none; }
+.gz-bl { bottom: 14px; left: 14px;    border-right: none; border-top: none; }
+.gz-br { bottom: 14px; right: 14px;   border-left: none;  border-top: none; }
+#gz-hud[data-view="tps"] .gz-corner { opacity: 0.18; }
+
+/* ── Panel base ──────────────────────────────────────────────── */
+.gz-panel {
+  position: absolute;
+  background: var(--gz-panel-bg);
+  border: 1px solid var(--gz-panel-br);
+  padding: 8px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.55), inset 0 0 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(1px);
+  transition: left 380ms cubic-bezier(.22,1,.36,1),
+              right 380ms cubic-bezier(.22,1,.36,1),
+              top 380ms cubic-bezier(.22,1,.36,1),
+              bottom 380ms cubic-bezier(.22,1,.36,1),
+              transform 380ms cubic-bezier(.22,1,.36,1),
+              opacity 240ms ease;
+}
+.gz-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0, transparent 3px,
+    rgba(0, 0, 0, 0.18) 3px, rgba(0, 0, 0, 0.18) 4px
+  );
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.45;
+}
+
+/* ── Zone anchors: FPS (tight) vs TPS (corner-hugging) ────────── */
+#gz-hud[data-view="fps"] [data-zone="tl"] { top: 1.2rem;  left: 1.2rem; }
+#gz-hud[data-view="fps"] [data-zone="tc"] { top: 1.0rem;  left: 50%; transform: translateX(-50%); }
+#gz-hud[data-view="fps"] [data-zone="tr"] { top: 1.2rem;  right: 1.2rem; }
+#gz-hud[data-view="fps"] [data-zone="bl"] { bottom: 1.2rem; left: 1.2rem; transition: bottom 1.2s ease; }
+#gz-hud[data-view="fps"] [data-zone="br"] { bottom: 1.2rem; right: 1.2rem; }
+
+#gz-hud[data-view="tps"] [data-zone="tl"] { top: 0.6rem;  left: 0.6rem; }
+#gz-hud[data-view="tps"] [data-zone="tc"] { top: 0.5rem;  left: 50%; transform: translateX(-50%); }
+#gz-hud[data-view="tps"] [data-zone="tr"] { top: 0.6rem;  right: 0.6rem; }
+#gz-hud[data-view="tps"] [data-zone="bl"] { bottom: 0.6rem; left: 0.6rem; transition: bottom 1.2s ease; }
+#gz-hud[data-view="tps"] [data-zone="br"] { bottom: 0.6rem; right: 0.6rem; }
+
+/* Lift bottom-left HUD zone (alien dossier) above the chat box while chat is visible. */
+#chat:not(.chat-faded) ~ #gz-hud[data-view="fps"] [data-zone="bl"] { bottom: calc(1.2rem + 250px); }
+#chat:not(.chat-faded) ~ #gz-hud[data-view="tps"] [data-zone="bl"] { bottom: calc(0.6rem + 250px); }
+
+/* ── Identity panel (tl) ──────────────────────────────────────── */
+.gz-ident { min-width: 160px; }
+.gz-ident-name {
+  color: #00e05a;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 8px rgba(0, 224, 90, 0.5);
+}
+.gz-ident-phase {
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  color: var(--gz-cyan-dim);
+  margin-top: 4px;
+}
+.gz-ident-peers {
+  font-size: 9px;
+  color: var(--gz-cyan);
+  opacity: 0.65;
+  margin-top: 3px;
+}
+
+/* ── Chrono (tc) ──────────────────────────────────────────────── */
+.gz-chrono {
+  text-align: center;
+  border-color: #00e05a;
+  box-shadow: 0 0 14px rgba(0, 224, 90, 0.25), inset 0 0 30px rgba(0, 0, 0, 0.5);
+}
+.gz-chrono-head {
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: #00e05a;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+}
+.gz-chrono-glyph { color: #00e05a; }
+.gz-chrono-modifier {
+  margin-left: 10px;
+  color: var(--gz-amber);
+  letter-spacing: 0.2em;
+}
+.gz-chrono-time {
+  margin-top: 4px;
+  font-size: 28px;
+  color: var(--gz-ink);
+  letter-spacing: 0.12em;
+  text-shadow: 0 0 12px var(--gz-glow);
+  font-weight: 900;
+}
+.gz-chrono-centi {
+  font-size: 40%;
+  color: var(--gz-cyan);
+  margin-left: 4px;
+  opacity: 0.85;
+}
+.gz-chrono.warn .gz-chrono-time { color: var(--gz-amber); text-shadow: 0 0 14px rgba(255, 176, 64, 0.5); }
+.gz-chrono.crit .gz-chrono-time {
+  color: var(--gz-red);
+  text-shadow: 0 0 18px rgba(255, 32, 64, 0.7);
+  animation: gzChronoPulse 520ms ease-in-out infinite;
+}
+@keyframes gzChronoPulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.04); filter: brightness(1.35); }
+}
+.gz-chrono-digits.jitter { animation: gzDigitJitter 80ms steps(2, end); }
+@keyframes gzDigitJitter {
+  0%   { transform: translateY(0); }
+  40%  { transform: translateY(-2px); filter: invert(1); }
+  100% { transform: translateY(0); }
+}
+
+/* CRIT full-screen edge border when chrono is red */
+#gz-hud.crit-edge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--gz-red);
+  box-shadow: inset 0 0 30px rgba(255, 32, 64, 0.4);
+  pointer-events: none;
+  animation: gzCritEdge 520ms ease-in-out infinite;
+}
+@keyframes gzCritEdge {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+/* ── Transmission banner (under chrono) ───────────────────────── */
+.gz-tx {
+  display: none;
+  margin-top: 6px;
+  min-width: 320px;
+  max-width: 560px;
+  padding: 6px 8px;
+  background: rgba(3, 6, 12, 0.92);
+  border: 1px solid var(--gz-red);
+  box-shadow: 0 0 20px rgba(255, 32, 64, 0.3);
+  text-align: left;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+}
+.gz-tx.show { display: block; opacity: 1; transform: translateY(0); }
+.gz-tx.glitch { animation: gzTxGlitch 80ms steps(2, end); }
+@keyframes gzTxGlitch {
+  0%   { transform: translate(0, 0); filter: hue-rotate(0deg); }
+  50%  { transform: translate(-2px, 1px); filter: hue-rotate(30deg) saturate(1.5); }
+  100% { transform: translate(0, 0); }
+}
+.gz-tx-head {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--gz-red);
+  opacity: 0.85;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+.gz-tx-id { color: #007030; font-size: 8px; }
+.gz-tx-body {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #a0ffcc;
+  white-space: pre-wrap;
+  text-shadow: 0 0 6px rgba(255, 32, 64, 0.4);
+}
+.gz-tx-body::after {
+  content: '▌';
+  color: var(--gz-red);
+  animation: gzCursor 0.6s step-end infinite;
+  margin-left: 2px;
+}
+.gz-tx.done .gz-tx-body::after { content: ''; }
+@keyframes gzCursor { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+
+/* ── Target Dossier (tr) ──────────────────────────────────────── */
+.gz-dossier { width: 150px; padding: 6px 8px 8px; }
+.gz-dossier-head {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--gz-red);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.gz-dossier-head span:last-child { color: var(--gz-gold); letter-spacing: 0.12em; }
+.gz-dossier-portrait {
+  display: block;
+  width: 134px;
+  height: 160px;
+  image-rendering: pixelated;
+  border: 1px solid rgba(255, 32, 64, 0.45);
+  background: #080a12;
+  margin: 0 auto;
+  filter: saturate(1.05) contrast(1.05);
+}
+.gz-dossier-name {
+  font-size: 10px;
+  color: var(--gz-ink);
+  margin-top: 5px;
+  text-align: center;
+  letter-spacing: 0.10em;
+}
+.gz-dossier-threat {
+  margin-top: 4px;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  color: var(--gz-cyan-dim);
+}
+.gz-dossier-threat-label { margin-bottom: 2px; }
+.gz-dossier-threat-bar {
+  height: 4px;
+  background: rgba(255, 32, 64, 0.15);
+  border: 1px solid rgba(255, 32, 64, 0.35);
+  overflow: hidden;
+}
+.gz-dossier-threat-bar > div {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gz-amber), var(--gz-red));
+  box-shadow: 0 0 8px rgba(255, 32, 64, 0.6);
+  width: 0%;
+  transition: width 300ms ease;
+}
+.gz-dossier-status {
+  margin-top: 4px;
+  font-size: 8px;
+  letter-spacing: 0.28em;
+  color: var(--gz-green);
+  text-align: center;
+}
+.gz-dossier-status.dead { color: var(--gz-cyan-dim); text-decoration: line-through; }
+
+#gz-hud[data-view="tps"] .gz-dossier { width: 118px; }
+#gz-hud[data-view="tps"] .gz-dossier-portrait { width: 104px; height: 124px; }
+
+/* ── Radar (bl) ──────────────────────────────────────────────── */
+.gz-radar { width: 240px; padding: 6px; }
+.gz-radar-canvas {
+  display: block;
+  width: 228px;
+  height: 228px;
+  image-rendering: pixelated;
+}
+.gz-radar-head {
+  position: absolute;
+  top: 6px; left: 10px; right: 10px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--gz-green);
+  text-shadow: 0 0 4px rgba(0, 224, 90, 0.5);
+  pointer-events: none;
+}
+.gz-radar-scale { color: var(--gz-cyan-dim); letter-spacing: 0.08em; }
+
+.gz-ambient {
+  margin-top: 4px;
+  font-size: 9px;
+  color: var(--gz-cyan-dim);
+  letter-spacing: 0.05em;
+  min-height: 2.2em;
+  line-height: 1.4;
+  white-space: pre-line;
+  border-top: 1px solid rgba(111, 240, 255, 0.18);
+  padding-top: 3px;
+}
+
+#gz-hud[data-view="tps"] .gz-radar { width: 260px; }
+#gz-hud[data-view="tps"] .gz-radar-canvas { width: 248px; height: 248px; }
+
+/* ── Weapon panel (br) ───────────────────────────────────────── */
+.gz-weapon { min-width: 260px; text-align: right; }
+.gz-points-wrap {
+  position: relative;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 216, 88, 0.25);
+}
+.gz-points-label {
+  font-size: 8px;
+  letter-spacing: 0.28em;
+  color: var(--gz-cyan-dim);
+}
+.gz-points-value {
+  font-size: 24px;
+  color: var(--gz-gold);
+  text-shadow: 0 0 12px rgba(255, 216, 88, 0.55);
+  letter-spacing: 0.10em;
+  font-weight: 900;
+}
+.gz-points-delta {
+  position: absolute;
+  right: 0;
+  top: -4px;
+  font-size: 10px;
+  color: var(--gz-gold);
+  opacity: 0;
+  pointer-events: none;
+}
+.gz-points-delta.gain { color: var(--gz-gold); animation: gzDeltaFloat 900ms ease-out forwards; }
+.gz-points-delta.bonus { color: var(--gz-cyan); animation: gzDeltaFloat 900ms ease-out forwards; }
+.gz-points-delta.loss  { color: var(--gz-red);  animation: gzDeltaFloat 900ms ease-out forwards; }
+@keyframes gzDeltaFloat {
+  0%   { opacity: 0; transform: translateY(0); }
+  15%  { opacity: 1; transform: translateY(-2px); }
+  100% { opacity: 0; transform: translateY(-24px); }
+}
+.gz-weapon-name {
+  font-size: 13px;
+  color: var(--gz-red);
+  text-shadow: 0 0 8px rgba(255, 32, 64, 0.4);
+  letter-spacing: 0.14em;
+}
+.gz-weapon-state {
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  color: var(--gz-green);
+  margin-top: 3px;
+  text-shadow: 0 0 6px rgba(0, 224, 90, 0.5);
+}
+.gz-weapon-state.cycling { color: var(--gz-amber); text-shadow: 0 0 6px rgba(255, 176, 64, 0.45); }
+.gz-weapon-state.vent    { color: var(--gz-red); animation: gzCursor 260ms step-end infinite; }
+.gz-weapon-bar {
+  position: relative;
+  margin-top: 5px;
+  height: 10px;
+  background: rgba(111, 240, 255, 0.08);
+  border: 1px solid rgba(111, 240, 255, 0.35);
+  overflow: hidden;
+}
+.gz-weapon-bar-fill {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 0%;
+  background: linear-gradient(90deg, var(--gz-cyan) 0%, #b0f0ff 100%);
+  box-shadow: 0 0 10px rgba(111, 240, 255, 0.65);
+  transition: width 60ms linear, background 160ms;
+}
+.gz-weapon-bar.ready .gz-weapon-bar-fill {
+  background: linear-gradient(90deg, var(--gz-green) 0%, #80ffb0 100%);
+  box-shadow: 0 0 10px rgba(0, 224, 90, 0.65);
+}
+.gz-weapon-bar-scan {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0, transparent 8px,
+    rgba(0, 0, 0, 0.35) 8px, rgba(0, 0, 0, 0.35) 9px
+  );
+  pointer-events: none;
+}
+
+/* ── Center reticle ──────────────────────────────────────────── */
+.gz-reticle {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 0; height: 0;
+  pointer-events: none;
+  z-index: 11;
+  --gz-r-col: var(--gz-green);
+  --gz-r-gap: 5px;
+  transition: transform 180ms ease;
+}
+#gz-hud[data-view="tps"] .gz-reticle { --gz-r-col: #b8f0ff; }
+.gz-reticle-dot {
+  position: absolute;
+  left: -1.5px; top: -1.5px;
+  width: 3px; height: 3px;
+  background: var(--gz-r-col);
+  box-shadow: 0 0 5px var(--gz-r-col);
+}
+.gz-reticle-tick {
+  position: absolute;
+  background: var(--gz-r-col);
+  box-shadow: 0 0 4px var(--gz-r-col);
+}
+.gz-t-top, .gz-t-bottom { width: 2px; height: 6px; left: -1px; }
+.gz-t-left, .gz-t-right { width: 6px; height: 2px; top: -1px; }
+.gz-t-top    { top:    calc(-6px - var(--gz-r-gap)); }
+.gz-t-bottom { top:    var(--gz-r-gap); }
+.gz-t-left   { left:   calc(-6px - var(--gz-r-gap)); }
+.gz-t-right  { left:   var(--gz-r-gap); }
+
+.gz-reticle-arc {
+  position: absolute;
+  left: -24px; top: -24px;
+  width: 48px; height: 48px;
+  opacity: 0;
+  transition: opacity 120ms;
+  transform: rotate(-110deg);
+}
+.gz-reticle-arc circle {
+  fill: none;
+  stroke: var(--gz-amber);
+  stroke-width: 2;
+  stroke-dasharray: 73 188; /* ~140° arc of a r=30 circle */
+  filter: drop-shadow(0 0 3px var(--gz-amber));
+}
+.gz-reticle-label {
+  position: absolute;
+  left: 50%; top: -28px;
+  transform: translateX(-50%);
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  color: var(--gz-amber);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 80ms;
+  text-shadow: 0 0 4px rgba(255, 176, 64, 0.6);
+}
+
+/* Warning states on the reticle */
+.gz-reticle[data-warn="civ"] { --gz-r-col: var(--gz-amber); }
+.gz-reticle[data-warn="civ"] .gz-reticle-arc { opacity: 1; animation: gzArcSpin 1.6s linear infinite; }
+.gz-reticle[data-warn="civ"] .gz-reticle-label { opacity: 1; }
+@keyframes gzArcSpin {
+  from { transform: rotate(-110deg); }
+  to   { transform: rotate(250deg); }
+}
+.gz-reticle[data-warn="fire"] { --gz-r-col: var(--gz-red); }
+.gz-reticle[data-warn="fire"] .gz-reticle-arc,
+.gz-reticle[data-warn="fire"] .gz-reticle-label { opacity: 1; }
+.gz-reticle[data-warn="fire"] .gz-reticle-arc circle { stroke: var(--gz-red); }
+.gz-reticle[data-warn="fire"] .gz-reticle-label { color: var(--gz-red); }
+
+/* Screen-edge + flash for civilian warning */
+.gz-screen-flash {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 32, 64, 0.35);
+  opacity: 0;
+  pointer-events: none;
+}
+.gz-screen-flash.active { animation: gzScreenFlash 180ms ease-out; }
+@keyframes gzScreenFlash {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+.gz-screen-edge {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--gz-amber);
+  box-shadow: inset 0 0 30px rgba(255, 176, 64, 0.3);
+  opacity: 0;
+  transition: opacity 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  pointer-events: none;
+}
+.gz-screen-edge.civ  { opacity: 0.55; }
+.gz-screen-edge.fire {
+  opacity: 1;
+  border-color: var(--gz-red);
+  box-shadow: inset 0 0 44px rgba(255, 32, 64, 0.55);
+}
+
+/* ── World-space detonation badges ───────────────────────────── */
+.gz-world-badges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.gz-badge {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 2px 6px;
+  background: rgba(3, 6, 12, 0.85);
+  border: 1px solid var(--gz-red);
+  font-size: 11px;
+  color: var(--gz-red);
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 5px rgba(255, 32, 64, 0.7);
+  box-shadow: 0 0 12px rgba(255, 32, 64, 0.5);
+  animation: gzBadgePulse 0.6s ease-in-out infinite;
+  white-space: nowrap;
+}
+.gz-badge.civ { border-color: var(--gz-amber); color: var(--gz-amber); }
+@keyframes gzBadgePulse {
+  0%, 100% { transform: translate(-50%, -100%) scale(1); opacity: 0.9; }
+  50%      { transform: translate(-50%, -105%) scale(1.08); opacity: 1; }
+}
+
+/* ── Mode-switch transition ──────────────────────────────────── */
+#gz-hud.gz-warping .gz-panel {
+  animation: gzWarp 420ms cubic-bezier(.22,1,.36,1);
+}
+@keyframes gzWarp {
+  0%   { opacity: 1; filter: none; transform: translate(0, 0); }
+  25%  { opacity: 0.3; filter: hue-rotate(180deg) saturate(1.6); transform: translate(3px, -1px) skewY(0.6deg); }
+  55%  { opacity: 0.6; filter: hue-rotate(-40deg); transform: translate(-2px, 1px); }
+  85%  { opacity: 0.9; filter: none; }
+  100% { opacity: 1; }
+}
+#gz-hud.gz-warping [data-zone="tc"],
+#gz-hud.gz-warping [data-zone="bl"],
+#gz-hud.gz-warping [data-zone="br"],
+#gz-hud.gz-warping [data-zone="tr"],
+#gz-hud.gz-warping [data-zone="tl"] {
+  /* panels already have zone-transition on position; warp adds the glitch */
+}
+#gz-hud.gz-warping .gz-reticle { animation: gzReticleWarp 420ms ease-out; }
+@keyframes gzReticleWarp {
+  0%   { transform: scale(1); opacity: 1; }
+  40%  { transform: scale(1.6) rotate(6deg); opacity: 0.3; }
+  100% { transform: scale(1); opacity: 1; }
+}

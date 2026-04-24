@@ -105,10 +105,6 @@ export function planAlien(alien, dt, rng, bounds, targets) {
     return { vx: 0, vy: 0 };
   }
   alien.markFlash += dt;
-  if (alien.marked) {
-    alien.walkPhase *= Math.pow(0.3, dt);
-    return { vx: 0, vy: 0 };
-  }
   if (alien.attackCooldown > 0) alien.attackCooldown -= dt;
 
   const arch = ARCHETYPES[alien.archetype];

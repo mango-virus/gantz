@@ -124,7 +124,10 @@ export function generateAlienSpec(seed, archetype = 'patroller') {
     seed: s,
     archetype,
     body: r.pick(BODY_PLANS),
-    size: r.range(1.1, 1.8) * sizeMul,
+    size: r.range(0.75, 2.25) * sizeMul,
+    bulk: r.range(0.8, 1.4),   // width scalar — makes some aliens stocky, others lanky
+    height: r.range(0.85, 1.3), // vertical stretch
+    limbLen: r.range(0.85, 1.25),
     limbs: archetype === 'swarmer' ? r.int(3, 5) : r.int(3, 6),
     skin: {
       pattern: r.pick(SKIN_PATTERNS),

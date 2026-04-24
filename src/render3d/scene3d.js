@@ -3,10 +3,11 @@ import { GLTFLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/GL
 import { FBXLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/FBXLoader.js';
 import { clone as skeletonClone } from 'https://esm.sh/three@0.160.0/examples/jsm/utils/SkeletonUtils.js';
 import {
-  buildHumanMesh, buildAlienMesh, buildPropMesh, buildBuildingMesh,
+  buildAlienMesh, buildPropMesh, buildBuildingMesh,
   buildLobbyRoom, buildMissionRoom, buildGantzBallMesh,
-  buildGantzBallDisplay,
+  buildGantzBallDisplay, animateAlienMesh,
 } from './factories.js';
+import { createScanController } from './transferScan.js';
 
 // Convert 2D game facing angle to Three.js Y rotation.
 // In 2D: facing=0 points +X. Both human and alien meshes face +Z natively,
@@ -643,9 +644,20 @@ export function createScene3d({ canvas }) {
   const _POOL_SIZE = 24;
 
   function _acquireCharInstance() {
-    if (_charPool.length > 0) return _charPool.pop();
-    // Pool drained — create on demand (rare, only if more than POOL_SIZE chars needed).
-    return _createCharInstance();
+    const inst = _charPool.length > 0 ? _charPool.pop() : _createCharInstance();
+    // _releaseCharInstance stops all actions, leaving the skinned mesh on its
+    // rest (T-pose) until the scene3d render loop issues its first crossfade.
+    // Immediately play the idle clip here, and tick the mixer once so the
+    // skeleton is posed before the caller adds the group to the scene —
+    // otherwise the newcomer flashes as a T-pose for one frame while the
+    // crossfade-from-nothing ramps up.
+    const startClip = 'lobby_idle';
+    if (inst.actions?.[startClip]) {
+      inst.actions[startClip].reset().play();
+      inst.currentAnim = startClip;
+      inst.mixer?.update(0);
+    }
+    return inst;
   }
 
   function _releaseCharInstance(entry) {
@@ -718,6 +730,13 @@ export function createScene3d({ canvas }) {
   // Rz(-π/2) rotates GLB so barrel points along the bone's forward axis.
   const _HAND_GUN_POS = new THREE.Vector3(-10, 16, -10);
   const _HAND_GUN_ROT = new THREE.Euler(0, 0, -Math.PI / 2);
+  // Barrel tip offset in the hand-gun mesh's LOCAL space (pre-scale). The
+  // hand gun uses `_worldGunTemplate` which is the raw GLB: barrel points
+  // down -Z with the gun centred at origin. After _HAND_GUN_ROT (Z=-π/2)
+  // the local +Y axis swings forward along the barrel. This offset nudges
+  // the spawn point up/forward so bullets emerge from the barrel tip, not
+  // the centre of the gun mesh.
+  const _HAND_GUN_BARREL_TIP = new THREE.Vector3(0, 0.55, 0);
 
   function _setHandGun(entry, show) {
     if (!entry.isFbx) return;
@@ -741,8 +760,13 @@ export function createScene3d({ canvas }) {
     gunMesh.position.copy(_HAND_GUN_POS);
     gunMesh.rotation.copy(_HAND_GUN_ROT);
     gunMesh.traverse(o => { o.frustumCulled = false; });
+    // Anchor at the barrel tip — bullets fired from this character spawn here
+    // so they visually leave the gun's muzzle instead of the character's chest.
+    const barrelTip = new THREE.Object3D();
+    barrelTip.position.copy(_HAND_GUN_BARREL_TIP);
+    gunMesh.add(barrelTip);
     bone.add(gunMesh);
-    entry.handGun = { bone, mesh: gunMesh };
+    entry.handGun = { bone, mesh: gunMesh, tip: barrelTip };
     console.log('[scene3d] hand-gun attached to bone:', bone.name, 'scale:', (_worldGunScale * 100).toFixed(3));
   }
 
@@ -1104,6 +1128,7 @@ export function createScene3d({ canvas }) {
   // Entity pools
   const humans = new Map();   // id → { group, mixer?, actions?, currentAnim?, specSeed, suit, isFbx }
   const aliens = new Map();
+  const _scanController = createScanController(scene);
   const props = new Map();
   let gantzBall = null;
   let ballDisplay = null;
@@ -1225,6 +1250,91 @@ export function createScene3d({ canvas }) {
   // Characters bullets should stop on (living civilians / aliens / players).
   // Walls and props are deliberately excluded — bullets pass through level
   // geometry until they reach BULLET_MAX_DIST.
+  // ── Gib / viscera particle pool (X-Gun detonation) ─────────────────────
+  // When an alien detonates after an X-Gun mark-countdown, spawn a short-
+  // lived burst of small meshes flying outward with gravity. No physics
+  // collisions beyond a ground-plane stick at y=0.
+  const _gibs = [];                                        // { mesh, vx, vy, vz, life, ttl, spin }
+  const _gibBoxGeom    = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+  const _gibSphereGeom = new THREE.SphereGeometry(0.12, 8, 6);
+  const _gibShardGeom  = new THREE.BoxGeometry(0.08, 0.28, 0.08);
+  const GIB_GRAVITY    = 18;
+  const GIB_GROUND_Y   = 0.02;
+  function spawnGibs(x, y, opts = {}) {
+    const count = opts.count || 28;
+    const centerY = opts.centerY != null ? opts.centerY : 1.1;
+    const power = opts.power || 1;
+    for (let i = 0; i < count; i++) {
+      const pick = Math.random();
+      const geom = pick < 0.45 ? _gibSphereGeom : pick < 0.8 ? _gibBoxGeom : _gibShardGeom;
+      // Blood & meat palette — dark crimson to bright arterial red.
+      const hue = 350 + Math.random() * 15;
+      const sat = 70 + Math.random() * 25;
+      const lgt = 18 + Math.random() * 22;
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(`hsl(${hue}, ${sat}%, ${lgt}%)`),
+        transparent: true,
+        opacity: 1,
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      const jitter = 0.35;
+      mesh.position.set(
+        x + (Math.random() - 0.5) * jitter,
+        centerY + (Math.random() - 0.5) * 0.5,
+        y + (Math.random() - 0.5) * jitter,
+      );
+      const ang = Math.random() * Math.PI * 2;
+      const speed = (3 + Math.random() * 6) * power;
+      const upBias = 3 + Math.random() * 5;
+      const vx = Math.cos(ang) * speed;
+      const vz = Math.sin(ang) * speed;
+      const vy = upBias + Math.random() * 2;
+      const ttl = 1.2 + Math.random() * 1.4;
+      const scl = 0.7 + Math.random() * 0.9;
+      mesh.scale.setScalar(scl);
+      mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
+      scene.add(mesh);
+      _gibs.push({
+        mesh, vx, vy, vz, life: 0, ttl,
+        spin: {
+          x: (Math.random() - 0.5) * 12,
+          y: (Math.random() - 0.5) * 12,
+          z: (Math.random() - 0.5) * 12,
+        },
+        grounded: false,
+      });
+    }
+  }
+  function _stepGibs(dt) {
+    for (let i = _gibs.length - 1; i >= 0; i--) {
+      const g = _gibs[i];
+      g.life += dt;
+      if (!g.grounded) {
+        g.vy -= GIB_GRAVITY * dt;
+        g.mesh.position.x += g.vx * dt;
+        g.mesh.position.y += g.vy * dt;
+        g.mesh.position.z += g.vz * dt;
+        g.mesh.rotation.x += g.spin.x * dt;
+        g.mesh.rotation.y += g.spin.y * dt;
+        g.mesh.rotation.z += g.spin.z * dt;
+        if (g.mesh.position.y <= GIB_GROUND_Y) {
+          g.mesh.position.y = GIB_GROUND_Y;
+          g.grounded = true;
+          g.vx *= 0.2; g.vz *= 0.2; g.vy = 0;
+        }
+      }
+      const remaining = g.ttl - g.life;
+      if (remaining < 0.6) {
+        g.mesh.material.opacity = Math.max(0, remaining / 0.6);
+      }
+      if (g.life >= g.ttl) {
+        scene.remove(g.mesh);
+        g.mesh.material.dispose();
+        _gibs.splice(i, 1);
+      }
+    }
+  }
+
   const BULLET_HIT_RADIUS = 0.45;              // fudge so near-misses still pop
   const BULLET_SELF_IGNORE_DIST = 0.9;         // ignore hits on shooter for
                                                // the first ~1m of travel
@@ -1287,32 +1397,36 @@ export function createScene3d({ canvas }) {
     const suit = !!opts?.suit;
     const charReady = !!(_charTemplate && _charClips);
 
-    if (charReady) {
-      // Rebuild if not yet FBX (was procedural fallback) or suit changed
-      if (!entry || !entry.isFbx || entry.suit !== suit) {
-        if (entry) {
-          if (entry.isFbx) {
-            _releaseCharInstance(entry); // return to pool — never dispose shared FBX materials
-          } else {
-            scene.remove(entry.group);
-            disposeGroup(entry.group);  // procedural mesh has unique materials — safe to dispose
-          }
-        }
-        const inst = _acquireCharInstance(); // instant from pool; clone only if pool drained
-        scene.add(inst.group);
-        entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null, handGun: null };
-        humans.set(id, entry);
+    // Don't create any mesh until the FBX character + clips are ready. The old
+    // procedural fallback used to render here during the few hundred ms of FBX
+    // load; it was visible on cold-refreshes as a low-poly stand-in of the
+    // real model. Returning null skips the entry entirely — the render loop
+    // has a `continue` guard for this case.
+    if (!charReady) return entry || null;
+
+    // Rebuild if not yet FBX (was procedural fallback) or suit changed.
+    // Exception: if a transfer scan is running on this entry, defer the swap
+    // — swapping would throw away the entry's patched materials and orphan
+    // the scan. The next render after the scan completes will pick up the
+    // FBX promotion cleanly.
+    const scanRunning = !!(entry && entry.__scan && entry.__scan.state === 'running');
+    if ((!entry || !entry.isFbx || entry.suit !== suit) && !scanRunning) {
+      const isFreshEntry = !entry;
+      if (entry) {
+        _releaseCharInstance(entry); // return to pool — never dispose shared FBX materials
       }
-    } else {
-      // Procedural fallback until FBX loads
-      const needsRebuild = !entry || entry.isFbx || entry.specSeed !== spec.seed || entry.suit !== suit;
-      if (needsRebuild) {
-        if (entry) { scene.remove(entry.group); disposeGroup(entry.group); }
-        const group = buildHumanMesh(spec, { suit });
-        scene.add(group);
-        entry = { group, specSeed: spec.seed, suit, isFbx: false, labelText: null, labelColor: null, bubbleText: null };
-        humans.set(id, entry);
-      }
+      const inst = _acquireCharInstance(); // instant from pool; clone only if pool drained
+      scene.add(inst.group);
+      // Hide brand-new entries for a brief grace window. A pose carrying a
+      // scan descriptor can arrive one frame before the scan relay actually
+      // attaches the scan to the entry — without this gate the mesh renders
+      // for one frame as an unscanned full body. The scan's start() flips
+      // visible=true as soon as uScanActive=1 discards the body via shader;
+      // the render loop falls back to visible=true after the grace elapses
+      // for peers who don't scan in (civilians, existing peers).
+      if (isFreshEntry) inst.group.visible = false;
+      entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null, handGun: null, __firstShowAt: isFreshEntry ? (performance.now() + 150) : 0 };
+      humans.set(id, entry);
     }
     return entry;
   }
@@ -1719,6 +1833,15 @@ export function createScene3d({ canvas }) {
     for (const h of humanEntries) {
       if (!h.spec) continue;
       const entry = getOrCreateHuman(h._id, h.spec, { suit: h._suit });
+      // FBX character assets not loaded yet — skip rendering this human
+      // entirely rather than falling back to a procedural stand-in.
+      if (!entry) continue;
+      // Fallback reveal for entries hidden by the scan-pending gate — if no
+      // scan has attached before the grace window expires, show the mesh.
+      if (!entry.group.visible && entry.__firstShowAt && performance.now() >= entry.__firstShowAt) {
+        entry.group.visible = true;
+        entry.__firstShowAt = 0;
+      }
       updateEntityTransform(entry.group, h, entry.isFbx, dt);
       // Civilians: use the vx/vy stamped by planCivilian — direct, no position-delta fragility.
       // They move at walk speed (1.5–2.6 m/s) so keep the walk tier to avoid foot-sliding.
@@ -1750,22 +1873,19 @@ export function createScene3d({ canvas }) {
           const isShootAnim   = cur === 'pistol_shoot';
 
           if (jumpId !== entry.lastJumpId) {
-            // New jump — always takes priority, force-restarts
             entry.lastJumpId = jumpId;
             entry.jumpStartT = state.t || performance.now() / 1000;
-            _crossfadeAnim(entry, _pickJumpAnim(phase, h), true, true);
+            const jumpName = _pickJumpAnim(phase, h);
+            _crossfadeAnim(entry, jumpName, true, true);
           } else if (isJumpAnim && curRunning) {
-            // Exit the jump anim as soon as physics has landed (jumpY=0) and
-            // the takeoff frames have played — otherwise the Mixamo clip keeps
-            // playing its mid-air pose after the character is already grounded,
-            // which looks like "floating". Hold for 0.15s minimum so we don't
-            // cut the very first frame when jumpY can still be 0 due to rounding.
+            // Physics-first exit: the moment jumpY hits 0, crossfade back to
+            // ground. Timescale match above should make this near-coincide
+            // with the clip's own end. Short hold guards against f1 rounding.
             const now = state.t || performance.now() / 1000;
             const held = now - (entry.jumpStartT || 0);
             if ((h.jumpY || 0) === 0 && held > 0.15) {
               _crossfadeAnim(entry, _pickGroundAnim(phase, h));
             }
-            // else: let jump anim keep playing through the airborne arc
           } else if (phase === 'MISSION' && fireId !== entry.lastFireId) {
             // New shot fired. Only play the pistol shoot animation when the
             // character is standing still and on the ground — while moving or
@@ -1808,7 +1928,14 @@ export function createScene3d({ canvas }) {
       // Hide the local player mesh in first-person instead of removing it from
       // the scene — keeps the skinned-mesh shader/draw-state warm so toggling
       // to third-person doesn't hitch on a fresh scene.add + shader compile.
-      entry.group.visible = !isLocalFP;
+      //
+      // Respect the scan-pending gate: getOrCreateHuman hides a brand-new entry
+      // until either scan.start() flips it on (with uScanActive=1 discarding
+      // the body via shader) or the grace window elapses — overwriting
+      // visible=true here every frame would surface the full unscanned model
+      // for exactly one frame before the scan relay runs next tick.
+      const scanGateActive = entry.__firstShowAt && performance.now() < entry.__firstShowAt;
+      if (!scanGateActive) entry.group.visible = !isLocalFP;
       // One-time: warm the shader programs AND the shadow-map depth pass for
       // the local-player skinned mesh against the real scene. `renderer.compile`
       // alone doesn't always cover skinning-depth variants for the shadow pass
@@ -1837,20 +1964,45 @@ export function createScene3d({ canvas }) {
 
     // Aliens
     const keepAliens = new Set();
+    const now = state.time || (performance.now() / 1000);
     for (const a of state.aliens || []) {
       if (!a.spec) continue;
       const g = getOrCreateAlien(a.id, a.spec);
-      const _alf = Math.min(1, 60 * dt);
+      if (g.userData._sc == null) g.userData._sc = a.spec.size;
+      const _alf = 1 - Math.exp(-14 * dt);
+      // Base ground Y — floaters hover above 0
+      const baseY = g.userData.bodyPlan === 'floater' ? 0.0 : 0.0;
       g.position.x += (a.x - g.position.x) * _alf;
-      g.position.y += (0   - g.position.y) * _alf;
       g.position.z += (a.y - g.position.z) * _alf;
+      g.position.y += (baseY - g.position.y) * _alf;
       g.rotation.y = facingToRotY(a.facing || 0);
       const mark = g.userData.markRing;
       if (mark) {
-        mark.material.opacity = a.marked ? (0.4 + 0.5 * Math.abs(Math.sin(a.markFlash * 8 || state.time * 8))) : 0;
+        mark.material.opacity = a.marked ? (0.4 + 0.5 * Math.abs(Math.sin(a.markFlash * 8 || now * 8))) : 0;
       }
-      if (a.alive === false) g.rotation.x = 1.4;
-      else g.rotation.x = 0;
+      if (a.alive === false) {
+        // X-Gun detonation vaporizes the alien — the gib burst handles the
+        // visual, so just hide the mesh.
+        g.visible = false;
+      } else {
+        g.visible = true;
+        // Attack pulse: rising edge on attackCooldown freshly set = new attack.
+        const maxCD = 1.6; // biggest archetype cooldown — ok upper bound
+        const cd = a.attackCooldown || 0;
+        const prevCD = g.userData._prevCD || 0;
+        if (cd > prevCD + 0.1) {
+          // new attack triggered this frame
+          g.userData._attackPulse = 1.0;
+        }
+        g.userData._prevCD = cd;
+        animateAlienMesh(g, a, now, dt);
+        // Floater hover offset applied after animate sets _hoverOffset
+        if (g.userData.bodyPlan === 'floater' && g.userData._hoverOffset != null) {
+          g.position.y += g.userData._hoverOffset;
+        }
+        // Only reset x rotation if not driven by attack (quadruped rears up)
+        if (g.userData.bodyPlan !== 'quadruped') g.rotation.x = 0;
+      }
       keepAliens.add(a.id);
     }
     prune(aliens, keepAliens);
@@ -1889,6 +2041,8 @@ export function createScene3d({ canvas }) {
       }
     }
     _stepBullets(dt, state);
+    _stepGibs(dt);
+    _scanController.update(humans);
 
     // Camera
     const focus = state.focus || state.player;
@@ -2266,14 +2420,44 @@ export function createScene3d({ canvas }) {
     getRemoteMuzzleWorldPosition(id) {
       const entry = humans.get(id);
       if (!entry || !entry.handGun) return null;
-      entry.handGun.mesh.updateWorldMatrix(true, false);
-      _muzzleWorldV.setFromMatrixPosition(entry.handGun.mesh.matrixWorld);
+      const anchor = entry.handGun.tip || entry.handGun.mesh;
+      anchor.updateWorldMatrix(true, false);
+      _muzzleWorldV.setFromMatrixPosition(anchor.matrixWorld);
       return { x: _muzzleWorldV.x, y: _muzzleWorldV.y, z: _muzzleWorldV.z };
+    },
+    // DEV: live-tune the third-person hand-gun barrel tip anchor in local
+    // gun-space. Example in console:
+    //   __gantz.scene3d.setHandGunTipOffset(0, 0.7, 0)
+    setHandGunTipOffset(x, y, z) {
+      _HAND_GUN_BARREL_TIP.set(x, y, z);
+      for (const entry of humans.values()) {
+        if (entry.handGun && entry.handGun.tip) {
+          entry.handGun.tip.position.set(x, y, z);
+        }
+      }
     },
     // DEV: live-tune the bullet spawn anchor. Example in console:
     //   __gantz.scene3d.setBarrelTipOffset(-0.188, 0.24, 0.05)
     setBarrelTipOffset(x, y, z) { _barrelTip.position.set(x, y, z); },
     triggerMuzzleFlash,
+    spawnGibs,
+    startTransferScan(id, opts) {
+      const entry = id ? humans.get(id) : [...humans.values()][0];
+      if (!entry) return false;
+      _scanController.start(entry, opts);
+      return true;
+    },
+    isTransferScanning(id) {
+      const entry = id ? humans.get(id) : [...humans.values()][0];
+      return entry ? _scanController.isScanning(entry) : false;
+    },
+    // True once the FBX character mesh + clips have loaded and the shared
+    // instance pool has been primed. Initial-load scan waits for this so the
+    // scan doesn't run on the procedural fallback and lose its material patch
+    // when the pool swaps in later.
+    isCharReady() {
+      return !!(_charTemplate && _charClips && _charPool.length > 0);
+    },
     worldToScreen,
     raycastBallDisplay,
     get ballDisplay() { return ballDisplay; },
@@ -2283,6 +2467,17 @@ export function createScene3d({ canvas }) {
     // True while transitioning to or holding third-person, so game.js hides the
     // FP overlays and scene3d shows the local player mesh for the entire glide.
     isThirdPerson() { return _tpTarget === 1 || _tpMix > 0.001; },
+    // Programmatically select the camera mode (e.g. phase-based defaults). The
+    // existing smooth easing via `_tpMix` handles the transition; `_tpSnap`
+    // mirrors the wheel-entry path so entering TP from a clean state doesn't
+    // lerp in from a stale smooth pivot.
+    setThirdPerson(on) {
+      const want = on ? 1 : 0;
+      if (_tpTarget === want) return;
+      _tpTarget = want;
+      if (want === 1 && _tpMix <= 0.001) _tpSnap = true;
+      if (want === 0) _tpADS = false;
+    },
     // True while the local player is holding right-mouse (aim-down-sights).
     // Exposed so game.js can gate sprint while aiming.
     isAds() { return _adsActive; },

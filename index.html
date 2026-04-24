@@ -13,7 +13,6 @@
   <div id="username">—</div>
   <div id="peers">connecting…</div>
   <div id="phase">LOBBY</div>
-  <button id="reconnect-btn" title="Reconnect to the room" style="display:none;">↻ reconnect</button>
 </div>
 <div id="hint">WASD / arrows — walk · E — interact · T / Enter — chat · <a href="/3d.html" style="color:#c8142b;">[3D preview]</a></div>
 <div id="chat">
@@ -57,24 +56,120 @@
     <div class="po-count" id="po-count"></div>
   </div>
 </div>
-<div id="mission-hud" style="display: none;">
-  <div class="mh-box">
-    <div class="mh-timer" id="mh-timer">00:00</div>
-    <div class="mh-info" id="mh-info">MISSION</div>
-    <div class="mh-targets" id="mh-targets"></div>
-  </div>
+<!-- legacy HUD stubs kept (hidden) because game.js still references them -->
+<div id="mission-hud" style="display:none;">
+  <span id="mh-timer"></span><span id="mh-info"></span><span id="mh-targets"></span>
 </div>
-<div id="weapon-hud" style="display: none;">
-  <div class="wh-slot" id="wh-weapon">X-GUN</div>
-  <div class="wh-points" id="wh-points">0 pt</div>
+<div id="weapon-hud" style="display:none;">
+  <span id="wh-weapon"></span><span id="wh-points"></span>
 </div>
 <div id="toast-log"></div>
-<div id="crosshair">
-  <div class="ch-dot"></div>
-  <div class="ch-tick ch-top"></div>
-  <div class="ch-tick ch-bottom"></div>
-  <div class="ch-tick ch-left"></div>
-  <div class="ch-tick ch-right"></div>
+
+<!-- ─── Gantz Neural HUD ──────────────────────────────────────────── -->
+<div id="gz-hud" data-view="fps" data-active="0" aria-hidden="true">
+
+  <!-- SVG barrel distortion filter (FPS visor curve) -->
+  <svg id="gz-visor-filter" aria-hidden="true">
+    <defs>
+      <filter id="gz-barrel">
+        <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="1" seed="3"/>
+        <feDisplacementMap in="SourceGraphic" scale="8"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- FPS visor chrome (vignette + scanlines + corner brackets) -->
+  <div class="gz-visor">
+    <div class="gz-vignette"></div>
+    <div class="gz-scanlines"></div>
+    <div class="gz-corner gz-tl"></div>
+    <div class="gz-corner gz-tr"></div>
+    <div class="gz-corner gz-bl"></div>
+    <div class="gz-corner gz-br"></div>
+  </div>
+
+  <!-- TOP-LEFT : identity / phase -->
+  <div class="gz-panel gz-ident" data-zone="tl">
+    <div class="gz-ident-name" id="gz-ident-name">—</div>
+    <div class="gz-ident-phase" id="gz-ident-phase">LOBBY</div>
+    <div class="gz-ident-peers" id="gz-ident-peers"></div>
+  </div>
+
+  <!-- TOP-CENTER : chrono + transmission banner -->
+  <div class="gz-panel gz-chrono" data-zone="tc">
+    <div class="gz-chrono-head">
+      <span class="gz-chrono-glyph">◢</span>
+      <span>TIME LEFT</span>
+      <span class="gz-chrono-modifier" id="gz-chrono-mod"></span>
+    </div>
+    <div class="gz-chrono-time">
+      <span class="gz-chrono-digits" id="gz-chrono-digits">00:00</span><span class="gz-chrono-centi" id="gz-chrono-centi">.00</span>
+    </div>
+    <div class="gz-tx" id="gz-tx" aria-hidden="true">
+      <div class="gz-tx-head">◈ GANTZ TRANSMISSION <span class="gz-tx-id" id="gz-tx-id">00:00:00</span></div>
+      <div class="gz-tx-body" id="gz-tx-body"></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM-LEFT : target dossier -->
+  <div class="gz-panel gz-dossier" data-zone="bl">
+    <div class="gz-dossier-head">
+      <span>TARGET</span>
+      <span id="gz-dossier-count">0 / 0</span>
+    </div>
+    <canvas class="gz-dossier-portrait" id="gz-dossier-portrait" width="128" height="160"></canvas>
+    <div class="gz-dossier-name" id="gz-dossier-name">—</div>
+    <div class="gz-dossier-threat">
+      <div class="gz-dossier-threat-label">THREAT</div>
+      <div class="gz-dossier-threat-bar"><div id="gz-dossier-threat-fill"></div></div>
+    </div>
+    <div class="gz-dossier-status" id="gz-dossier-status">TRACKING</div>
+  </div>
+
+  <!-- TOP-RIGHT : radar -->
+  <div class="gz-panel gz-radar" data-zone="tr">
+    <canvas class="gz-radar-canvas" id="gz-radar-canvas" width="220" height="220"></canvas>
+    <div class="gz-radar-head">
+      <span>RADAR</span>
+      <span class="gz-radar-scale" id="gz-radar-scale">30m</span>
+    </div>
+    <div class="gz-ambient" id="gz-ambient"></div>
+  </div>
+
+  <!-- BOTTOM-RIGHT : weapon + charge bar + points -->
+  <div class="gz-panel gz-weapon" data-zone="br">
+    <div class="gz-points-wrap">
+      <div class="gz-points-label">POINTS</div>
+      <div class="gz-points-value" id="gz-points-value">0</div>
+      <div class="gz-points-delta" id="gz-points-delta"></div>
+    </div>
+    <div class="gz-weapon-name" id="gz-weapon-name">—</div>
+    <div class="gz-weapon-state" id="gz-weapon-state">READY</div>
+    <div class="gz-weapon-bar">
+      <div class="gz-weapon-bar-fill" id="gz-weapon-bar-fill"></div>
+      <div class="gz-weapon-bar-scan"></div>
+    </div>
+  </div>
+
+  <!-- CENTER : reticle + civilian warning halo -->
+  <div class="gz-reticle" id="gz-reticle" data-warn="idle">
+    <div class="gz-reticle-dot"></div>
+    <div class="gz-reticle-tick gz-t-top"></div>
+    <div class="gz-reticle-tick gz-t-bottom"></div>
+    <div class="gz-reticle-tick gz-t-left"></div>
+    <div class="gz-reticle-tick gz-t-right"></div>
+    <svg class="gz-reticle-arc" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="30" />
+    </svg>
+    <div class="gz-reticle-label" id="gz-reticle-label"></div>
+  </div>
+
+  <!-- EDGE vignette used for civilian warning FIRE_ON_HUMAN -->
+  <div class="gz-screen-flash" id="gz-screen-flash"></div>
+  <div class="gz-screen-edge" id="gz-screen-edge"></div>
+
+  <!-- World-space detonation countdown badges (filled by JS) -->
+  <div class="gz-world-badges" id="gz-world-badges"></div>
 </div>
 <div id="gantz-prompt" class="world-prompt" style="display: none;">[E] Talk to Gantz</div>
 <div id="door-prompt" class="world-prompt" style="display: none;">[E] Open door</div>

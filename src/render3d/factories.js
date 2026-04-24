@@ -842,237 +842,1023 @@ function _makeCityGroundTex() {
   return tex;
 }
 
-// ---- Human ----
-// Built with the same seg() / jnt() primitives as the Gantz interior figure so
-// all characters share a unified visual language: point-to-point cylinders for
-// limbs, sphere joints at every articulation, feet as flat boxes.
-export function buildHumanMesh(spec, opts = {}) {
-  const group = new THREE.Group();
-  const S  = (spec.height || 1.75) / 1.75;                                          // height scale
-  const B  = spec.build === 'slim' ? 0.92 : spec.build === 'heavy' ? 1.14 : 1.0;   // width scale
-  group.userData.spec = spec;
+// ---- Alien ----
+// Cache textures by seed+pattern so we don't rebuild canvases every time an
+// alien mesh is created.
+const _ALIEN_TEX_CACHE = new Map();
 
-  const skinMat  = new THREE.MeshStandardMaterial({ color: color(spec.skin),                    roughness: 0.82 });
-  const hairMat  = new THREE.MeshStandardMaterial({ color: color(spec.hair?.color || '#1a1a1a'), roughness: 0.75 });
-  const torsoMat = new THREE.MeshStandardMaterial({ color: color(spec.outfit.top),               roughness: 0.82 });
-  const legMat   = new THREE.MeshStandardMaterial({ color: color(spec.outfit.bottom),            roughness: 0.85 });
-  const shoeMat  = new THREE.MeshStandardMaterial({ color: 0x141414,                             roughness: 0.9  });
+function _makeAlienSkinTex(spec) {
+  const key = `${spec.seed}|${spec.skin.pattern}|${spec.skin.primary}|${spec.skin.accent}`;
+  const cached = _ALIEN_TEX_CACHE.get(key);
+  if (cached) return cached;
 
-  // Point-to-point cylinder helper (adds to group).
-  // Guards against the antiparallel case (dir = (0,−1,0)) where
-  // setFromUnitVectors has no defined rotation axis and returns a degenerate
-  // quaternion that distorts the mesh into a cone shape.
-  const _up  = new THREE.Vector3(0, 1, 0);
-  const _axX = new THREE.Vector3(1, 0, 0);
-  function seg(ax, ay, az, bx, by, bz, r, mat) {
-    const a = new THREE.Vector3(ax, ay, az);
-    const b = new THREE.Vector3(bx, by, bz);
-    const dir = new THREE.Vector3().subVectors(b, a);
-    const len = dir.length();
-    if (len < 0.004) return null;
-    const c = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 9), mat);
-    c.position.lerpVectors(a, b, 0.5);
-    const nd = dir.normalize();
-    if (nd.dot(_up) < -0.9999) {
-      c.quaternion.setFromAxisAngle(_axX, Math.PI); // straight-down segment
-    } else {
-      c.quaternion.setFromUnitVectors(_up, nd);
-    }
-    c.castShadow = true;
-    group.add(c);
-    return c;
+  const PX = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = PX; canvas.height = PX;
+  const ctx = canvas.getContext('2d');
+  const rng = _mkRng(spec.seed >>> 0);
+
+  const primary = spec.skin.primary;
+  const accent = spec.skin.accent;
+  const pattern = spec.skin.pattern;
+
+  ctx.fillStyle = primary;
+  ctx.fillRect(0, 0, PX, PX);
+
+  // subtle noise base
+  const img = ctx.getImageData(0, 0, PX, PX);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (rng() - 0.5) * 30;
+    img.data[i]     = Math.max(0, Math.min(255, img.data[i]     + n));
+    img.data[i + 1] = Math.max(0, Math.min(255, img.data[i + 1] + n));
+    img.data[i + 2] = Math.max(0, Math.min(255, img.data[i + 2] + n));
   }
-  // Sphere joint helper (adds to group)
-  function jnt(x, y, z, r, mat) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 7), mat);
-    s.position.set(x, y, z);
-    s.castShadow = true;
-    group.add(s);
-    return s;
-  }
+  ctx.putImageData(img, 0, 0);
 
-  // ── Head ────────────────────────────────────────────────────────────────────
-  jnt(0,             1.600 * S, 0,           0.100 * S, skinMat);  // head
-  jnt(0,             1.640 * S, 0,           0.097 * S, hairMat);  // bald skullcap
-  jnt(0,             1.578 * S, 0.100 * S,   0.018 * S, skinMat);  // nose tip
-  for (const sx of [-1, 1]) {
-    jnt(sx * 0.042 * S, 1.620 * S, 0.088 * S, 0.014 * S, hairMat); // brow ridge
-  }
-
-  // ── Neck ────────────────────────────────────────────────────────────────────
-  seg(0, 1.510 * S, 0.010 * S,   0, 1.420 * S, 0,   0.036 * S, skinMat);
-
-  // ── Torso ───────────────────────────────────────────────────────────────────
-  seg(-0.175*S*B, 1.400*S, 0,   0.175*S*B, 1.400*S, 0,   0.036*S, torsoMat); // collarbone
-  seg(0, 1.420*S, 0,   0, 0.880*S, 0,   0.072*S*B, torsoMat);                 // spine
-  seg(-0.108*S*B, 0.880*S, 0,   0.108*S*B, 0.880*S, 0,   0.048*S*B, torsoMat); // hip bar
-
-  // ── Arms (each in a sub-group pivoting at the shoulder) ─────────────────────
-  // scene3d.js animates walk swing via armL/R.rotation.x — the pivot being at
-  // the shoulder means the whole arm sweeps forward/backward correctly.
-  function makeArm(side) {
-    // side: -1 = left, +1 = right
-    const grp = new THREE.Group();
-    grp.position.set(side * 0.175 * S * B, 1.400 * S, 0);
-
-    function segA(ax,ay,az, bx,by,bz, r, mat) {
-      const a=new THREE.Vector3(ax,ay,az), b=new THREE.Vector3(bx,by,bz);
-      const dir=new THREE.Vector3().subVectors(b,a); const len=dir.length();
-      if (len < 0.004) return;
-      const c=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,9), mat);
-      c.position.lerpVectors(a,b,0.5);
-      const nd=dir.normalize();
-      if (nd.dot(_up) < -0.9999) { c.quaternion.setFromAxisAngle(_axX, Math.PI); }
-      else { c.quaternion.setFromUnitVectors(_up, nd); }
-      c.castShadow=true; grp.add(c);
-    }
-    function jntA(x,y,z,r,mat) {
-      const s=new THREE.Mesh(new THREE.SphereGeometry(r,10,7),mat);
-      s.position.set(x,y,z); s.castShadow=true; grp.add(s);
-    }
-
-    jntA(0, 0, 0,                          0.044*S, torsoMat);       // shoulder joint
-    segA(0, 0, 0,   side*0.04*S,-0.285*S,0, 0.037*S, torsoMat);      // upper arm
-    jntA(side*0.04*S, -0.285*S, 0,         0.040*S, skinMat);        // elbow joint
-    segA(side*0.04*S,-0.285*S,0,  side*0.02*S,-0.555*S,0, 0.030*S, skinMat); // forearm
-    jntA(side*0.02*S, -0.555*S, 0,         0.033*S, skinMat);        // hand
-
-    group.add(grp);
-    return grp;
-  }
-  const armLGrp = makeArm(-1);
-  const armRGrp = makeArm( 1);
-
-  // ── Legs ────────────────────────────────────────────────────────────────────
-  for (const sx of [-1, 1]) {
-    const hx = sx * 0.108 * S * B;  // hip x
-    const kx = sx * 0.110 * S;       // knee x (slight outward taper)
-    seg(hx, 0.880*S, 0,   kx, 0.460*S, 0,   0.052*S, legMat);  // thigh
-    jnt(kx, 0.460*S, 0,                       0.054*S, legMat);  // knee
-    seg(kx, 0.460*S, 0,   kx, 0.090*S, 0,    0.039*S, legMat);  // shin
-    jnt(kx, 0.090*S, 0,                       0.038*S, skinMat); // ankle
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.090*S, 0.052*S, 0.220*S), shoeMat);
-    foot.position.set(sx * 0.104 * S, 0.038 * S, 0.075 * S);
-    foot.castShadow = true;
-    group.add(foot);
-  }
-
-  // ── Hair ────────────────────────────────────────────────────────────────────
-  const headR = 0.100 * S;
-  const style = spec.hair?.style || 'short';
-  if (style !== 'bald') {
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(headR * 1.03, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
-      hairMat,
-    );
-    cap.position.set(0, 1.600 * S, 0);
-    cap.castShadow = true;
-    group.add(cap);
-    if (style === 'long') {
-      // Tapered cylinder draping down the back of the head (−Z = behind nose)
-      const trail = new THREE.Mesh(
-        new THREE.CylinderGeometry(headR * 0.55, headR * 0.20, 0.50 * S, 8),
-        hairMat,
-      );
-      trail.position.set(0, 1.370 * S, -headR * 0.9);
-      trail.rotation.x = 0.28; // lean slightly backward
-      trail.castShadow = true;
-      group.add(trail);
-    } else if (style === 'ponytail') {
-      const pony = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.35*S, 8), hairMat);
-      pony.position.set(-headR * 0.9, 1.520*S, 0);
-      pony.rotation.z = Math.PI / 3;
-      group.add(pony);
-    } else if (style === 'topknot') {
-      const knot = new THREE.Mesh(new THREE.SphereGeometry(0.08*S, 10, 8), hairMat);
-      knot.position.set(0, (1.600 + headR) * S, 0);
-      group.add(knot);
-    } else if (style === 'messy') {
-      for (let i = 0; i < 5; i++) {
-        const a = (i / 5) * Math.PI * 2;
-        const clump = new THREE.Mesh(new THREE.SphereGeometry(headR*0.35, 8, 6), hairMat);
-        clump.position.set(Math.cos(a)*headR*0.5, 1.600*S + headR*0.9, Math.sin(a)*headR*0.5);
-        group.add(clump);
+  if (pattern === 'scaled') {
+    const cell = 16;
+    for (let y = 0; y < PX; y += cell) {
+      for (let x = 0; x < PX; x += cell) {
+        const ox = (Math.floor(y / cell) % 2 === 0) ? 0 : cell * 0.5;
+        ctx.beginPath();
+        ctx.arc(x + ox + cell * 0.5, y + cell * 0.5, cell * 0.52, Math.PI, Math.PI * 2);
+        ctx.globalAlpha = 0.27;
+        ctx.fillStyle = accent;
+        ctx.fill();
+        ctx.globalAlpha = 0.53;
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
       }
     }
+  } else if (pattern === 'striped') {
+    for (let i = 0; i < 10; i++) {
+      const y = Math.floor(rng() * PX);
+      const h = 6 + Math.floor(rng() * 18);
+      ctx.globalAlpha = 0.73;
+      ctx.fillStyle = accent;
+      ctx.fillRect(0, y, PX, h);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(0, y + h, PX, 2);
+    }
+  } else if (pattern === 'mottled') {
+    for (let i = 0; i < 80; i++) {
+      const x = rng() * PX, y = rng() * PX;
+      const r = 8 + rng() * 22;
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = accent;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  } else if (pattern === 'chitinous') {
+    // plated look: dark cracks + highlight on each plate
+    for (let y = 0; y < PX; y += 20) {
+      for (let x = 0; x < PX; x += 28) {
+        const px = x + ((y / 20) % 2 === 0 ? 0 : 14);
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(px - 1, y - 1, 28, 2);
+        ctx.fillRect(px - 1, y - 1, 2, 20);
+        ctx.globalAlpha = 0.33;
+        ctx.fillStyle = accent;
+        ctx.fillRect(px, y, 26, 18);
+        ctx.globalAlpha = 1;
+      }
+    }
+  } else {
+    // 'smooth' — faint vein-like wash
+    for (let i = 0; i < 6; i++) {
+      ctx.beginPath();
+      let x = rng() * PX, y = rng() * PX;
+      ctx.moveTo(x, y);
+      for (let k = 0; k < 14; k++) {
+        x += (rng() - 0.5) * 40;
+        y += (rng() - 0.5) * 40;
+        ctx.lineTo(x, y);
+      }
+      ctx.globalAlpha = 0.2;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1 + rng() * 2;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
 
-  // ── Suit overlay (mission Gantz suit) ───────────────────────────────────────
-  if (opts.suit) {
-    const shellMat = new THREE.MeshStandardMaterial({
-      color: 0x080810, roughness: 0.35, metalness: 0.65,
-      transparent: true, opacity: 0.88,
-    });
-    const shell = new THREE.Mesh(new THREE.CapsuleGeometry(0.3*B, 0.6*S, 4, 10), shellMat);
-    shell.position.y = 1.150 * S;
-    group.add(shell);
-    const pipe = new THREE.Mesh(
-      new THREE.BoxGeometry(0.02, 0.7*S, 0.02),
-      new THREE.MeshBasicMaterial({ color: 0xc8142b }),
-    );
-    pipe.position.set(0.31*B, 1.150*S, 0);
-    group.add(pipe);
-  }
-
-  group.userData.parts = { armL: armLGrp, armR: armRGrp };
-  group.userData.scale = S;
-  return group;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  _ALIEN_TEX_CACHE.set(key, tex);
+  return tex;
 }
 
-// ---- Alien ----
-export function buildAlienMesh(spec) {
-  const group = new THREE.Group();
-  const sc = spec.size;
-  const primary = color(spec.skin.primary);
-  const accent = color(spec.skin.accent);
+function _alienMat(spec, opts = {}) {
+  const tex = _makeAlienSkinTex(spec);
+  return new THREE.MeshStandardMaterial({
+    map: tex,
+    color: opts.tint != null ? opts.tint : 0xffffff,
+    roughness: opts.roughness != null ? opts.roughness : 0.55,
+    metalness: opts.metalness != null ? opts.metalness : 0.15,
+  });
+}
 
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5 * sc, 18, 12),
-    new THREE.MeshStandardMaterial({ color: primary, roughness: 0.55, metalness: 0.2 }),
-  );
-  body.scale.set(1.2, 0.75, 1.0);
-  body.position.y = 0.4 * sc;
-  body.castShadow = true; body.receiveShadow = true;
-  group.add(body);
+function _alienAccentMat(spec, opts = {}) {
+  return new THREE.MeshStandardMaterial({
+    color: color(spec.skin.accent),
+    roughness: opts.roughness != null ? opts.roughness : 0.6,
+    metalness: opts.metalness != null ? opts.metalness : 0.25,
+  });
+}
 
-  // Back stripe
-  const stripe = new THREE.Mesh(
-    new THREE.BoxGeometry(0.6 * sc, 0.05, 0.07),
-    new THREE.MeshBasicMaterial({ color: accent }),
-  );
-  stripe.position.set(0, 0.72 * sc, 0);
-  group.add(stripe);
-
-  for (let i = 0; i < spec.limbs; i++) {
-    const a = (i / spec.limbs) * Math.PI * 2;
-    const limb = new THREE.Mesh(
-      new THREE.SphereGeometry(0.14 * sc, 10, 8),
-      new THREE.MeshStandardMaterial({ color: accent, roughness: 0.7 }),
-    );
-    limb.position.set(Math.cos(a) * 0.55 * sc, 0.2 * sc, Math.sin(a) * 0.42 * sc);
-    limb.castShadow = true;
-    group.add(limb);
-  }
-
+function _addEyes(parent, spec, placementFn) {
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffde55 });
-  for (let i = 0; i < spec.eyeCount; i++) {
-    const ang = ((i / Math.max(1, spec.eyeCount - 1)) - 0.5) * 0.9;
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.05 * sc, 8, 6), eyeMat);
-    eye.position.set(0.45 * sc, 0.5 * sc, Math.sin(ang) * 0.2 * sc);
-    group.add(eye);
+  const pupilMat = new THREE.MeshBasicMaterial({ color: 0x110000 });
+  const n = spec.eyeCount;
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0 : (i / (n - 1)) - 0.5;
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.07 * spec.size, 8, 6), eyeMat);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.035 * spec.size, 6, 4), pupilMat);
+    placementFn(eye, pupil, t, i);
+    parent.add(eye);
+    parent.add(pupil);
   }
+}
 
-  // Marker ring placeholder — shown only when marked
-  const markRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.8 * sc, 0.04, 8, 24),
+function _markRing(spec, yOff = 0, rMul = 1) {
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.8 * spec.size * rMul, 0.05 * spec.size, 8, 24),
     new THREE.MeshBasicMaterial({ color: 0xff2030, transparent: true, opacity: 0 }),
   );
-  markRing.rotation.x = Math.PI / 2;
-  markRing.position.y = 0.4 * sc;
-  group.add(markRing);
-  group.userData.markRing = markRing;
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = yOff;
+  return ring;
+}
 
-  return group;
+// ── Per-body-plan builders ────────────────────────────────────────────────
+
+function buildBipedAlien(spec) {
+  const g = new THREE.Group();
+  const sc = spec.size;
+  const bulk = spec.bulk || 1;
+  const htS = spec.height || 1;
+  const limbLen = spec.limbLen || 1;
+  const bodyMat = _alienMat(spec);
+  const accMat = _alienAccentMat(spec);
+
+  // Pelvis/Hip anchor height — so legs can pivot cleanly.
+  const hipY = 1.0 * sc * htS;
+
+  // Torso
+  const torsoGrp = new THREE.Group();
+  torsoGrp.position.y = hipY;
+  const torso = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.32 * sc * bulk, 0.55 * sc * htS, 6, 12),
+    bodyMat,
+  );
+  torso.castShadow = true; torso.receiveShadow = true;
+  torsoGrp.add(torso);
+
+  // Chest ridges
+  for (let i = 0; i < 3; i++) {
+    const ridge = new THREE.Mesh(
+      new THREE.TorusGeometry(0.33 * sc * bulk, 0.015 * sc, 4, 16),
+      accMat,
+    );
+    ridge.rotation.x = Math.PI / 2;
+    ridge.position.set(0, 0.2 - i * 0.15, 0.18 * sc * bulk);
+    ridge.position.y *= sc * htS;
+    torsoGrp.add(ridge);
+  }
+
+  // Back spines (if lots of limbs, count as dorsal spikes)
+  if (spec.limbs >= 5) {
+    for (let i = 0; i < 4; i++) {
+      const spike = new THREE.Mesh(
+        new THREE.ConeGeometry(0.05 * sc, 0.22 * sc, 5),
+        accMat,
+      );
+      spike.position.set(0, 0.25 - i * 0.18, -0.25 * sc * bulk);
+      spike.position.y *= sc * htS;
+      spike.rotation.x = -0.6;
+      torsoGrp.add(spike);
+    }
+  }
+  g.add(torsoGrp);
+
+  // Neck + Head
+  const headGrp = new THREE.Group();
+  headGrp.position.y = hipY + 0.55 * sc * htS;
+  const neck = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.1 * sc, 0.13 * sc, 0.18 * sc * htS, 8),
+    bodyMat,
+  );
+  neck.position.y = 0;
+  headGrp.add(neck);
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.26 * sc, 14, 10),
+    bodyMat,
+  );
+  head.position.y = 0.25 * sc * htS;
+  head.scale.set(1.0, 0.95, 1.1);
+  head.castShadow = true;
+  headGrp.add(head);
+
+  // Cranial spines
+  if (spec.limbs >= 5) {
+    for (let i = 0; i < 5; i++) {
+      const a = -0.6 + (i / 4) * 1.2;
+      const horn = new THREE.Mesh(
+        new THREE.ConeGeometry(0.04 * sc, 0.2 * sc, 5),
+        accMat,
+      );
+      horn.position.set(Math.sin(a) * 0.22 * sc, 0.4 * sc * htS, Math.cos(a) * 0.05 * sc);
+      horn.rotation.x = -0.2;
+      horn.rotation.z = -a * 0.8;
+      headGrp.add(horn);
+    }
+  }
+
+  _addEyes(headGrp, spec, (eye, pupil, t) => {
+    eye.position.set(t * 0.2 * sc, 0.28 * sc * htS, 0.24 * sc);
+    pupil.position.set(t * 0.2 * sc, 0.28 * sc * htS, 0.29 * sc);
+  });
+  g.add(headGrp);
+
+  // Arms — shoulder pivot groups for animation
+  const armL = new THREE.Group();
+  const armR = new THREE.Group();
+  armL.position.set(-0.34 * sc * bulk, hipY + 0.3 * sc * htS, 0);
+  armR.position.set(0.34 * sc * bulk, hipY + 0.3 * sc * htS, 0);
+  for (const [grp, side] of [[armL, -1], [armR, 1]]) {
+    const upper = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.09 * sc, 0.35 * sc * limbLen, 4, 8),
+      bodyMat,
+    );
+    upper.position.y = -0.2 * sc * limbLen;
+    upper.castShadow = true;
+    grp.add(upper);
+
+    const forearmPivot = new THREE.Group();
+    forearmPivot.position.y = -0.4 * sc * limbLen;
+    const forearm = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.07 * sc, 0.32 * sc * limbLen, 4, 8),
+      bodyMat,
+    );
+    forearm.position.y = -0.17 * sc * limbLen;
+    forearm.castShadow = true;
+    forearmPivot.add(forearm);
+
+    // Claws
+    const clawN = spec.weapon === 'claws' ? 4 : 3;
+    for (let c = 0; c < clawN; c++) {
+      const ca = (c / (clawN - 1) - 0.5) * 0.9;
+      const claw = new THREE.Mesh(
+        new THREE.ConeGeometry(0.025 * sc, 0.18 * sc, 4),
+        accMat,
+      );
+      claw.position.set(Math.sin(ca) * 0.12 * sc, -0.4 * sc * limbLen, Math.cos(ca) * 0.05 * sc);
+      claw.rotation.x = Math.PI; // point down
+      forearmPivot.add(claw);
+    }
+
+    grp.add(forearmPivot);
+    grp.userData.forearm = forearmPivot;
+    g.add(grp);
+  }
+
+  // Legs — hip pivot groups
+  const legL = new THREE.Group();
+  const legR = new THREE.Group();
+  legL.position.set(-0.18 * sc * bulk, hipY - 0.25 * sc * htS, 0);
+  legR.position.set(0.18 * sc * bulk, hipY - 0.25 * sc * htS, 0);
+  for (const [grp] of [[legL], [legR]]) {
+    const thigh = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.1 * sc, 0.38 * sc * limbLen, 4, 8),
+      bodyMat,
+    );
+    thigh.position.y = -0.22 * sc * limbLen;
+    thigh.castShadow = true;
+    grp.add(thigh);
+
+    const shinPivot = new THREE.Group();
+    shinPivot.position.y = -0.42 * sc * limbLen;
+    const shin = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.08 * sc, 0.38 * sc * limbLen, 4, 8),
+      bodyMat,
+    );
+    shin.position.y = -0.22 * sc * limbLen;
+    shin.castShadow = true;
+    shinPivot.add(shin);
+
+    const foot = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18 * sc, 0.08 * sc, 0.28 * sc),
+      accMat,
+    );
+    foot.position.set(0, -0.45 * sc * limbLen, 0.05 * sc);
+    foot.castShadow = true;
+    shinPivot.add(foot);
+
+    grp.add(shinPivot);
+    grp.userData.shin = shinPivot;
+    g.add(grp);
+  }
+
+  // Optional tail
+  let tail = null;
+  if ((spec.seed & 1) === 1) {
+    tail = new THREE.Group();
+    tail.position.set(0, hipY - 0.1 * sc * htS, -0.28 * sc);
+    const seg1 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.08 * sc, 0.35 * sc, 4, 8),
+      bodyMat,
+    );
+    seg1.rotation.x = 1.0;
+    seg1.position.z = -0.18 * sc;
+    tail.add(seg1);
+    const seg2 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.05 * sc, 0.3 * sc, 4, 8),
+      bodyMat,
+    );
+    seg2.rotation.x = 1.3;
+    seg2.position.set(0, -0.15 * sc, -0.45 * sc);
+    tail.add(seg2);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.08 * sc, 0.15 * sc, 6), accMat);
+    tip.rotation.x = Math.PI / 2;
+    tip.position.set(0, -0.3 * sc, -0.6 * sc);
+    tail.add(tip);
+    g.add(tail);
+  }
+
+  // Weapon appendage
+  if (spec.weapon === 'projectile') {
+    const barrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06 * sc, 0.06 * sc, 0.4 * sc, 8),
+      new THREE.MeshStandardMaterial({ color: 0x556070, roughness: 0.4, metalness: 0.8 }),
+    );
+    barrel.rotation.z = Math.PI / 2;
+    barrel.position.set(0.55 * sc * bulk, hipY + 0.25 * sc * htS, 0);
+    g.add(barrel);
+  }
+
+  const markRing = _markRing(spec, hipY - 0.35 * sc * htS, 0.9);
+  g.add(markRing);
+  g.userData.markRing = markRing;
+
+  // Local forward axis: head faces -Z (forward in scene3d after facingToRotY).
+  // Rotate so that "forward" (i.e. where eyes look) is +X world by default.
+  // Actually the factor in scene3d: g.rotation.y = facingToRotY(facing).
+  // The builders design with +Z being forward. We handle orientation in scene3d loop.
+
+  g.userData.bodyPlan = 'biped';
+  g.userData.parts = { armL, armR, legL, legR, head: headGrp, tail, torso: torsoGrp };
+  return g;
+}
+
+function buildQuadrupedAlien(spec) {
+  const g = new THREE.Group();
+  const sc = spec.size;
+  const bulk = spec.bulk || 1;
+  const limbLen = spec.limbLen || 1;
+  const bodyMat = _alienMat(spec);
+  const accMat = _alienAccentMat(spec);
+
+  const bodyY = 0.7 * sc;
+
+  // Torso — elongated capsule (along +Z since we orient forward = +Z)
+  const torso = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.32 * sc * bulk, 0.8 * sc, 6, 12),
+    bodyMat,
+  );
+  torso.rotation.x = Math.PI / 2;
+  torso.position.y = bodyY;
+  torso.castShadow = true; torso.receiveShadow = true;
+  g.add(torso);
+
+  // Dorsal ridge spikes
+  for (let i = 0; i < 6; i++) {
+    const t = i / 5;
+    const spike = new THREE.Mesh(
+      new THREE.ConeGeometry(0.05 * sc, (i === 2 || i === 3 ? 0.28 : 0.2) * sc, 5),
+      accMat,
+    );
+    spike.position.set(0, bodyY + 0.32 * sc * bulk, (t - 0.5) * 0.7 * sc);
+    g.add(spike);
+  }
+
+  // Neck + Head (forward = +Z)
+  const headGrp = new THREE.Group();
+  headGrp.position.set(0, bodyY + 0.1 * sc, 0.55 * sc);
+  const neck = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14 * sc, 0.18 * sc, 0.4 * sc, 8),
+    bodyMat,
+  );
+  neck.rotation.x = 0.6;
+  neck.position.set(0, 0.08 * sc, 0.1 * sc);
+  headGrp.add(neck);
+
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22 * sc, 12, 10),
+    bodyMat,
+  );
+  head.position.set(0, 0.28 * sc, 0.3 * sc);
+  head.scale.set(1.0, 0.9, 1.3);
+  head.castShadow = true;
+  headGrp.add(head);
+
+  // Snout
+  const snout = new THREE.Mesh(
+    new THREE.ConeGeometry(0.14 * sc, 0.28 * sc, 8),
+    bodyMat,
+  );
+  snout.rotation.x = Math.PI / 2;
+  snout.position.set(0, 0.25 * sc, 0.52 * sc);
+  headGrp.add(snout);
+
+  if (spec.weapon === 'ram') {
+    const horn = new THREE.Mesh(
+      new THREE.ConeGeometry(0.07 * sc, 0.35 * sc, 6),
+      accMat,
+    );
+    horn.rotation.x = Math.PI / 2;
+    horn.position.set(0, 0.3 * sc, 0.75 * sc);
+    headGrp.add(horn);
+  }
+
+  _addEyes(headGrp, spec, (eye, pupil, t) => {
+    eye.position.set(t * 0.18 * sc, 0.34 * sc, 0.42 * sc);
+    pupil.position.set(t * 0.18 * sc, 0.34 * sc, 0.46 * sc);
+  });
+
+  g.add(headGrp);
+
+  // 4 legs: indexed for diagonal gait (FL=0, FR=1, BL=2, BR=3)
+  const legDefs = [
+    { x: -0.22, z:  0.32, idx: 0 }, // front-left
+    { x:  0.22, z:  0.32, idx: 1 }, // front-right
+    { x: -0.22, z: -0.32, idx: 2 }, // back-left
+    { x:  0.22, z: -0.32, idx: 3 }, // back-right
+  ];
+  const legs = [];
+  for (const def of legDefs) {
+    const leg = new THREE.Group();
+    leg.position.set(def.x * sc * bulk, bodyY - 0.15 * sc, def.z * sc);
+    const thigh = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.09 * sc, 0.32 * sc * limbLen, 4, 8),
+      bodyMat,
+    );
+    thigh.position.y = -0.18 * sc * limbLen;
+    thigh.castShadow = true;
+    leg.add(thigh);
+
+    const shinPivot = new THREE.Group();
+    shinPivot.position.y = -0.34 * sc * limbLen;
+    const shin = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.07 * sc, 0.3 * sc * limbLen, 4, 8),
+      bodyMat,
+    );
+    shin.position.y = -0.17 * sc * limbLen;
+    shin.castShadow = true;
+    shinPivot.add(shin);
+    const paw = new THREE.Mesh(new THREE.SphereGeometry(0.1 * sc, 8, 6), accMat);
+    paw.position.y = -0.35 * sc * limbLen;
+    shinPivot.add(paw);
+    leg.add(shinPivot);
+    leg.userData.shin = shinPivot;
+    leg.userData.gaitIdx = def.idx;
+    g.add(leg);
+    legs.push(leg);
+  }
+
+  // Tail (curls up)
+  const tail = new THREE.Group();
+  tail.position.set(0, bodyY + 0.1 * sc, -0.5 * sc);
+  const t1 = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.08 * sc, 0.4 * sc, 4, 8),
+    bodyMat,
+  );
+  t1.rotation.x = -0.8;
+  t1.position.set(0, 0.2 * sc, -0.1 * sc);
+  tail.add(t1);
+  const tipBall = new THREE.Mesh(new THREE.SphereGeometry(0.1 * sc, 8, 6), accMat);
+  tipBall.position.set(0, 0.55 * sc, -0.2 * sc);
+  tail.add(tipBall);
+  g.add(tail);
+
+  const markRing = _markRing(spec, 0.1, 1.0);
+  g.add(markRing);
+  g.userData.markRing = markRing;
+
+  g.userData.bodyPlan = 'quadruped';
+  g.userData.parts = { legs, head: headGrp, tail, torso };
+  return g;
+}
+
+function buildSerpentAlien(spec) {
+  const g = new THREE.Group();
+  const sc = spec.size;
+  const bodyMat = _alienMat(spec);
+  const accMat = _alienAccentMat(spec);
+
+  const segN = 9;
+  const segments = [];
+  const segLen = 0.22 * sc;
+
+  for (let i = 0; i < segN; i++) {
+    const seg = new THREE.Group();
+    const shrink = 1 - i * 0.07;
+    const r = 0.22 * sc * Math.max(0.3, shrink);
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 10),
+      bodyMat,
+    );
+    ball.scale.set(1.0, 0.8, 1.2);
+    ball.castShadow = true;
+    seg.add(ball);
+
+    // Frills every other segment
+    if (i % 2 === 0 && i > 0 && i < segN - 1) {
+      for (const side of [-1, 1]) {
+        const fin = new THREE.Mesh(
+          new THREE.ConeGeometry(0.05 * sc, 0.18 * sc, 4),
+          accMat,
+        );
+        fin.position.set(side * r * 0.9, 0, 0);
+        fin.rotation.z = side * 0.9;
+        seg.add(fin);
+      }
+    }
+    // Chain segments along -Z (tail trails behind)
+    seg.position.set(0, 0.28 * sc, -i * segLen);
+    seg.userData.segIdx = i;
+    seg.userData.baseZ = -i * segLen;
+    seg.userData.baseX = 0;
+    segments.push(seg);
+    g.add(seg);
+  }
+
+  // Head = segment 0, add features
+  const headSeg = segments[0];
+  // Fangs
+  for (const side of [-1, 1]) {
+    const fang = new THREE.Mesh(
+      new THREE.ConeGeometry(0.025 * sc, 0.12 * sc, 4),
+      new THREE.MeshBasicMaterial({ color: 0xeeeeee }),
+    );
+    fang.position.set(side * 0.08 * sc, -0.1 * sc, 0.14 * sc);
+    fang.rotation.x = Math.PI;
+    headSeg.add(fang);
+  }
+  _addEyes(headSeg, spec, (eye, pupil, t) => {
+    eye.position.set(t * 0.16 * sc, 0.08 * sc, 0.18 * sc);
+    pupil.position.set(t * 0.16 * sc, 0.08 * sc, 0.22 * sc);
+  });
+
+  const markRing = _markRing(spec, 0.1, 1.0);
+  g.add(markRing);
+  g.userData.markRing = markRing;
+
+  g.userData.bodyPlan = 'serpent';
+  g.userData.parts = { segments };
+  return g;
+}
+
+function buildFloaterAlien(spec) {
+  const g = new THREE.Group();
+  const sc = spec.size;
+  const bodyMat = _alienMat(spec);
+  const accMat = _alienAccentMat(spec);
+
+  const bellY = 1.3 * sc;
+  const bellR = 0.5 * sc;
+
+  // Bell — hemisphere-ish, flattened sphere
+  const bellGrp = new THREE.Group();
+  bellGrp.position.y = bellY;
+  const bell = new THREE.Mesh(
+    new THREE.SphereGeometry(bellR, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.6),
+    bodyMat,
+  );
+  bell.castShadow = true;
+  bellGrp.add(bell);
+
+  // Glow halo (additive)
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(bellR * 1.25, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.7),
+    new THREE.MeshBasicMaterial({
+      color: color(spec.skin.accent),
+      transparent: true,
+      opacity: 0.12,
+      side: THREE.BackSide,
+    }),
+  );
+  bellGrp.add(halo);
+
+  // Bell rim fringe
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const fringe = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05 * sc, 6, 5),
+      accMat,
+    );
+    fringe.position.set(Math.cos(a) * bellR * 0.9, 0, Math.sin(a) * bellR * 0.9);
+    bellGrp.add(fringe);
+  }
+
+  // Top-cluster eyes
+  _addEyes(bellGrp, spec, (eye, pupil, t, i) => {
+    const a = (i / Math.max(1, spec.eyeCount)) * Math.PI * 2;
+    eye.position.set(Math.cos(a) * bellR * 0.35, bellR * 0.35, Math.sin(a) * bellR * 0.35);
+    pupil.position.set(Math.cos(a) * bellR * 0.4, bellR * 0.4, Math.sin(a) * bellR * 0.4);
+  });
+
+  g.add(bellGrp);
+
+  // Tentacles — each is a Group of 3 chained pivots
+  const tentN = Math.max(6, spec.limbs + 3);
+  const tentacles = [];
+  for (let i = 0; i < tentN; i++) {
+    const a = (i / tentN) * Math.PI * 2;
+    const tx = Math.cos(a) * bellR * 0.7;
+    const tz = Math.sin(a) * bellR * 0.7;
+    const tent = new THREE.Group();
+    tent.position.set(tx, bellY - 0.1 * sc, tz);
+
+    // 3-segment chain with pivots
+    const seg1 = new THREE.Group();
+    const m1 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.05 * sc, 0.35 * sc, 4, 6),
+      i % 2 === 0 ? bodyMat : accMat,
+    );
+    m1.position.y = -0.2 * sc;
+    seg1.add(m1);
+
+    const seg2 = new THREE.Group();
+    seg2.position.y = -0.4 * sc;
+    const m2 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.04 * sc, 0.35 * sc, 4, 6),
+      i % 2 === 0 ? bodyMat : accMat,
+    );
+    m2.position.y = -0.2 * sc;
+    seg2.add(m2);
+
+    const seg3 = new THREE.Group();
+    seg3.position.y = -0.4 * sc;
+    const m3 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.03 * sc, 0.3 * sc, 4, 6),
+      accMat,
+    );
+    m3.position.y = -0.18 * sc;
+    seg3.add(m3);
+    // Tip bulb
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.05 * sc, 6, 5), accMat);
+    bulb.position.y = -0.34 * sc;
+    seg3.add(bulb);
+
+    seg2.add(seg3);
+    seg1.add(seg2);
+    tent.add(seg1);
+
+    tent.userData.seg1 = seg1;
+    tent.userData.seg2 = seg2;
+    tent.userData.seg3 = seg3;
+    tent.userData.phaseOffset = a;
+    tentacles.push(tent);
+    g.add(tent);
+  }
+
+  const markRing = _markRing(spec, bellY - 0.3 * sc, 1.0);
+  g.add(markRing);
+  g.userData.markRing = markRing;
+
+  g.userData.bodyPlan = 'floater';
+  g.userData.parts = { bell: bellGrp, tentacles };
+  return g;
+}
+
+function buildInsectoidAlien(spec) {
+  const g = new THREE.Group();
+  const sc = spec.size;
+  const bulk = spec.bulk || 1;
+  const limbLen = spec.limbLen || 1;
+  const bodyMat = _alienMat(spec);
+  const accMat = _alienAccentMat(spec);
+
+  const bodyY = 0.5 * sc;
+
+  // Thorax (forward = +Z: head at +Z, abdomen at -Z)
+  const thorax = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32 * sc * bulk, 14, 10),
+    bodyMat,
+  );
+  thorax.position.set(0, bodyY, 0);
+  thorax.scale.set(1.0, 0.8, 1.15);
+  thorax.castShadow = true;
+  g.add(thorax);
+
+  // Abdomen — 3 segments trailing behind (-Z), each smaller
+  const abdomen = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const t = i / 2;
+    const r = 0.28 * sc * (1 - t * 0.35);
+    const seg = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 10),
+      bodyMat,
+    );
+    seg.scale.set(1.0, 0.85, 1.1);
+    seg.position.set(0, bodyY - t * 0.05 * sc, -0.3 * sc - i * 0.4 * sc);
+    seg.castShadow = true;
+    abdomen.add(seg);
+  }
+  // Stinger
+  const stinger = new THREE.Mesh(
+    new THREE.ConeGeometry(0.08 * sc, 0.3 * sc, 6),
+    accMat,
+  );
+  stinger.rotation.x = Math.PI / 2;
+  stinger.position.set(0, bodyY, -1.4 * sc);
+  abdomen.add(stinger);
+  g.add(abdomen);
+
+  // Head — forward (+Z)
+  const headGrp = new THREE.Group();
+  headGrp.position.set(0, bodyY + 0.05 * sc, 0.42 * sc);
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22 * sc, 12, 10),
+    bodyMat,
+  );
+  head.scale.set(1.0, 0.9, 1.1);
+  head.castShadow = true;
+  headGrp.add(head);
+
+  // Mandibles — pivot groups for attack chomp
+  const mandL = new THREE.Group();
+  const mandR = new THREE.Group();
+  mandL.position.set(-0.1 * sc, -0.05 * sc, 0.18 * sc);
+  mandR.position.set(0.1 * sc, -0.05 * sc, 0.18 * sc);
+  for (const [m, side] of [[mandL, -1], [mandR, 1]]) {
+    const mesh = new THREE.Mesh(
+      new THREE.ConeGeometry(0.05 * sc, 0.25 * sc, 6),
+      accMat,
+    );
+    mesh.rotation.x = Math.PI / 2;
+    mesh.rotation.z = -side * 0.3;
+    mesh.position.set(side * 0.04 * sc, 0, 0.1 * sc);
+    m.add(mesh);
+    headGrp.add(m);
+  }
+
+  // Antennae
+  for (const side of [-1, 1]) {
+    const ant = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.01 * sc, 0.015 * sc, 0.45 * sc, 5),
+      accMat,
+    );
+    ant.position.set(side * 0.1 * sc, 0.3 * sc, 0.05 * sc);
+    ant.rotation.x = -0.4;
+    ant.rotation.z = side * 0.3;
+    headGrp.add(ant);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.04 * sc, 6, 5), accMat);
+    tip.position.set(side * 0.22 * sc, 0.48 * sc, 0.15 * sc);
+    headGrp.add(tip);
+  }
+
+  _addEyes(headGrp, spec, (eye, pupil, t) => {
+    eye.position.set(t * 0.18 * sc, 0.05 * sc, 0.2 * sc);
+    pupil.position.set(t * 0.18 * sc, 0.05 * sc, 0.24 * sc);
+  });
+  g.add(headGrp);
+
+  // 6 legs — 3 pairs along thorax, pivot groups
+  const legs = [];
+  for (let i = 0; i < 3; i++) {
+    for (const side of [-1, 1]) {
+      const leg = new THREE.Group();
+      const zOff = 0.18 * sc - i * 0.18 * sc;
+      leg.position.set(side * 0.25 * sc * bulk, bodyY, zOff);
+      const femur = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.04 * sc, 0.28 * sc * limbLen, 4, 6),
+        bodyMat,
+      );
+      femur.position.set(side * 0.2 * sc * limbLen, 0, 0);
+      femur.rotation.z = side * -0.9;
+      leg.add(femur);
+
+      const tibiaPivot = new THREE.Group();
+      tibiaPivot.position.set(side * 0.38 * sc * limbLen, 0.1 * sc * limbLen, 0);
+      const tibia = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.03 * sc, 0.3 * sc * limbLen, 4, 6),
+        bodyMat,
+      );
+      tibia.position.set(side * 0.15 * sc * limbLen, -0.15 * sc * limbLen, 0);
+      tibia.rotation.z = side * 0.5;
+      tibiaPivot.add(tibia);
+      // claw tip
+      const claw = new THREE.Mesh(
+        new THREE.ConeGeometry(0.025 * sc, 0.08 * sc, 4),
+        accMat,
+      );
+      claw.position.set(side * 0.3 * sc * limbLen, -0.3 * sc * limbLen, 0);
+      tibiaPivot.add(claw);
+      leg.add(tibiaPivot);
+
+      leg.userData.phasePair = i * 2 + (side > 0 ? 1 : 0);
+      leg.userData.tibia = tibiaPivot;
+      legs.push(leg);
+      g.add(leg);
+    }
+  }
+
+  // Wing stubs (decorative)
+  for (const side of [-1, 1]) {
+    const wing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04 * sc, 0.18 * sc, 0.4 * sc),
+      new THREE.MeshStandardMaterial({
+        color: color(spec.skin.accent),
+        transparent: true,
+        opacity: 0.35,
+        roughness: 0.2,
+        metalness: 0.3,
+      }),
+    );
+    wing.position.set(side * 0.25 * sc, bodyY + 0.25 * sc, -0.15 * sc);
+    wing.rotation.z = side * -0.3;
+    g.add(wing);
+  }
+
+  const markRing = _markRing(spec, 0.1, 1.0);
+  g.add(markRing);
+  g.userData.markRing = markRing;
+
+  g.userData.bodyPlan = 'insectoid';
+  g.userData.parts = { legs, abdomen, mandL, mandR, head: headGrp, thorax };
+  return g;
+}
+
+export function buildAlienMesh(spec) {
+  switch (spec.body) {
+    case 'quadruped': return buildQuadrupedAlien(spec);
+    case 'serpent':   return buildSerpentAlien(spec);
+    case 'floater':   return buildFloaterAlien(spec);
+    case 'insectoid': return buildInsectoidAlien(spec);
+    case 'biped':
+    default:          return buildBipedAlien(spec);
+  }
+}
+
+// Per-frame animation driver — called from scene3d each frame.
+// state fields used: walkPhase (float), state ('wander'|'chase'|'marked'),
+// attackCooldown (float, seconds remaining), alive (bool).
+// attackAnim: 0..1 recently-attacked attack progress, driven by scene3d from
+// attackCooldown delta (peaks at 1 right when _pendingAttack was consumed).
+export function animateAlienMesh(g, a, time, dt) {
+  if (!g || !g.userData || !g.userData.parts) return;
+  const parts = g.userData.parts;
+  const plan = g.userData.bodyPlan;
+  const phase = a.walkPhase || 0;
+  const moving = a.state === 'chase' || (a.state === 'wander' && a.wanderTarget);
+  const attackPulse = g.userData._attackPulse || 0;
+  // decay attack pulse
+  if (g.userData._attackPulse && g.userData._attackPulse > 0) {
+    g.userData._attackPulse = Math.max(0, g.userData._attackPulse - dt * 4);
+  }
+
+  if (plan === 'biped') {
+    const swing = moving ? Math.sin(phase) * 0.7 : Math.sin(time * 1.2) * 0.04;
+    if (parts.armL) parts.armL.rotation.x = swing;
+    if (parts.armR) parts.armR.rotation.x = -swing;
+    if (parts.legL) parts.legL.rotation.x = -swing * 0.9;
+    if (parts.legR) parts.legR.rotation.x = swing * 0.9;
+    // subtle forearm counter-bend
+    if (parts.armL?.userData.forearm) parts.armL.userData.forearm.rotation.x = Math.abs(swing) * 0.5;
+    if (parts.armR?.userData.forearm) parts.armR.userData.forearm.rotation.x = Math.abs(swing) * 0.5;
+    if (parts.legL?.userData.shin) parts.legL.userData.shin.rotation.x = Math.max(0, swing) * 0.9;
+    if (parts.legR?.userData.shin) parts.legR.userData.shin.rotation.x = Math.max(0, -swing) * 0.9;
+    // breathing sway
+    if (parts.torso) parts.torso.position.y = (g.userData._baseTorsoY ?? parts.torso.position.y) + Math.sin(time * 2) * 0.02;
+    if (g.userData._baseTorsoY === undefined && parts.torso) g.userData._baseTorsoY = parts.torso.position.y;
+    // head tracking idle
+    if (parts.head) parts.head.rotation.y = Math.sin(time * 0.8) * 0.15;
+    // attack: both arms slam forward, torso lunge
+    if (attackPulse > 0) {
+      const p = attackPulse;
+      if (parts.armL) parts.armL.rotation.x = -1.6 * p;
+      if (parts.armR) parts.armR.rotation.x = -1.6 * p;
+      if (parts.torso) parts.torso.rotation.x = -0.4 * p;
+    } else if (parts.torso) {
+      parts.torso.rotation.x = 0;
+    }
+  } else if (plan === 'quadruped') {
+    const legs = parts.legs;
+    if (legs) {
+      // diagonal gait: pair (FL=0, BR=3) vs (FR=1, BL=2)
+      for (const leg of legs) {
+        const idx = leg.userData.gaitIdx;
+        const isPairA = (idx === 0 || idx === 3);
+        const ph = phase + (isPairA ? 0 : Math.PI);
+        const lift = moving ? Math.sin(ph) * 0.6 : Math.sin(time * 1.0 + idx) * 0.04;
+        leg.rotation.x = lift;
+        if (leg.userData.shin) {
+          leg.userData.shin.rotation.x = Math.max(0, -lift) * 0.8;
+        }
+      }
+    }
+    // head bob
+    if (parts.head) parts.head.rotation.x = Math.sin(time * 1.5) * 0.06;
+    // tail sway
+    if (parts.tail) parts.tail.rotation.y = Math.sin(time * 2) * 0.2;
+    // attack: rear up (pitch body backward) — ram motion
+    if (attackPulse > 0) {
+      const p = attackPulse;
+      g.rotation.x = -0.3 * p;
+      if (parts.head) parts.head.rotation.x = -0.5 * p;
+    } else if (a.alive !== false) {
+      g.rotation.x = 0;
+    }
+  } else if (plan === 'serpent') {
+    const segs = parts.segments;
+    if (segs) {
+      // S-wave along body — reset position each frame so deltas don't accumulate
+      for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i];
+        const wave = Math.sin(phase - i * 0.6) * 0.35 * (1 - i * 0.03);
+        seg.position.x = wave;
+        seg.position.y = 0.28 * (g.userData._sc || 1) + Math.sin(phase - i * 0.6 + 1.5) * 0.05;
+        seg.position.z = seg.userData.baseZ != null ? seg.userData.baseZ : seg.position.z;
+      }
+    }
+    // idle: head weaves even when not moving
+    if (!moving && segs && segs[0]) {
+      segs[0].rotation.y = Math.sin(time * 1.2) * 0.4;
+    } else if (segs && segs[0]) {
+      segs[0].rotation.y = 0;
+    }
+    // attack: head rears up + fangs forward
+    if (attackPulse > 0 && segs && segs[0]) {
+      const k = Math.sin(attackPulse * Math.PI);
+      segs[0].position.y += k * 0.6;
+      segs[0].position.z += k * 0.4;
+    }
+  } else if (plan === 'floater') {
+    // Bell pulses (pumping)
+    if (parts.bell) {
+      const pulse = 1 + Math.sin(time * 2.5) * 0.07;
+      parts.bell.scale.set(1, pulse, 1);
+    }
+    // Gentle hover bob
+    if (g.userData._baseY === undefined) g.userData._baseY = g.position.y;
+    g.userData._hoverOffset = Math.sin(time * 1.3) * 0.1;
+    // Tentacles sway
+    if (parts.tentacles) {
+      for (const t of parts.tentacles) {
+        const po = t.userData.phaseOffset || 0;
+        const sw = Math.sin(time * 1.5 + po) * 0.25;
+        t.rotation.x = sw;
+        t.rotation.z = Math.cos(time * 1.2 + po) * 0.2;
+        if (t.userData.seg2) t.userData.seg2.rotation.x = Math.sin(time * 1.8 + po) * 0.3;
+        if (t.userData.seg3) t.userData.seg3.rotation.x = Math.sin(time * 2.1 + po + 0.4) * 0.35;
+      }
+    }
+    // attack: bell contracts sharply, all tentacles whip forward
+    if (attackPulse > 0 && parts.bell) {
+      const p = attackPulse;
+      parts.bell.scale.set(1 + p * 0.3, 1 - p * 0.4, 1 + p * 0.3);
+      if (parts.tentacles) {
+        for (const t of parts.tentacles) {
+          t.rotation.x += p * 1.2;
+        }
+      }
+    }
+  } else if (plan === 'insectoid') {
+    const legs = parts.legs;
+    if (legs) {
+      // 6 legs in alternating tripod pattern (3+3)
+      for (const leg of legs) {
+        const ph = phase + leg.userData.phasePair * Math.PI;
+        const lift = moving ? Math.sin(ph) * 0.5 : Math.sin(time * 2 + leg.userData.phasePair) * 0.05;
+        leg.rotation.z = lift * (leg.position.x > 0 ? -1 : 1);
+        if (leg.userData.tibia) {
+          leg.userData.tibia.rotation.x = Math.max(0, lift) * 0.6;
+        }
+      }
+    }
+    // antennae wiggle via head rotation
+    if (parts.head) parts.head.rotation.z = Math.sin(time * 3) * 0.06;
+    // abdomen twitch
+    if (parts.abdomen) parts.abdomen.rotation.y = Math.sin(time * 1.8) * 0.06;
+    // attack: mandibles snap inward + lunge forward
+    if (attackPulse > 0) {
+      const p = attackPulse;
+      if (parts.mandL) parts.mandL.rotation.z = 0.8 * p;
+      if (parts.mandR) parts.mandR.rotation.z = -0.8 * p;
+      if (parts.head) parts.head.position.z = (g.userData._baseHeadZ ?? parts.head.position.z) + 0.3 * p;
+      if (g.userData._baseHeadZ === undefined && parts.head) g.userData._baseHeadZ = parts.head.position.z;
+    } else {
+      if (parts.mandL) parts.mandL.rotation.z = 0;
+      if (parts.mandR) parts.mandR.rotation.z = 0;
+      if (parts.head && g.userData._baseHeadZ !== undefined) parts.head.position.z = g.userData._baseHeadZ;
+    }
+  }
 }
 
 // ---- Props ----

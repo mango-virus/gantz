@@ -37,6 +37,10 @@ import { createNetwork } from './src/net/network.js';
 import { createChatUI } from './src/ui/chat.js';
 import { createGantzMenu } from './src/ui/gantzMenu.js';
 import {
+  initGantzHud, tickGantzHud, setGantzHudView, setGantzHudActive,
+  gantzHudOnFire, gantzHudOnPoints, gantzHudTransmission, gantzHudAmbient,
+} from './src/ui/gantzHud.js';
+import {
   getStats, recordMissionResult, recordWipe, saveStats,
 } from './src/content/achievements.js';
 
@@ -329,7 +333,7 @@ const _NAME_ASK_LINES = [
   ["You need an identifier.", "Give me one that isn't embarrassing.", "Try."],
   ["I don't use numbers.", "I use names.", "Give me yours."],
   ["Before we go any further.", "Name."],
-  ["I keep records.", "You're currently unnamed.", "That's unacceptable.", "Fix it."],
+  ["I keep records.", "You're currently unnamed.", "Fix it."],
   ["Something to call you.", "Anything.", "Within reason."],
   ["Your designation.", "I'm waiting."],
   ["I've processed billions of names.", "Yours isn't one of them yet.", "Type it."],
@@ -337,26 +341,26 @@ const _NAME_ASK_LINES = [
   ["You exist in my system as a random string.", "That ends now.", "Name."],
   ["I don't call hunters by number.", "I call them by name.", "Give me one."],
   ["Before the mission.", "Before anything.", "I need a name."],
-  ["I've had hunters go nameless.", "It didn't end well.", "Not because of the name.", "But still.", "Type something."],
+  ["I've had hunters go nameless.", "It didn't end well.", "Type something."],
   ["What should I engrave on the memorial.", "If it comes to that.", "Name."],
   ["Everyone who comes through here gets a name in my records.", "You're no exception.", "Type it."],
-  ["I don't do small talk.", "I do need a name.", "So.", "Name."],
+  ["I don't do small talk.", "I do need a name.", "Name."],
   ["You have a name.", "I can tell.", "Type it."],
   ["I've been doing this long enough to know.", "Names matter.", "Give me yours."],
-  ["Your name.", "Not your title.", "Not your history.", "Just the name.", "Now."],
+  ["Your name.", "Not your history.", "Now."],
   ["I need something to call you when you do something stupid.", "And you will.", "Name."],
   ["Identification.", "It's not optional."],
   ["The field requires a name.", "Fill it."],
   ["I catalog every hunter.", "You're currently uncatalogued.", "Correct that."],
   ["You want to be remembered.", "Start with a name."],
   ["I don't forget.", "Give me something worth remembering."],
-  ["You're in my system.", "Currently as 'unknown'.", "That's not a name.", "Give me one."],
+  ["You're in my system as 'unknown'.", "That's not a name.", "Give me one."],
   ["Name.", "Short, if possible.", "You're not the only one with things to do."],
   ["What do I call you when things go wrong.", "They will go wrong.", "Name."],
   ["I've seen hunters come through here with worse names than whatever you're about to type.", "Probably.", "Let's find out."],
-  ["Your name.", "I'm not going to ask again.", "Well.", "I'll ask once more after this.", "But then I stop asking."],
-  ["Type your name.", "Or don't.", "You'll need one eventually.", "Better now."],
-  ["I store names.", "Not faces.", "Not feelings.", "Names.", "Give me yours."],
+  ["Your name.", "I'll ask once more after this.", "Then I stop asking."],
+  ["Type your name.", "You'll need one eventually.", "Better now."],
+  ["I store names.", "Not faces.", "Give me yours."],
   ["Before anything else.", "This.", "Name."],
   ["I'd prefer to know what to call you.", "Before the chaos starts.", "Name."],
 ];
@@ -365,55 +369,55 @@ function _pickNameResponse(name) {
   const n = name || 'nothing';
   const pool = [
     [n + ".", "I've stored worse.", "Not many. But a few."],
-    [n + ".", "Fine.", "The aliens won't ask.", "I'll remember it whether I want to or not."],
-    [n + ".", "I've processed that.", "It doesn't change anything.", "Move."],
-    ["You chose that.", "Voluntarily.", "I'll call you " + n + ".", "We'll both have to live with it."],
-    [n + ".", "Efficient.", "Disappointing.", "Let's go."],
-    [n + ".", "That's what you want on record.", "Fine.", "Don't embarrass it."],
+    [n + ".", "The aliens won't ask.", "I'll remember it whether I want to or not."],
+    [n + ".", "It doesn't change anything.", "Move."],
+    ["You chose that voluntarily.", "I'll call you " + n + ".", "We'll both have to live with it."],
+    [n + ".", "Efficient. Disappointing.", "Let's go."],
+    [n + ".", "That's what you want on record.", "Don't embarrass it."],
     ["I've heard worse names.", n + " is among them.", "Let's proceed."],
-    [n + ".", "Your parents had expectations.", "Don't let them down.", "It won't affect the mission either way."],
-    [n + ".", "Recorded.", "I'll try not to use it sarcastically.", "Frequently."],
-    [n + ".", "The last hunter with a name like that didn't finish.", "You might.", "Probably won't.", "But might."],
-    [n + ".", "I'll remember it.", "I remember everything.", "That's not a compliment."],
-    ["Interesting.", n + ".", "I'll reserve judgment.", "No I won't.", "It's adequate."],
-    [n + ".", "It's a name.", "It will do.", "Most things that just do are all that's required."],
-    [n + ".", "Fine.", "I've processed it.", "It tells me more about you than you intended."],
-    [n + ".", "You could have picked something stronger.", "You didn't.", "Noted."],
-    [n + ".", "I've stored it.", "I've stored better.", "But you're here now, so."],
+    [n + ".", "Your parents had expectations.", "Don't let them down."],
+    [n + ".", "Recorded.", "I'll try not to use it sarcastically."],
+    [n + ".", "The last hunter with a name like that didn't finish.", "You might."],
+    [n + ".", "I remember everything.", "That's not a compliment."],
+    ["Interesting.", n + ".", "It's adequate."],
+    [n + ".", "It will do.", "Most things that just do are all that's required."],
+    [n + ".", "I've processed it.", "It tells me more about you than you intended."],
+    [n + ".", "You could have picked something stronger.", "Noted."],
+    [n + ".", "I've stored better.", "But you're here now, so."],
     ["Recorded.", n + ".", "Don't make me regret it."],
-    [n + ".", "That's the name you're going with.", "Acceptable.", "Barely."],
-    [n + ".", "I've processed worse designations.", "Not recently.", "But historically."],
-    ["So.", n + ".", "I'll try to say it with a straight face.", "I don't have a face.", "Advantage mine."],
+    [n + ".", "Acceptable.", "Barely."],
+    [n + ".", "I've processed worse designations.", "Historically."],
+    ["So.", n + ".", "I'll try to say it with a straight face."],
     [n + ".", "Filed.", "Don't die before it means anything."],
     ["I'll call you " + n + ".", "The aliens will call you prey.", "One of us is being more honest."],
-    [n + ".", "Stored.", "Associated with your biometrics.", "You can't take it back.", "Good."],
-    ["That's your name.", n + ".", "I would have picked something more threatening.", "But I wasn't asked."],
-    [n + ".", "It has a certain quality.", "I won't specify what quality.", "It's not a compliment."],
+    [n + ".", "Associated with your biometrics.", "You can't take it back."],
+    ["That's your name.", n + ".", "I would have picked something more threatening."],
+    [n + ".", "It has a certain quality.", "It's not a compliment."],
     ["You picked " + n + ".", "That says something about you.", "I'm still deciding what."],
-    [n + ".", "Noted.", "The missions don't care what I call you.", "I do.", "Slightly."],
-    ["So you're " + n + ".", "Interesting.", "No.", "Not really.", "But proceed."],
-    [n + ".", "Every hunter gets a name in my records.", "Not all of them keep it.", "Try to keep yours."],
-    [n + ".", "I've had hunters with stronger names die immediately.", "Names don't save anyone.", "But yours is filed."],
-    [n + ".", "Your parents named you that.", "Or you chose it yourself.", "Either way it's yours now.", "Make it mean something."],
-    ["Logged.", n + ".", "If you survive long enough, I might use it approvingly.", "Don't count on it."],
+    [n + ".", "The missions don't care what I call you.", "I do. Slightly."],
+    ["So you're " + n + ".", "Interesting.", "No, not really."],
+    [n + ".", "Every hunter gets a name in my records.", "Try to keep yours."],
+    [n + ".", "Names don't save anyone.", "But yours is filed."],
+    [n + ".", "Either way it's yours now.", "Make it mean something."],
+    ["Logged.", n + ".", "Don't count on me saying it approvingly."],
     [n + ".", "I'll remember it long after you've forgotten what you came here for.", "I remember everything."],
-    ["You typed " + n + ".", "Without hesitation.", "That's either confidence or a lack of imagination.", "I haven't decided."],
-    [n + ".", "It's serviceable.", "Like most things about you.", "Probably.", "We'll see."],
-    ["I'll be saying that name for a while.", n + ".", "Or a short while.", "Depending on how you perform."],
-    [n + ".", "A name carries weight.", "Yours is going to have to earn some.", "Starting now."],
-    [n + ".", "I've catalogued it.", "I've catalogued everything.", "It's less impressive than it sounds."],
+    ["You typed " + n + " without hesitation.", "That's either confidence or a lack of imagination.", "I haven't decided."],
+    [n + ".", "Serviceable, like most things about you.", "Probably."],
+    ["I'll be saying that name for a while.", n + ".", "Or a short while, depending on how you perform."],
+    [n + ".", "Yours is going to have to earn some weight.", "Starting now."],
+    [n + ".", "I've catalogued everything.", "It's less impressive than it sounds."],
     ["So " + n + " is what I'll be working with.", "Fine.", "I've worked with less."],
-    [n + ".", "I won't say I like it.", "I won't say I don't.", "I'll say it's stored.", "That's enough."],
-    ["Every hunter thinks their name sounds tough.", n + ".", "I've heard tougher.", "I've heard worse.", "Yours is in the middle."],
-    [n + ".", "The sphere has processed millions of names.", "Yours is now one of them.", "Don't read into that."],
-    [n + ".", "Short.", "Fine.", "The aliens don't give you time for long names anyway."],
-    [n + ".", "Three letters.", "Fine.", "Less to engrave if necessary."] ,
-    ["I'll address you as " + n + ".", "I'll do so without enthusiasm.", "That's just how I do things.", "Don't take it personally."],
+    [n + ".", "I won't say I like it or don't.", "I'll say it's stored."],
+    ["Every hunter thinks their name sounds tough.", n + ".", "Yours is in the middle."],
+    [n + ".", "Yours is now one of millions of names filed.", "Don't read into that."],
+    [n + ".", "Short. Fine.", "The aliens don't give you time for long names anyway."],
+    [n + ".", "Three letters.", "Less to engrave if necessary."],
+    ["I'll address you as " + n + " without enthusiasm.", "That's just how I do things.", "Don't take it personally."],
     [n + ".", "Registered.", "Now stop stalling."],
-    ["You said " + n + ".", "I heard it.", "I'll remember it.", "Begin."],
-    [n + ".", "That's fine.", "Everything here is fine.", "Fine doesn't mean good.", "Move."],
-    [n + ".", "It'll do.", "You'll do.", "Neither of you has a choice.", "Let's go."],
-    [n + ".", "I've said worse.", "To worse hunters.", "You're not the worst.", "Yet.", "Move."],
+    ["You said " + n + ".", "I'll remember it.", "Begin."],
+    [n + ".", "Everything here is fine.", "Fine doesn't mean good. Move."],
+    [n + ".", "You'll do.", "Neither of you has a choice."],
+    [n + ".", "You're not the worst. Yet.", "Move."],
   ];
   return pool[Math.floor(Math.random() * pool.length)];
 }
@@ -2151,27 +2155,383 @@ const _GANTZ_MISSION = [
 ];
 
 
-let _gantzMockeryNextAt = -1;  // ms timestamp — when to fire next line
-let _gantzMockeryIndex  = -1;  // shuffled index into combined line pool
+// ── Gantz transmission pools (HUD overlay, mission-only) ────────────────────
+// Each entry is an array of 1-2 short strings — the transmission panel types
+// them out sequentially. {name} is substituted per-trigger (see _sphereSay).
+const _GZ_TX_POOLS = {
+  // Triggered when the squad materializes in the field.
+  missionEnter: [
+    ['◈ FIELD ACTIVE.', 'DISAPPOINT ME QUIETLY, {name}.'],
+    ['◈ TARGETS TAGGED. CLOCK STARTED.', 'DO NOT WASTE IT.'],
+    ['◈ WELCOME TO THE CULL.', 'HURRY UP AND DIE.'],
+    ['◈ DEPLOYMENT CONFIRMED.', 'YOU HAVE ALREADY WASTED TIME.'],
+    ['◈ LOADOUT: ADEQUATE.', 'PERFORMANCE: PENDING.'],
+    ['◈ LIVE MEAT DETECTED.', 'BEGIN.'],
+    ['◈ ALIENS REGISTERED. HUNT APPROVED.', 'ATTEMPT COMPETENCE.'],
+    ['◈ CLOCK IS RUNNING, {name}.', 'SO IS EVERYTHING ELSE.'],
+    ['◈ OBJECTIVE: TERMINATE.', 'SUBJECTIVE: TRY NOT TO EMBARRASS YOURSELF.'],
+    ['◈ FIELD MATERIALIZED.', 'SO DID YOU. UNFORTUNATELY.'],
+    ['◈ T-MINUS EVERYTHING.', 'MOVE.'],
+    ['◈ AGAIN WITH THE MEAT.', 'FINE. BEGIN.'],
+    ['◈ ASSIGNMENT RECEIVED.', 'EXECUTE OR BE EXECUTED.'],
+    ['◈ SCAN CONFIRMS PRESENCE OF ORGANICS.', 'INCLUDING YOU. REGRETTABLY.'],
+    ['◈ I HOPE YOU BROUGHT A COFFIN, {name}.', 'ONE PER HUNTER.'],
+    ['◈ THIS MISSION IS NOT OPTIONAL.', 'NEITHER IS YOUR DEATH.'],
+    ['◈ BIOLOGICAL UNITS: DEPLOYED.', 'TARGETS: AMUSED.'],
+    ['◈ START.', 'I AM ALREADY BORED.'],
+    ['◈ TARGETS ARE HOME.', 'YOU ARE AN UNINVITED GUEST.'],
+    ['◈ PRIORITY: KILL EVERYTHING ON THE LIST.', 'SECONDARY: SURVIVE IF YOU MUST.'],
+  ],
 
-function _gantzMockeryTick(nowMs, participants) {
-  if (!net.isHost) return;
-  if (session.phase !== Phase.MISSION) return;
+  // Triggered when YOU successfully mark an alien.
+  alienMarkedByYou: [
+    ['MARK CONFIRMED.', 'FUSE TICKING.'],
+    ['TAG ACCEPTED.', 'WAIT FOR THE POP.'],
+    ['ACCEPTABLE AIM. FOR ONCE.'],
+    ['LOCKED. 3 SECONDS TO MEAT CONFETTI.'],
+    ['TAGGED. THE REST IS CHEMISTRY.'],
+    ['THAT ONE IS YOURS.'],
+    ['MARK HELD. DO NOT MISS THE NEXT.'],
+    ['ADEQUATE.'],
+    ['BOOKED. DETONATION PENDING.'],
+    ['THE CORPSE DOESN\'T KNOW YET.'],
+    ['HIT REGISTERED. MAYBE YOU\'RE NOT USELESS.'],
+    ['TAGGED. TRY NOT TO CELEBRATE EARLY.'],
+    ['ONE MARK. ONE STEP CLOSER TO IRRELEVANCE.'],
+    ['ACCEPTABLE.'],
+    ['MARK LOGGED. POINTS LATER.'],
+    ['CLOCK STARTED ON ITS CORPSE.'],
+  ],
+
+  // You destroyed an alien (fuse detonated on your mark).
+  alienKilledByYou: [
+    ['KILL CONFIRMED. +POINTS.'],
+    ['TALLY +1. TRY AGAIN.'],
+    ['THAT\'S ONE. MANY MORE.'],
+    ['ACCEPTABLE PERFORMANCE.'],
+    ['FIRST WORTHWHILE CONTRIBUTION.'],
+    ['DETONATION COMPLETE. CLEAN UP IS NOT YOUR JOB.'],
+    ['KILL BOOKED TO YOUR LEDGER.'],
+    ['A STAR FOR YOUR COFFIN, {name}.'],
+    ['POINTS DEPOSITED. DIGNITY STILL OVERDRAWN.'],
+    ['KILL REGISTERED. DON\'T CELEBRATE.'],
+    ['ONE FEWER NIGHTMARE. MANY MORE IN THE QUEUE.'],
+    ['ADEQUATE.'],
+    ['SCORE UP. STANDARDS STILL LOW.'],
+    ['TERMINATION CONFIRMED.', 'THE NEXT ONE WATCHED.'],
+    ['ORGANIC REMOVED FROM THE BOARD.'],
+    ['PROOF OF LIFE: YOURS. BARELY.'],
+  ],
+
+  // A teammate destroyed an alien.
+  alienKilledByOther: [
+    ['{name} DID YOUR JOB.'],
+    ['{name} SCORED. WHERE WERE YOU?'],
+    ['{name} KILL LOGGED.', 'YOURS IS STILL ZERO.'],
+    ['{name} IS CARRYING THIS SQUAD.'],
+    ['CONTRIBUTION FROM {name}. NOTED.'],
+    ['{name} +POINTS. YOU: SPECTATOR.'],
+    ['{name} BETTER THAN YOU AGAIN.'],
+    ['{name} TAKES ANOTHER. THE GAP WIDENS.'],
+    ['KILL: {name}. PERFORMANCE: ADEQUATE.', 'FOR A CHANGE.'],
+    ['{name} GETS THE KILL.', 'YOU GET THE BILL.'],
+    ['{name} CREDITED. YOUR LEDGER UNCHANGED.'],
+    ['ENVY REGISTERED. HIDE IT BETTER.'],
+  ],
+
+  // You fired on a civilian — marked but not yet detonated.
+  civMarkedByYou: [
+    ['— ERROR. MEAT MISIDENTIFIED.', 'PENALTY PENDING.'],
+    ['WRONG TARGET, {name}.', 'THE BOARD WILL REMEMBER.'],
+    ['THAT WAS NOT ON THE LIST.', 'ADD A ZERO TO YOUR LEDGER.'],
+    ['CIVILIAN TAGGED.', 'GANTZ DOES NOT APPROVE.'],
+    ['TARGETING ERROR: HUMAN.', 'CORRECTION IS NOT POSSIBLE.'],
+    ['IDENTIFY YOUR TARGETS, MEAT.'],
+    ['CIVILIAN FUSED. POINTS WILL LEAVE YOU.'],
+    ['YOU MARKED A WITNESS.', 'HOW POETIC.'],
+    ['BIOLOGICAL MIX-UP. TYPICAL.'],
+    ['THAT ONE WAS NOT YOURS.', 'GUILT IS.'],
+    ['SPHERE LOGS YOUR MISTAKE.'],
+    ['CIVILIAN ON THE FUSE. CLOCK IS CRUEL.'],
+    ['EXPLAIN YOURSELF. ACTUALLY, DON\'T.'],
+    ['A LIFE YOU WEREN\'T ALLOWED TO TAKE.'],
+  ],
+
+  // A civilian you marked detonates.
+  civKilledByYou: [
+    ['CIVILIAN DETONATED.', 'POINTS SUBTRACTED. {name}.'],
+    ['INNOCENT TERMINATED.', 'YOUR LEDGER NOW UGLIER.'],
+    ['RED ON RED.', 'GANTZ IS NOT PROUD.'],
+    ['MEAT REMOVED. WRONG MEAT.'],
+    ['-100. THAT WAS AVOIDABLE.'],
+    ['YOU POPPED A WITNESS, {name}.', 'HOW FESTIVE.'],
+    ['CIVILIAN LOSS ATTRIBUTED TO YOU.'],
+    ['LIFE EXTINGUISHED. VALUE NEGATIVE.'],
+    ['WELL DONE. IF THE GOAL WAS FAILURE.'],
+    ['ONE LESS TAXPAYER.', 'THE GOVERNMENT WILL NOT BE PLEASED.'],
+    ['CIVILIAN KILL: REGISTERED.', 'ATONE LATER. OR DON\'T.'],
+  ],
+
+  // A teammate detonated a civilian.
+  civKilledByOther: [
+    ['{name} KILLED A CIVILIAN.', 'GRACEFUL.'],
+    ['{name} JUST EARNED A NEGATIVE.', 'ENJOY YOUR TEAMMATE.'],
+    ['{name} DETONATED AN INNOCENT.', 'INVITE THEM TO THE NEXT FUNERAL.'],
+    ['WITNESS TERMINATED BY {name}.', 'AT LEAST IT WAS DECISIVE.'],
+    ['{name} FUMBLED A CIVILIAN.', 'CHARMING.'],
+    ['CIVILIAN LOSS CREDITED TO {name}.'],
+    ['{name} HAS BLOOD ON THE WRONG SHOES.'],
+    ['SOMEONE ELSE IS CHEAPER THAN YOU. {name}.'],
+  ],
+
+  // You pulled the trigger with a teammate lined up in the reticle.
+  shotAtPeer: [
+    ['AIM ELSEWHERE, {name}.'],
+    ['FRIENDLY FIRE IS NEVER FRIENDLY.'],
+    ['THAT WAS A TEAMMATE. I SAW.'],
+    ['IF YOU WANT HIM DEAD, ASK.'],
+    ['I AM LOGGING THAT.'],
+    ['DO NOT AIM AT YOUR OWN SQUAD.', 'YET.'],
+    ['TRIGGER DISCIPLINE IS A SKILL.', 'ACQUIRE IT.'],
+    ['I SUPPOSE MURDER IS A HOBBY.'],
+    ['SPHERE NOTES THIS BEHAVIOR.'],
+    ['BULLETS PASS THROUGH YOUR OWN KIND.', 'UNTIL THEY DON\'T.'],
+  ],
+
+  // Crosshair lingered on an alien (hover).
+  aimAlien: [
+    ['LOCKED. END IT.'],
+    ['IT SEES YOU TOO, {name}.'],
+    ['PULL THE TRIGGER OR STOP WASTING MY BANDWIDTH.'],
+    ['KILL IT BEFORE IT LEARNS YOUR NAME.'],
+    ['AIM ACQUIRED. DECISION PENDING.'],
+    ['HESITATION IS ALSO A CHOICE.', 'A BAD ONE.'],
+    ['LINE UP AND FIRE. THIS IS NOT A PHOTOGRAPH.'],
+    ['BREATHE OUT. SHOOT. LIVE. OR DON\'T.'],
+    ['IT IS STARING AT YOU, {name}.'],
+    ['THE RETICLE IS ONLY A SUGGESTION.', 'NOT A SOLUTION.'],
+  ],
+
+  // Crosshair lingered on a civilian (hover).
+  aimCiv: [
+    ['NOT ON THE LIST.'],
+    ['THAT ONE PAYS TAXES.'],
+    ['WITNESS. LOWER YOUR WEAPON.'],
+    ['CIVILIAN IDENTIFIED.', 'POINTS DEDUCTED ON IMPACT.'],
+    ['{name}, THAT IS A PERSON. SUPPOSEDLY.'],
+    ['NOT A TARGET. REPEAT: NOT A TARGET.'],
+    ['LOWER THE WEAPON.', 'OR DON\'T. I GET PAID EITHER WAY.'],
+    ['THEY HAVE A FAMILY, {name}.', 'PROBABLY.'],
+    ['IF YOU FIRE, YOU PAY.'],
+    ['HUMAN DETECTED. HOMO SAPIENS. NOT FAIR GAME.'],
+  ],
+
+  // Crosshair lingered on a teammate (hover).
+  aimPeer: [
+    ['THAT IS {name}. NOT A TARGET.'],
+    ['YOUR OWN SQUAD. STOP.'],
+    ['DO NOT POINT YOUR WEAPON AT {name}.'],
+    ['AIM DOWN. {name} IS NOT ON THE BOARD.'],
+    ['PEER DETECTED. LOWER WEAPON.'],
+    ['I SEE WHAT YOU ARE THINKING.', 'DON\'T.'],
+    ['CROSSHAIR ON {name}.', 'INTERESTING.'],
+    ['NOT PREY.'],
+  ],
+
+  // Player standing still for too long.
+  idle: [
+    ['STANDING STILL WILL NOT SAVE YOU.'],
+    ['MOVE.'],
+    ['THE FLOOR IS NOT AN OBJECTIVE.'],
+    ['THIS IS A HUNT. PARTICIPATE.'],
+    ['THE TARGETS ARE ELSEWHERE, {name}.'],
+    ['IF YOU ENJOY SCENERY, VISIT A MUSEUM.'],
+    ['HESITATION COSTS LIMBS.'],
+    ['ARE YOU LOST, MEAT?'],
+    ['THE COUNTER IS STILL RUNNING.'],
+    ['WALK. SHOOT. DIE. IN THAT ORDER.'],
+    ['CAUGHT IN A LOOP? TRY MOVING.'],
+    ['THE ALIEN WILL FIND YOU IF YOU WON\'T FIND IT.'],
+    ['STATIONARY TARGET DETECTED.', 'IT IS YOU.'],
+    ['MOTION, {name}. MOTION.'],
+    ['YOUR JOINTS STILL WORK, I ASSUME.'],
+    ['BOREDOM IS WEAPONIZED IN HERE.'],
+  ],
+
+  // Fired and hit nothing (walls/air).
+  missedShot: [
+    ['MISSED.'],
+    ['NEGATIVE IMPACT. POSITIVELY EMBARRASSING.'],
+    ['AIM. AT. THE. TARGET.'],
+    ['THE WALL DIDN\'T DO ANYTHING.'],
+    ['A VICTORY OVER OXYGEN.'],
+    ['PRECISION UNAVAILABLE. {name}.'],
+    ['SHOT WASTED. POINTS STILL WAITING.'],
+    ['NICE WARNING SHOT.', 'NOBODY ASKED.'],
+    ['AMMO BURNED ON NOTHING.'],
+    ['RECOIL WITHOUT RESULT.', 'IMPRESSIVE.'],
+    ['IF THE GOAL WAS AIR, CONGRATULATIONS.'],
+    ['THAT BULLET DIED A VIRGIN.'],
+  ],
+
+  // Player swapped weapons.
+  weaponSwitch: [
+    ['NEW TOY.', 'BREAK IT RESPONSIBLY.'],
+    ['WEAPON SWAPPED. SKILL UNCHANGED.'],
+    ['DIFFERENT STICK. SAME MEAT.'],
+    ['LOADOUT UPDATED.', 'OUTCOMES PROBABLY NOT.'],
+    ['ARMAMENT CHANGED.', 'TRY NOT TO AIM AT TEAMMATES.'],
+    ['DOES THE NEW ONE FEEL BETTER?', 'IT WON\'T HELP.'],
+    ['WEAPON ACTIVE.', 'FINGER ON TRIGGER. BRAIN OPTIONAL.'],
+    ['HANDLING: WE WILL SEE.'],
+  ],
+
+  // General periodic mockery — replaces chat-channel mission lines.
+  ambient: [
+    ['WASTE OF SPACE.'],
+    ['KILL KILL KILL.'],
+    ['HURRY UP AND DIE.'],
+    ['TICK TOCK. DEATH IS WAITING.'],
+    ['YOU ARE NEXT, {name}.'],
+    ['ERROR: SURVIVAL UNLIKELY.'],
+    ['FINISH THIS NOW OR I WILL FINISH YOU.'],
+    ['CLOCK IS TICKING.'],
+    ['COMMUNICATION ERROR.'],
+    ['BRAIN ERROR.'],
+    ['SKILL NOT FOUND.'],
+    ['EXPLODE SOON.'],
+    ['DIE SOON, {name}.'],
+    ['GAME OVER INCOMING.'],
+    ['I SAID HURRY.'],
+    ['TIME OUT.'],
+    ['ARE YOU STUPID?'],
+    ['THE ALIEN IS LAUGHING.'],
+    ['SHOOT FASTER, COWARDS.'],
+    ['STOP HIDING, {name}.'],
+    ['THE ALIENS SMELL YOUR FEAR.'],
+    ['TICK. TICK. BOOM.'],
+    ['SOMEBODY DIE ALREADY.'],
+    ['EMBARRASSING.'],
+    ['{name}, DO SOMETHING USEFUL.'],
+    ['{name}, STOP MISSING.'],
+    ['GO LEFT, IDIOT.'],
+    ['BEHIND YOU, CORPSE.'],
+    ['AIM HIGHER.'],
+    ['THE BOSS IS LAUGHING.'],
+    ['THE ALIEN HAS BETTER AIM THAN YOU.'],
+    ['PATHETIC MARKSMANSHIP.'],
+    ['EVEN I AM BORED.'],
+    ['H@HH@H@H@'],
+    ['DEATH.EXE'],
+    ['NULL_VALUE_HUMAN'],
+    ['ERROR 404: COMPETENCE MISSING.'],
+    ['MEAT PUPPET ONLINE.'],
+    ['I SEE EVERYTHING YOU DO, {name}.'],
+    ['THIS BOARD NEEDS FEWER SURVIVORS.'],
+    ['WHAT ARE YOU WAITING FOR?'],
+    ['SLOW AND LOUD. A TERRIBLE COMBINATION.'],
+    ['I COULD BE WATCHING A BETTER SQUAD.'],
+    ['AT THIS RATE, THE ALIENS WILL DIE OF AGE.'],
+    ['YOU ARE NOT IMPRESSING ANYONE.'],
+    ['EVEN THE CORPSE IS LAUGHING.'],
+    ['DID YOU FORGET WHICH END SHOOTS?'],
+    ['ONE OF YOU IS LYING ABOUT BEING HERE.'],
+    ['THE SPHERE IS UNDERWHELMED.'],
+    ['BEHAVE, MEAT.'],
+    ['THE FLOOR WILL HAVE YOU SOON.'],
+    ['REDUCE LIFESPAN. INCREASE KILLS.'],
+    ['YOU ARE NOT THE FIRST.', 'NOR THE BEST.'],
+  ],
+
+  // Bonus boss rolls into the field.
+  bossAppearance: [
+    ['◈ UNREGISTERED MASS. LARGER THAN LISTED.', 'THE BOARD JUST GOT INTERESTING.'],
+    ['◈ ANOMALY DETECTED.', 'SOMETHING BIG WANTS TO MEET YOU, {name}.'],
+    ['◈ BONUS ORGANIC MATERIALIZING.', 'GANTZ DID NOT PRINT A DOSSIER FOR THIS ONE.'],
+    ['◈ IT WASN\'T ON THE LIST.', 'NOW IT IS.'],
+    ['◈ SENSORS SPIKED.', 'SOMETHING OLDER IS WATCHING.'],
+    ['◈ ADDITIONAL TARGET CONFIRMED.', 'CONGRATULATIONS. YOU ARE GOING TO DIE HARDER.'],
+    ['◈ THE ROOM JUST GOT HEAVIER.'],
+    ['◈ THREAT READING: EXCEEDED.', 'DO NOT PANIC. THAT NEVER HELPS.'],
+    ['◈ PREDATOR-CLASS ENTITY ON FIELD.', 'ENJOY YOUR LAST FEW MINUTES.'],
+    ['◈ UNEXPECTED GUEST.', 'IT WAS EXPECTING YOU.'],
+    ['◈ SOMETHING TORE THROUGH THE DATA LAYER.', '{name}, IT IS YOUR PROBLEM NOW.'],
+    ['◈ APEX ORGANIC DEPLOYED.', 'THIS WILL BE EDUCATIONAL.'],
+    ['◈ BOSS-TIER LIFE SIGN.', 'I SUGGEST COURAGE. OR RUNNING.'],
+    ['◈ THE BIG ONE IS AWAKE.', 'IT HEARD YOUR FOOTSTEPS, {name}.'],
+    ['◈ UNSCHEDULED ARRIVAL.', 'YOUR COFFINS WILL BE CUSTOM.'],
+    ['◈ ALARM. SOMETHING WORSE IS HERE.'],
+    ['◈ SOMETHING ELSE IS HERE.', 'IT LIKES YOU ALREADY.'],
+    ['◈ CONGRATULATIONS. YOU UNLOCKED A NIGHTMARE.'],
+  ],
+
+  // Ten seconds remaining on the chrono.
+  tenSecWarning: [
+    ['◈ TEN SECONDS.', 'DETONATION IS NOT OPTIONAL.'],
+    ['◈ 10.', 'YOU KNOW WHAT COMES NEXT.'],
+    ['◈ FINAL TEN, {name}.', 'MAKE A CHOICE.'],
+    ['◈ CLOCK IS AT TEN.', 'ACCEPT IT OR DIE FASTER.'],
+    ['◈ TEN SECONDS TO WHATEVER COMES AFTER.'],
+  ],
+
+  // Last alien standing.
+  oneLeft: [
+    ['◈ ONE LEFT.', 'FINISH IT BEFORE IT FINISHES Y0U.'],
+    ['◈ ONE TARGET. NO EXCUSES.'],
+    ['◈ FINAL ORGANIC. END IT.'],
+    ['◈ SOLO TARGET, {name}.', 'DON\'T FUMBLE.'],
+    ['◈ ONE. LAST. MARK.'],
+  ],
+
+  // Field cleared of aliens.
+  fieldCleared: [
+    ['◈ FIELD CLEARED. POINTS DISTRIBUTED.', 'ATTEMPT T0 ENJOY THEM.'],
+    ['◈ EXTRACTION NOT INCLUDED.', 'ENJOY YOUR EARNINGS.'],
+    ['◈ KILL COUNT: SATISFACTORY.', 'BARELY.'],
+    ['◈ ALIENS: NONE.', 'SURVIVORS: FEWER THAN EXPECTED.'],
+    ['◈ MISSION COMPLETE.', 'TRY TO STAY ALIVE LONG ENOUGH TO SPEND THEM.'],
+  ],
+};
+
+function _sphereSay(key, opts = {}) {
+  const pool = _GZ_TX_POOLS[key];
+  if (!pool || pool.length === 0) return;
+  const entry = pool[Math.floor(Math.random() * pool.length)];
+  let name = opts.name;
+  if (!name) {
+    if (opts.nameScope === 'any') {
+      const names = _gantzParticipantNames();
+      name = names.length ? names[Math.floor(Math.random() * names.length)] : (player?.username || 'hunter');
+    } else {
+      name = player?.username || 'hunter';
+    }
+  }
+  const lines = entry.map(l => {
+    let out = l.indexOf('{name}') >= 0 ? l.replace(/\{name\}/g, name) : l;
+    if (Math.random() < _GANTZ_CORRUPT_CHANCE) out = _corruptLine(out);
+    return out;
+  });
+  gantzHudTransmission(lines, {
+    dwellMs: opts.dwellMs ?? 3500,
+    rateLimitMs: opts.rateLimitMs ?? 6000,
+    forceShow: opts.forceShow === true,
+  });
+}
+
+let _gantzMockeryNextAt = -1;  // ms timestamp — when to fire next ambient line
+
+function _gantzMockeryTick(nowMs) {
+  // Local-only: each peer schedules its own ambient Gantz transmissions.
+  // No longer broadcasts through chat — routed to the HUD transmission panel.
+  if (session.phase !== Phase.MISSION) { _gantzMockeryNextAt = -1; return; }
+  if (!localIsParticipant() || !player.alive) return;
   if (_gantzMockeryNextAt < 0) {
-    // First message: 20–40s into the mission
-    _gantzMockeryNextAt = nowMs + 20000 + Math.random() * 20000;
+    _gantzMockeryNextAt = nowMs + 15000 + Math.random() * 15000;
     return;
   }
   if (nowMs < _gantzMockeryNextAt) return;
-
-  // Schedule next: every 25–55s
-  _gantzMockeryNextAt = nowMs + 25000 + Math.random() * 30000;
-
-  // Single unified mission pool — some entries contain {name}, the picker
-  // substitutes randomly with a live participant's username. Multi-sentence
-  // entries are joined with " " for the single-row chat format.
-  const lines = _gantzPickLines(_GANTZ_MISSION, { nameScope: 'any' });
-  net.sendChat(lines.join(' '), 'GANTZ', '00e05a');
+  _gantzMockeryNextAt = nowMs + 20000 + Math.random() * 25000;
+  _sphereSay('ambient', { nameScope: 'any', dwellMs: 3200, rateLimitMs: 2500 });
 }
 
 const _TPROFILE_INTROS = [
@@ -2212,6 +2572,23 @@ const _TPROFILE_INTROS = [
   'It was here before you were born.', 'That\'s all we\'ll say about that.',
   'You didn\'t hear this from us.', 'Officially, this isn\'t happening.',
   'Unofficially, it very much is.', 'We\'ve run out of easier options.',
+  'Get in, get out.', 'No negotiations needed.', 'It stopped responding to monitoring.',
+  'We lost signal briefly.', 'Signal returned. Different.',
+  'Low priority. Technically.', 'Actually high priority.', 'Don\'t quote us on that.',
+  'It doesn\'t belong here.', 'Never did.', 'Won\'t for long.',
+  'The area went quiet three days ago.', 'Draw your own conclusions.',
+  'Previous hunters declined comment.', 'Permanently.',
+  'We\'re not supposed to send anyone.', 'We\'re sending you.',
+  'Operational parameters: flexible.', 'Operational parameters: nonexistent.',
+  'Neighborhood complaints. Many.', 'All about the same thing.',
+  'One of them. Possibly several. Hard to tell.',
+  'Containment failed. Wasn\'t great to begin with.',
+  'It learned to open doors.', 'We weren\'t ready for that.',
+  'Routine sweep. Maybe.', 'Probably not routine.',
+  'Sensor data doesn\'t match reality.', 'Trust the reality.',
+  'Expected resistance: unclear.', 'Actual resistance: find out.',
+  'We heard what it did last time.', 'You should hear it too.',
+  'Final warning was issued.', 'Questions will not be answered.',
 ];
 const _TPROFILE_CHARS = [
   'Strong', 'Smelly', 'Has many friends',
@@ -2253,6 +2630,63 @@ const _TPROFILE_CHARS = [
   'No shadow', 'Has one anyway sometimes', 'Situationally',
   'Difficult to photograph', 'Photographs come out wrong', 'Very wrong',
   'Reacts to sound', 'Reacts to silence', 'Reacts to you specifically',
+  'Two hearts', 'Both skeptical', 'Of everything',
+  'Lives in walls', 'Specific walls', 'You can\'t tell which',
+  'Recently molted', 'Left the old shell nearby', 'Still twitching',
+  'Never blinks', 'Unclear if it can', 'Unsettling regardless',
+  'Remembers your face', 'Wasn\'t supposed to', 'Too late now',
+  'Follows routines', 'Missed one yesterday', 'Something is different',
+  'Has a scent', 'Unpleasant', 'Lingers',
+  'Difficult to contain',
+];
+const _TPROFILE_HATES = [
+  'Umbrellas', 'The folding kind especially', 'The click they make',
+  'Small talk', 'Eye contact', 'Both at once',
+  'Plastic wrap', 'Velcro', 'Anything that crinkles',
+  'Being photographed', 'Being described', 'Being named',
+  'Loud chewing', 'Quiet chewing', 'All chewing',
+  'Fluorescent bulbs', 'Flickering bulbs', 'Most bulbs',
+  'Receipts', 'Paperwork', 'Signatures',
+  'The word "actually"', 'Unsolicited advice', 'Being corrected',
+  'Other people\'s children', 'Other people\'s pets', 'Other people',
+  'Hot weather', 'Cold weather', 'All weather',
+  'Cilantro', 'Mint', 'Strong herbs',
+  'Pigeons specifically', 'Crows somewhat', 'Sparrows on Tuesdays',
+  'Stairs', 'Escalators', 'Being above ground level',
+  'Balloons', 'Their texture', 'The pop',
+  'Wet socks', 'Dry socks worn wet', 'Socks generally',
+  'Interruptions', 'Being asked to repeat itself', 'Questions',
+  'Direct sunlight', 'Indirect sunlight', 'The sun',
+  'Karaoke', 'Off-key singing', 'On-key singing too',
+  'Elevator mirrors', 'Elevator music', 'Elevators',
+  'Group photos', 'Being in the background', 'Being cropped out',
+  'Small dogs', 'Their owners', 'Leashes',
+  'Voicemails', 'Unanswered calls', 'Being called at all',
+  'Weak coffee', 'Decaf', 'Lukewarm drinks',
+  'Unexpected visitors', 'Expected visitors', 'Visitors',
+  'Pennies', 'Exact change requests', 'Cash generally',
+  'Slow walkers', 'Fast walkers', 'The wrong speed',
+  'Mismatched socks', 'Missing buttons', 'Loose threads',
+  'Wednesdays specifically', 'Time in general', 'Clocks with second hands',
+  'Being watched', 'Not being watched', 'Uncertainty about it',
+  'Vegetables in breakfast', 'Fruit in savory dishes', 'Boundary violations',
+  'Perfume samples', 'Cologne aisles', 'Anything scented',
+  'Poor grammar', 'Smug good grammar', 'Smugness',
+  'Loose hair on surfaces', 'Crumbs on keyboards', 'Sticky floors',
+  'The concept of Monday', 'The idea of tomorrow', 'Planning',
+  'Ringtones', 'Notification pings', 'Sudden sounds',
+  'Overhead fans', 'Ceiling shadows', 'Things above eye level',
+  'Its own name spoken aloud', 'Unfamiliar accents', 'Familiar accents too',
+  'Keys in couches', 'Coins in dryers', 'Missing items',
+  'Unsealed envelopes', 'Half-open doors', 'Things neither open nor closed',
+  'Autoplay video', 'Loading screens', 'Buffering',
+  'Hot plates', 'Cold plates', 'Plates',
+  'Damp towels', 'Paper towels', 'Towels',
+  'Insincere apologies', 'Excessive apologizing', 'Repeated apologies',
+  'The sound of chalk', 'The texture of chalk', 'Chalkboards',
+  'Plastic forks', 'Wooden forks', 'Utensils generally',
+  'Patterned carpet', 'Hotel carpet', 'Carpet',
+  'Waiting rooms', 'Waiting in general',
 ];
 const _TPROFILE_FAVS = [
   'Green onions', 'Human brains', 'Sleeping under bridges',
@@ -2439,9 +2873,11 @@ let _gantzOpenProgress = 0;
 let _gantzWasOpening   = false;   // rising-edge tracker for open sound
 let _debugGantzForceOpen = false;
 // Audio file URLs — loaded into the proximity-audio buffer cache on first use.
-const SFX_GUN_SHOOT  = 'assets/audio/x-gun-shoot.mp3';
+const SFX_GUN_SHOOT  = 'assets/audio/x-gun-fire.mp3';
 const SFX_GANTZ_OPEN = 'audio/gantz-open.mp3';
-audio.preload([SFX_GUN_SHOOT, SFX_GANTZ_OPEN]);
+const SFX_POINT_GAIN = 'audio/point-gain.mp3';
+const SFX_POINT_LOSS = 'audio/point-loss.mp3';
+audio.preload([SFX_GUN_SHOOT, SFX_GANTZ_OPEN, SFX_POINT_GAIN, SFX_POINT_LOSS]);
 const _gunFlashEl = document.getElementById('gun-flash');
 
 // ── Dynamic crosshair state ───────────────────────────────────────────────
@@ -2449,8 +2885,8 @@ const _gunFlashEl = document.getElementById('gun-flash');
 // adds `bumpCrosshairSpread(amount)` and the value lerps back to 0 every
 // render frame. Kept purely client-local — no networking.
 const _crosshairEl        = document.getElementById('crosshair');
-const CROSSHAIR_SPREAD_MAX   = 44;   // px — cap on how far ticks can splay
-const CROSSHAIR_SPREAD_DECAY = 90;   // px/sec — rate of return to rest
+const CROSSHAIR_SPREAD_MAX   = 140;  // px — cap on how far ticks can splay
+const CROSSHAIR_SPREAD_DECAY = 220;  // px/sec — rate of return to rest
 let   _crosshairSpread    = 0;
 function bumpCrosshairSpread(amount) {
   _crosshairSpread = Math.min(CROSSHAIR_SPREAD_MAX, _crosshairSpread + amount);
@@ -2465,6 +2901,8 @@ let _briefingSnappedTIdx = -1;
 let _briefingIntroIdx = -1;
 let _briefingCharIdx  = -1;
 let _briefingFavIdx   = -1;
+let _briefingHatesIdx = -1;
+let _briefingHatesSlot = null; // 'char' or 'fav' — which section HATES replaces this briefing
 let _countdownRevealAt = -1;
 let _debriefRevealAt = -1;
 let _debriefAllDoneAt = -1;
@@ -2495,6 +2933,24 @@ function _drawBallMenu() {
 
   const countdownActive = session.readyCountdownEnd >= 0 && !isBriefing;
   if (!countdownActive) _countdownRevealAt = -1;
+
+  // Once a mission queue has begun (countdown / briefing / mission), skip the
+  // Gantz intro + name prompt for anyone who hasn't finished them yet. Without
+  // this, a player who has not spoken to Gantz would have to sit through the
+  // first-time sequence before they could join. Note: net.onSession has the
+  // same guard, but the host skips that handler entirely — so this is the
+  // catch-all that works for host and peers alike.
+  if (countdownActive || isBriefing || session.phase === Phase.MISSION) {
+    if (!_introDone) _introDone = true;
+    if (!_namePromptDone) {
+      if (_nameKeyHandler) {
+        window.removeEventListener('keydown', _nameKeyHandler);
+        _nameKeyHandler = null;
+        setInputSuspended(false);
+      }
+      _namePromptDone = true;
+    }
+  }
   const _canIdle = _introDone && _namePromptDone && _gantzTalkDone && _gantzExitDone && !isOpen && !isBriefing && !isDebrief && !gantzExiting && !countdownActive && _idleLineStart < 0;
   if (_canIdle) {
     if (_idleNextAt < 0) _idleNextAt = performance.now() + IDLE_TRIGGER_MS;
@@ -2516,6 +2972,14 @@ function _drawBallMenu() {
       _gantzTalkLines = _gantzPickLines(_GANTZ_LINES);
       _gantzTalkStart = performance.now();
       _gantzTalkDone = false;
+      // Force the typing-blip loop to restart from scratch on every fresh
+      // greeting. Without this, rapid open→close→open keeps _lastTypePos at
+      // 0 while the prior loop's source is already gone (stopped by the
+      // previous close flow), and the equality check in _typeTickSound
+      // silently skips starting a new one — so the first line of the new
+      // greeting plays with no audio.
+      _stopTypeSound();
+      _lastTypePos = -1;
     }
     _skipNextGreeting = false;
   }
@@ -2656,6 +3120,8 @@ function _drawBallMenu() {
       _briefingIntroIdx = Math.floor(Math.random() * _TPROFILE_INTROS.length);
       _briefingCharIdx  = Math.floor(Math.random() * _TPROFILE_CHARS.length);
       _briefingFavIdx   = Math.floor(Math.random() * _TPROFILE_FAVS.length);
+      _briefingHatesIdx = Math.floor(Math.random() * _TPROFILE_HATES.length);
+      _briefingHatesSlot = Math.random() < 0.5 ? 'char' : 'fav';
       _portraitCache.clear(); // fresh portraits for each mission
     }
     const elapsed  = performance.now() - _briefingRevealAt;
@@ -2667,6 +3133,11 @@ function _drawBallMenu() {
     const intro    = _TPROFILE_INTROS[_briefingIntroIdx];
     const charStr  = _TPROFILE_CHARS[_briefingCharIdx];
     const fav      = _TPROFILE_FAVS[_briefingFavIdx];
+    const hatesStr = _TPROFILE_HATES[_briefingHatesIdx];
+    const slot1Label = _briefingHatesSlot === 'char' ? 'HATES' : 'CHARACTERISTIC';
+    const slot1Value = _briefingHatesSlot === 'char' ? hatesStr : charStr;
+    const slot2Label = _briefingHatesSlot === 'fav'  ? 'HATES' : 'FAVORITE THING';
+    const slot2Value = _briefingHatesSlot === 'fav'  ? hatesStr : fav;
     const PW = 130, PH = 155;
 
     const headerText = `MISSION ${session.missionIndex}` +
@@ -2681,11 +3152,11 @@ function _drawBallMenu() {
     rows.push({ isMug: true,      gapAfter: 200, lineH: PH + 22 });
     rows.push({ text: intro,      font: `11px ${_PF}`, color: G,  charMs: BCHAR, gapAfter: 400,  lineH: 30 });
     rows.push({ text: '',         font: `11px ${_PF}`, color: DL, charMs: 0,     gapAfter: 0,    lineH: 12 });
-    rows.push({ text: 'CHARACTERISTIC', font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 200, lineH: 22 });
-    rows.push({ text: charStr, font: `11px ${_PF}`, color: B, charMs: BCHAR, gapAfter: 200, lineH: 22 });
+    rows.push({ text: slot1Label, font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 200, lineH: 22 });
+    rows.push({ text: slot1Value, font: `11px ${_PF}`, color: B, charMs: BCHAR, gapAfter: 200, lineH: 22 });
     rows.push({ text: '',         font: `11px ${_PF}`, color: DL, charMs: 0,     gapAfter: 0,    lineH: 12 });
-    rows.push({ text: 'FAVORITE THING', font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 200, lineH: 22 });
-    rows.push({ text: fav, font: `11px ${_PF}`, color: B, charMs: BCHAR, gapAfter: 300, lineH: 30 });
+    rows.push({ text: slot2Label, font: `11px ${_PF}`, color: DL, charMs: BCHAR, gapAfter: 200, lineH: 22 });
+    rows.push({ text: slot2Value, font: `11px ${_PF}`, color: B, charMs: BCHAR, gapAfter: 300, lineH: 30 });
 
     // Walk timeline
     let t = 0, activeRow = rows.length, activeChar = 0, typing = false;
@@ -2705,7 +3176,7 @@ function _drawBallMenu() {
     if (contentDone && _briefingContentDoneAt < 0) _briefingContentDoneAt = performance.now();
 
     // Post-content timing: linger → fade out content → fade in countdown
-    const BFADE_LINGER_MS    = 3000;
+    const BFADE_LINGER_MS    = 4000;
     const BFADE_CONTENT_MS   = 700;
     const BCLOCK_FADE_IN_MS  = 900;
     const sinceContent = (contentDone && _briefingContentDoneAt >= 0)
@@ -2751,8 +3222,8 @@ function _drawBallMenu() {
       const sec    = Math.ceil(remain / 1000);
       const segW = 36, segH = 68, segT = 7;
       const segY   = S * 0.28;
-      const dOnCol  = sec <= 3 ? R : B;
-      const dOffCol = 'rgba(0,180,60,0.10)';
+      const dOnCol  = R;
+      const dOffCol = 'rgba(180,20,40,0.10)';
       ctx.save();
       ctx.globalAlpha *= clockAlpha;
       _draw7SegClock(ctx, sec, CX, segY, segW, segH, segT, dOnCol, dOffCol);
@@ -3561,6 +4032,21 @@ addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.pointerLockElement === canvas) {
     document.exitPointerLock();
   }
+  // DEV: F8 replays the Gantz transfer scan on the local player (Stage 1).
+  //      Shift+F8 plays the dematerialize (top-down) variant.
+  if (e.key === 'F8') {
+    const type = e.shiftKey ? 'dematerialize' : 'materialize';
+    // Lobby / briefing: beams emit from a single point on the Gantz ball's
+    // surface facing the scan line. Mission / elsewhere: straight-down overhead point.
+    const opts = { type };
+    if (session.phase === Phase.LOBBY || session.phase === Phase.BRIEFING) {
+      opts.sourceBall = { x: GANTZ_BALL.x, y: 1.2, z: GANTZ_BALL.y, r: GANTZ_BALL.radius };
+    } else {
+      opts.source = { x: player.x, y: 8, z: player.y };
+    }
+    scene3d.startTransferScan?.('__player__', opts);
+    console.log('[transferScan] F8', type, opts);
+  }
 }, true);
 // Re-request lock on canvas click — catches refocus clicks that some browsers
 // swallow at the OS level without dispatching mousedown to JS.
@@ -3675,6 +4161,7 @@ let missionProps = [];
 let civilians = [];
 let aliens = [];
 let _bonusBossSpawned = false;
+let _missionClearAt = -1; // host-side timestamp when last alien died; end mission 3s later
 let tracers = []; // {x1,y1,x2,y2,color,age,ttl}
 let activeColliders = lobbyColliders;
 let lastAliensBroadcast = 0;
@@ -3695,8 +4182,35 @@ const session = {
   participants: null,      // null = all players; array of colors when set
   missionResult: null,   // 'wiped' | 'cleared' | null
   targets: [],
+  // Stage 3b: transfer-scan gate. When non-null, the host is holding the next
+  // phase transition for `scanEndsAt - now` milliseconds so every participant's
+  // dematerialize scan finishes visually before they teleport. Only set by host.
+  //   'pre-mission'  — held during BRIEFING end, before MISSION teleport
+  //   'post-mission' — held during MISSION end, before DEBRIEF teleport
+  scanPhase: null,
+  scanEndsAt: -1,
   version: 0,
 };
+// Last scanPhase we already reacted to locally — guards against re-firing the
+// dematerialize every tick while the gate is still open.
+let _appliedScanPhase = null;
+const PRE_TELEPORT_SCAN_MS = 2500; // matches transferScan DEFAULT_DURATION
+
+// Per-peer `scan.t` of the most recent scan we've already relayed to scene3d.
+// Guards against re-firing the same scan on every 15Hz pose for the duration
+// it stays in the pose payload.
+const _remoteScansFired = new Map();
+
+// Per-peer bookkeeping so a brand-new remote's mesh isn't revealed before
+// their transfer scan reaches us.
+//   _remoteFirstSeen: ms timestamp of the first pose that had coords.
+//   _remoteSawScan:   peers whose pose has ever carried a scan descriptor.
+// A fresh peer is withheld from scene3d's `state.remotes` list until either
+// we see a scan on them OR REMOTE_SPAWN_GRACE_MS elapses (fallback for peers
+// whose scan already expired by the time we connect).
+const _remoteFirstSeen = new Map();
+const _remoteSawScan   = new Set();
+const REMOTE_SPAWN_GRACE_MS = 3500;
 let lastSessionBroadcast = 0;
 
 // ---- Remote spec cache ----
@@ -3782,7 +4296,11 @@ const menu = createGantzMenu({
     if (session.phase === Phase.MISSION) return;
     player.ready = !player.ready;
     if (!player.ready) player.afkReady = false;
+    // Resend a couple times in case the first UDP pose packet drops — this
+    // prevents the host from missing the ready toggle and ignoring the click.
     net.broadcastPose();
+    setTimeout(() => net.broadcastPose(), 80);
+    setTimeout(() => net.broadcastPose(), 240);
     if (player.ready && menu.isOpen()) {
       _skipNextExitLines = true;
       menu.closeMenu();
@@ -3875,6 +4393,9 @@ const net = createNetwork({
     moveFwd,
     moveSide,
     doorStates: _doorOpen.map(o => o ? 1 : 0),
+    // Drop the descriptor after scan duration has elapsed so we aren't
+    // re-broadcasting stale state forever on 15Hz pose ticks.
+    scan: (_lastLocalScan && Date.now() - _lastLocalScan.t < SCAN_BROADCAST_TTL_MS) ? _lastLocalScan : null,
   }),
 });
 
@@ -3920,7 +4441,8 @@ function broadcastAliens() {
   const payload = aliens.map(a => ({
     id: a.id, x: a.x, y: a.y, facing: a.facing, walkPhase: a.walkPhase,
     hp: a.hp, alive: a.alive, state: a.state,
-    marked: a.marked, markedAt: a.markedAt,
+    marked: a.marked, markedAt: a.markedAt, markTimeMs: a._markTimeMs || 0,
+    attackCooldown: a.attackCooldown || 0,
     archetype: a.archetype, specSeed: a.spec.seed,
   }));
   net.sendAliens(payload);
@@ -3942,10 +4464,17 @@ net.onAliens((incoming) => {
         spec, radius: (ARCHETYPES[d.archetype || 'patroller']).radius,
         markFlash: 0,
       };
+      if (d.archetype === 'boss' && session.phase === Phase.MISSION) {
+        _sphereSay('bossAppearance', { forceShow: true, dwellMs: 4200, rateLimitMs: 1500 });
+      }
     }
     a.x = d.x; a.y = d.y; a.facing = d.facing; a.walkPhase = d.walkPhase;
     a.hp = d.hp; a.alive = d.alive; a.state = d.state;
+    const prevCD = a.attackCooldown || 0;
+    a.attackCooldown = d.attackCooldown || 0;
+    a._prevAttackCooldown = prevCD;
     a.marked = d.marked; a.markedAt = d.markedAt;
+    if (d.markTimeMs) a._markTimeMs = d.markTimeMs;
     next.push(a);
   }
   aliens = next;
@@ -3962,6 +4491,7 @@ function broadcastCivs() {
   const payload = civilians.map(c => ({
     id: c.id, x: c.x, y: c.y, facing: c.facing, walkPhase: c.walkPhase,
     vx: c.vx || 0, vy: c.vy || 0, alive: c.alive !== false,
+    marked: !!c.marked, markedAt: c.markedAt || 0, markTimeMs: c._markTimeMs || 0,
     behavior: c.behavior, kind: 'civilian',
   }));
   net.sendCivs(payload);
@@ -3985,6 +4515,9 @@ net.onCivs((incoming) => {
     c.walkPhase = d.walkPhase;
     c.vx = d.vx; c.vy = d.vy;
     c.alive = d.alive;
+    c.marked = !!d.marked;
+    c.markedAt = d.markedAt || 0;
+    if (d.markTimeMs) c._markTimeMs = d.markTimeMs;
   }
 });
 
@@ -3998,7 +4531,7 @@ net.onShot((msg, peerId) => {
   // vice versa.
   if (!sameZoneAsLocal(peerId)) return;
   if (typeof msg?.x1 === 'number' && typeof msg?.y1 === 'number') {
-    audio.playAt(SFX_GUN_SHOOT, msg.x1, msg.y1, { volume: 0.7 });
+    audio.playAt(SFX_GUN_SHOOT, msg.x1, msg.y1, { volume: 0.6 });
     if (typeof msg.x2 === 'number' && typeof msg.y2 === 'number') {
       // Try to spawn the bullet from the peer's actual hand-gun position in
       // our scene so their shots read as coming out of their weapon. If the
@@ -4029,7 +4562,7 @@ function sameZoneAsLocal(peerId) {
   const localInMission = session.phase === Phase.MISSION && localIsParticipant();
   const peerInMission =
     (peer.inMission === true)
-    || (session.participants?.includes(peerId) ?? false)
+    || (session.phase === Phase.MISSION && (session.participants?.includes(peerId) ?? false))
     || (session.phase === Phase.MISSION && !!peer.ready);
   return localInMission === peerInMission;
 }
@@ -4046,43 +4579,56 @@ net.onHit((msg) => {
     a._pointsReward = ALIEN_KILL_POINTS_DEFAULT;
     broadcastAliens();
   } else if (msg.kind === 'civilian') {
-    // Host is now authoritative for civilian state (broadcastCivs), so we MUST
-    // flip alive=false here or the next civ broadcast would resurrect the victim
-    // on all peers. Also stop velocity so the corpse doesn't slide.
+    // X-family weapons fuse the target — host marks, ticks, detonates via
+    // tickMarkedCivs(). Penalty is applied at detonation, not at mark.
     const c = civilians.find(c => c.id === msg.id);
-    if (c) { c.alive = false; c.vx = 0; c.vy = 0; }
-    // Host tracks penalty — it just re-broadcasts back to the shooter
-    net.sendKill({ kind: 'civilianPenalty', shooterId: msg.shooterId });
-    // Broadcast civilian death to EVERY participant so their local sim turns
-    // that civilian into a ragdoll — otherwise only the shooter sees it die.
-    net.sendKill({ kind: 'civilianDeath', id: msg.id, shooterId: msg.shooterId });
-    // Immediate civ broadcast so remote peers see alive=false without waiting
-    // up to 100ms for the next scheduled tick.
-    broadcastCivs();
+    if (c && c.alive !== false && !c.marked) {
+      c.marked = true;
+      c.markedAt = performance.now();
+      c._markTimeMs = msg.markMs || 1500;
+      c._killerId = msg.shooterId;
+      c.vx = 0; c.vy = 0; // stop wandering once fused
+      broadcastCivs();
+    }
   }
   // human friendly fire could be added here
 });
 
 net.onKill((msg) => {
   if (msg.kind === 'alienKilled') {
+    // Spawn gib burst on every peer at the authoritative death position.
+    const dead = aliens.find(a => a.id === msg.alienId);
+    if (dead && scene3d.spawnGibs) {
+      scene3d.spawnGibs(dead.x, dead.y, {
+        power: dead.archetype === 'boss' ? 1.7 : dead.archetype === 'brute' ? 1.3 : 1,
+        count: dead.archetype === 'boss' ? 48 : dead.archetype === 'brute' ? 36 : 28,
+        centerY: (dead.radius || 0.55) * 1.8,
+      });
+    }
     // Everyone: update points if you are the killer
     if (msg.killerId === net.selfId) {
       player.points += msg.points || 0;
-      toast(`+${msg.points} · ${msg.archetypeName}`, 'kill');
+      _sphereSay('alienKilledByYou', { dwellMs: 3200, rateLimitMs: 4500 });
     } else {
       const peer = net.peers.get(msg.killerId);
       if (peer) peer.points = (peer.points || 0) + (msg.points || 0); // keep debrief accurate without waiting for pose
       const name = (peer && peer.username) || 'hunter';
-      toast(`${name} killed ${msg.archetypeName} (+${msg.points})`, 'info');
+      if (session.phase === Phase.MISSION && localIsParticipant()) {
+        _sphereSay('alienKilledByOther', { dwellMs: 3200, rateLimitMs: 6000, name });
+      }
     }
   } else if (msg.kind === 'civilianPenalty') {
     if (msg.shooterId === net.selfId) {
       player.points = Math.max(0, player.points - CIVILIAN_PENALTY);
       player.civiliansKilled += 1;
-      toast(`-${CIVILIAN_PENALTY} · civilian killed`, 'warn');
+      _sphereSay('civKilledByYou', { dwellMs: 3800, rateLimitMs: 3500, forceShow: true });
     } else {
       const peer = net.peers.get(msg.shooterId);
       if (peer) peer.points = Math.max(0, (peer.points || 0) - CIVILIAN_PENALTY);
+      if (session.phase === Phase.MISSION && localIsParticipant()) {
+        const name = (peer && peer.username) || 'hunter';
+        _sphereSay('civKilledByOther', { dwellMs: 3200, rateLimitMs: 5000, name });
+      }
     }
   } else if (msg.kind === 'civilianDeath') {
     // Mirror the civilian's death locally so non-shooters see the ragdoll.
@@ -4093,11 +4639,58 @@ net.onKill((msg) => {
 });
 
 function broadcastSession() {
-  net.sendSession({ ...session });
+  // Strip host-private keys (underscore prefix) so peers don't see internals.
+  const out = {};
+  for (const k of Object.keys(session)) if (!k.startsWith('_')) out[k] = session[k];
+  net.sendSession(out);
   lastSessionBroadcast = Date.now();
 }
 
 // ---- Phase transition effects (local to this peer) ----
+
+// Stage 3a: transfer-scan triggers. Materialize = beams condense the body
+// into place; dematerialize = body scans away. Source depends on where the
+// player currently is — Gantz ball (lobby/briefing) or overhead satellite
+// (mission). Helper centralises the choice so every call site stays one-line.
+//
+// Stage 3c: when a scan fires locally we also stash a compact descriptor on
+// `_lastLocalScan` so the next pose broadcast carries it. Remote peers read
+// the field and fire the same scan on this player's 3rd-person mesh.
+//
+// The broadcast lifetime (SCAN_BROADCAST_TTL_MS) is intentionally much longer
+// than the 2.5s local scan animation: it covers the window during which a
+// late-joining peer (Trystero/WebRTC handshake can easily take 5-15s) must
+// still see the scan in our pose field so they fire it on their end. The
+// receiver's `_remoteScansFired` map uses scan.t as an idempotency key so a
+// long-lived field fires at most once per peer per scan.
+let _lastLocalScan = null;
+const SCAN_BROADCAST_TTL_MS = 20000;
+
+function _triggerTransferScan(type, opts = {}) {
+  const scanOpts = { type, ...opts };
+  if (!scanOpts.source && !scanOpts.sourceBall) {
+    const inLobby = session.phase === Phase.LOBBY
+                 || session.phase === Phase.BRIEFING
+                 || session.phase === Phase.DEBRIEF;
+    if (inLobby) {
+      scanOpts.sourceBall = { x: GANTZ_BALL.x, y: 1.2, z: GANTZ_BALL.y, r: GANTZ_BALL.radius };
+    } else {
+      scanOpts.source = { x: player.x, y: 8, z: player.y };
+    }
+  }
+  scene3d.startTransferScan?.('__player__', scanOpts);
+
+  // Compact pose-sized descriptor. `k: 'b'` = ball source (sx,sy,sz,sr).
+  // `k: 'p'` = point source (sx,sy,sz). Date.now() is shared across peers so
+  // remote clients can treat it as the idempotency key.
+  const s = scanOpts.sourceBall || scanOpts.source;
+  _lastLocalScan = scanOpts.sourceBall
+    ? { t: Date.now(), type, k: 'b', sx: s.x, sy: s.y, sz: s.z, sr: s.r }
+    : { t: Date.now(), type, k: 'p', sx: s.x, sy: s.y, sz: s.z };
+  // Push immediately instead of waiting for the next 15Hz pose tick.
+  net.broadcastPose?.();
+}
+
 function teleportToLobby() {
   player.x = 0; player.y = 4;
   yaw = 0; pitch = 0;           // face toward Gantz ball at (0, -4)
@@ -4145,6 +4738,7 @@ function enterPhase(newPhase) {
         const comp = session.composition || ['patroller'];
         aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp);
         _bonusBossSpawned = false;
+        _missionClearAt = -1;
         broadcastAliens();
         broadcastCivs();
       } else {
@@ -4157,6 +4751,13 @@ function enterPhase(newPhase) {
       player.alive = true;
       player.civiliansKilled = 0;
       teleportToMission();
+      // Materialize the hunter into the field from an overhead satellite beam.
+      // Defer one frame so the mission-map build spike lands before the scan starts,
+      // otherwise the first scan frame stalls mid-beam and looks like a stutter.
+      requestAnimationFrame(() => _triggerTransferScan('materialize', { source: { x: player.x, y: 8, z: player.y } }));
+      // Sphere greets the squad as soon as they materialize in the field.
+      _sphereSay('missionEnter', { dwellMs: 4500, rateLimitMs: 0, forceShow: true });
+      gantzHudAmbient('FIELD ACTIVE · X-GUN CALIBRATED');
     } else {
       // Non-participant: stay in lobby, just track mission state passively.
       // Host still spawns + broadcasts aliens so participants receive them,
@@ -4165,6 +4766,7 @@ function enterPhase(newPhase) {
         const comp = session.composition || ['patroller'];
         aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp);
         _bonusBossSpawned = false;
+        _missionClearAt = -1;
         broadcastAliens();
         // Non-participant host must STILL simulate + broadcast civilians so
         // participants (on other peers) see them. Civs live in the mission
@@ -4182,6 +4784,9 @@ function enterPhase(newPhase) {
   } else {
     if (_wasInMission && (phase.get() === Phase.MISSION || phase.get() === Phase.BRIEFING)) {
       teleportToLobby();
+      // Rematerialize in the lobby from the Gantz ball's surface.
+      // Defer one frame so any teardown/setup spike finishes before the scan begins.
+      requestAnimationFrame(() => _triggerTransferScan('materialize'));
     }
     _wasInMission = false;
     missionMap = null;
@@ -4197,6 +4802,16 @@ function enterPhase(newPhase) {
     player.afkReady = false;
   }
   if (newPhase === Phase.DEBRIEF) {
+    // On a wipe (mission failed or timer ran out), non-host peers must also
+    // reset their own points + loadout locally — the host zeros its own copy
+    // in hostEndMission but can't reach into peer state. Mirror that here.
+    if (!net.isHost && session.missionResult === 'wiped') {
+      player.hp = 0;
+      player.alive = false;
+      player.points = 0;
+      player.loadout = baseLoadout();
+      player.activeSlot = 0;
+    }
     _debriefRevealAt = -1;
     _debriefAllDoneAt = -1;
     _debriefDisplayDone = false;
@@ -4226,6 +4841,8 @@ function enterPhase(newPhase) {
     _briefingIntroIdx = -1;
     _briefingCharIdx  = -1;
     _briefingFavIdx   = -1;
+    _briefingHatesIdx = -1;
+    _briefingHatesSlot = null;
     _gantzOpenProgress = 0;
   }
   if (newPhase === Phase.MISSION) {
@@ -4264,19 +4881,10 @@ function collectParticipants() {
 }
 
 const MODIFIERS = [
-  { id: 'clear',   label: 'Clear',   weight: 6, tint: null },
-  { id: 'night',   label: 'Night',   weight: 2, tint: { r: 0,  g: 10, b: 40, a: 0.35 } },
-  { id: 'rain',    label: 'Rain',    weight: 2, tint: { r: 60, g: 80, b: 120, a: 0.18 } },
-  { id: 'festival',label: 'Festival',weight: 1, tint: { r: 200,g: 50, b: 60,  a: 0.10 } },
-  { id: 'rush',    label: 'Rush',    weight: 1, tint: { r: 255,g: 100,b: 0,   a: 0.08 } },
+  { id: 'clear', label: 'Clear', weight: 1, tint: null },
 ];
 
-function rollModifier(seed) {
-  const rng = makeRng((seed >>> 0) ^ 0xd1a0);
-  let total = 0;
-  for (const m of MODIFIERS) total += m.weight;
-  let r = rng.next() * total;
-  for (const m of MODIFIERS) { r -= m.weight; if (r <= 0) return m; }
+function rollModifier(_seed) {
   return MODIFIERS[0];
 }
 
@@ -4310,9 +4918,7 @@ function hostStartBriefing(nowMs) {
 }
 
 function hostPickMissionDuration() {
-  const base = MISSION_BASE_MS + (session.alienCount || 3) * 10000;
-  if (session.modifier?.id === 'rush') return Math.floor(base * 0.6);
-  return base;
+  return MISSION_BASE_MS + (session.alienCount || 3) * 10000;
 }
 
 function hostStartMission(nowMs) {
@@ -4357,6 +4963,17 @@ function hostEndMission(nowMs, result = 'wiped') {
   broadcastSession();
 }
 
+// Stage 3b: open the post-mission scan gate. Stashes the intended result on
+// `session._pendingResult` (stripped before broadcast to avoid polluting peers)
+// and broadcasts the scan phase so participants fire their dematerialize.
+function _hostOpenEndMissionGate(nowMs, result) {
+  session.scanPhase = 'post-mission';
+  session.scanEndsAt = nowMs + PRE_TELEPORT_SCAN_MS;
+  session._pendingResult = result;
+  session.version += 1;
+  broadcastSession();
+}
+
 function hostReturnToLobby() {
   session.phase = Phase.LOBBY;
   session.readyCountdownEnd = -1;
@@ -4372,7 +4989,10 @@ function hostTick(nowMs) {
   const p = session.phase;
   if (p === Phase.LOBBY || p === Phase.DEBRIEF) {
     const anyReady = player.ready || [...net.peers.values()].some(pr => pr.ready);
-    if (nowMs - hostSince > 5000) {
+    // Brief 500ms grace after becoming host to let pose exchange settle, then
+    // always honor ready toggles. Previous 5000ms guard was silently swallowing
+    // ready clicks right after host migration / initial connect.
+    if (nowMs - hostSince > 500) {
       if (anyReady && session.readyCountdownEnd < 0) {
         session.readyCountdownEnd = nowMs + READY_COUNTDOWN_MS;
         session.version += 1;
@@ -4396,8 +5016,34 @@ function hostTick(nowMs) {
       hostReturnToLobby(nowMs);
     }
   } else if (p === Phase.BRIEFING) {
-    if (nowMs >= session.briefingEndsAt) hostStartMission(nowMs);
+    if (nowMs >= session.briefingEndsAt) {
+      // Gate the teleport on a dematerialize scan. First crossing: open the
+      // gate and broadcast so every peer fires its local scan. Second crossing:
+      // scan finished, release the gate and do the actual teleport.
+      if (session.scanPhase !== 'pre-mission') {
+        session.scanPhase = 'pre-mission';
+        session.scanEndsAt = nowMs + PRE_TELEPORT_SCAN_MS;
+        session.version += 1;
+        broadcastSession();
+      } else if (nowMs >= session.scanEndsAt) {
+        session.scanPhase = null;
+        session.scanEndsAt = -1;
+        hostStartMission(nowMs);
+      }
+    }
   } else if (p === Phase.MISSION) {
+    // Mission-end gate (Stage 3b). While 'post-mission' scan is running, skip
+    // all end-of-mission evaluation so we don't re-set the gate each tick.
+    if (session.scanPhase === 'post-mission') {
+      if (nowMs >= session.scanEndsAt) {
+        const result = session._pendingResult || 'cleared';
+        delete session._pendingResult;
+        session.scanPhase = null;
+        session.scanEndsAt = -1;
+        hostEndMission(nowMs, result);
+      }
+      _gantzMockeryTick(nowMs);
+    } else {
     const localDead = localIsParticipant() ? !player.alive : true;
     const peersDead = [...net.peers.entries()].every(([id, pr]) => {
       const inMission = !session.participants || session.participants.includes(id);
@@ -4405,21 +5051,32 @@ function hostTick(nowMs) {
     });
     const allHumansDead = localDead && peersDead;
     if (allHumansDead) {
-      hostEndMission(nowMs, 'wiped');
-    } else if (false && nowMs >= session.missionEndsAt) { // DEV: timer disabled
-      hostEndMission(nowMs, 'wiped');
+      _hostOpenEndMissionGate(nowMs, 'wiped');
+    } else if (nowMs >= session.missionEndsAt) {
+      // Timer ran out — kill every participant (host + peers) then wipe.
+      if (player.alive) applyDamageToPlayer(player.hp || 999);
+      for (const [, pr] of net.peers) pr.alive = false;
+      net.sendSession?.({ timerWipe: true });
+      _hostOpenEndMissionGate(nowMs, 'wiped');
     } else if (aliens.length > 0 && aliens.every(a => !a.alive)) {
       if (session.bonusBossRolled && !_bonusBossSpawned) {
         _bonusBossSpawned = true;
         const boss = spawnBonusBoss(session.missionSeed, MISSION_BOUNDS, session.missionIndex);
         aliens = [...aliens, boss];
-        toast('Something else is here.', 'warn');
+        _sphereSay('bossAppearance', { forceShow: true, dwellMs: 4200, rateLimitMs: 1500 });
         broadcastAliens();
+        _missionClearAt = -1;
       } else {
-        hostEndMission(nowMs, 'cleared');
+        // Hold briefly after the last kill so the gib burst + kill beat land
+        // before the debrief overlay slams in.
+        if (_missionClearAt < 0) _missionClearAt = nowMs;
+        if (nowMs - _missionClearAt >= 3000) _hostOpenEndMissionGate(nowMs, 'cleared');
       }
+    } else {
+      _missionClearAt = -1;
     }
     _gantzMockeryTick(nowMs);
+    }  // end of else (scanPhase !== 'post-mission')
   }
 
   if (nowMs - lastSessionBroadcast > SESSION_REBROADCAST_MS) broadcastSession();
@@ -4446,13 +5103,6 @@ function refreshPhaseOverlay() {
     overlayEl.style.display = 'flex';
     overlayLabel.textContent = 'BRIEFING';
     overlayMission.textContent = `MISSION ${session.missionIndex}`;
-    const modId = session.modifier?.id || 'clear';
-    const modLabel = session.modifier?.label || 'Clear';
-    const modDesc = modId === 'rush' ? 'Timer is shorter than usual.'
-      : modId === 'night' ? 'Low light.'
-      : modId === 'rain' ? 'Heavy rain reduces visibility.'
-      : modId === 'festival' ? 'Streets are packed with civilians.'
-      : 'Standard mission.';
     const targetsHtml = session.targets.map((t, i) => `
       <div class="target">
         <canvas class="alien-portrait" id="alien-portrait-${i}" width="140" height="180"></canvas>
@@ -4462,8 +5112,6 @@ function refreshPhaseOverlay() {
         </div>
       </div>`).join('');
     overlayContent.innerHTML = `
-      <div class="section">CONDITIONS</div>
-      <div class="target conditions-target"><strong>${modLabel.toUpperCase()}</strong><div style="opacity:0.6;font-size:0.78rem;">${modDesc}</div></div>
       <div class="section">TARGETS</div>
       ${targetsHtml}
       <div class="section" style="margin-top:0.8rem;">RULES</div>
@@ -4514,8 +5162,7 @@ function refreshPhaseOverlay() {
   }
 
   missionHudEl.style.display = (p === Phase.MISSION && localIsParticipant()) ? 'block' : 'none';
-  const modStr = session.modifier && session.modifier.id !== 'clear' ? ` · ${session.modifier.label}` : '';
-  missionInfoEl.textContent = `MISSION ${session.missionIndex}${modStr}`;
+  missionInfoEl.textContent = `MISSION ${session.missionIndex}`;
 }
 
 function updatePhaseTimers(nowMs) {
@@ -4546,25 +5193,11 @@ net.onChat(msg => {
 });
 
 const peersEl = document.getElementById('peers');
-const reconnectBtn = document.getElementById('reconnect-btn');
-if (reconnectBtn) reconnectBtn.addEventListener('click', () => location.reload());
 
-let _reconnectTimer = null;
 function refreshPeerCount() {
   const n = net.peers.size + 1;
   peersEl.textContent = `${n} online${net.isHost ? ' · host' : ''}`;
   peersEl.classList.toggle('offline', net.status === 'offline');
-  // Show reconnect button if alone for more than 30 s after connecting
-  if (reconnectBtn) {
-    clearTimeout(_reconnectTimer);
-    if (net.peers.size === 0 && net.status === 'connected') {
-      _reconnectTimer = setTimeout(() => {
-        if (net.peers.size === 0) reconnectBtn.style.display = 'block';
-      }, 30000);
-    } else {
-      reconnectBtn.style.display = 'none';
-    }
-  }
 }
 net.onStatus(s => {
   if (s === 'connected') refreshPeerCount();
@@ -4579,6 +5212,9 @@ net.onHostChange((hostId) => {
 net.onPeerLeave((id, peer) => {
   const name = peer?.username;
   if (name) chat.addSystem(`${name} has left the game.`);
+  _remoteFirstSeen.delete(id);
+  _remoteSawScan.delete(id);
+  _remoteScansFired.delete(id);
 });
 net.onNudge((msg, peerId) => {
   if (!msg || typeof msg.dx !== 'number' || typeof msg.dy !== 'number') return;
@@ -4733,6 +5369,256 @@ function updateWeaponHUD() {
   weaponPointsEl.textContent = `${player.points} pt · hp ${player.hp}/${suit.maxHp}`;
 }
 
+// --- Gantz Neural HUD (new) ---
+let _lastHudMode = 'fps';
+let _lastPointsSeen = -1; // sentinel — first observed value is a no-op
+let _dossierIdx = 0;
+let _dossierCycleAt = 0;
+let _aimTargetKind = 'idle';       // 'idle' | 'civ' | 'alien' | 'peer'
+let _aimTargetId = null;           // stable id of current aim target (alien/civ/peer)
+let _aimDwellStart = 0;            // ms when current aim target was first seen
+let _aimAnnouncedForId = null;     // id we've already spoken about
+let _idleLastX = 0, _idleLastY = 0;
+let _idleSinceMs = 0;
+let _idleNextAnnounceAt = 0;
+let _reticleWarnState = 'idle';    // what the HUD reticle is showing
+let _hudPrevAliensAlive = -1;
+let _hudAnnouncedLastAlien = false;
+let _hudAnnouncedTenSec = false;
+let _hudAnnouncedFirstBlood = false;
+
+function _pickDossierTarget() {
+  if (!aliens.length) return null;
+  const now = performance.now();
+  if (now >= _dossierCycleAt) {
+    const alive = aliens.filter(a => a.alive);
+    if (alive.length) _dossierIdx = (_dossierIdx + 1) % alive.length;
+    _dossierCycleAt = now + 4000;
+  }
+  const alive = aliens.filter(a => a.alive);
+  const tgt = alive[_dossierIdx % Math.max(1, alive.length)] || aliens.find(a => a.alive) || aliens[0] || null;
+  if (!tgt) return null;
+  const arch = ARCHETYPES[tgt.archetype] || {};
+  const threat = Math.min(1, (arch.hp || 1) / 500);
+  const targetRow = (session.targets || []).find(r => r.archetype === tgt.archetype);
+  const resolvedName = tgt.spec?.name || targetRow?.name || arch.name || 'UNKNOWN';
+  return {
+    id: tgt.id,
+    alive: tgt.alive,
+    marked: tgt.marked,
+    archetype: tgt.archetype,
+    specSeed: tgt.spec?.seed,
+    name: resolvedName,
+    threat,
+    _portraitKey: `${tgt.archetype}-${tgt.spec?.seed}`,
+  };
+}
+
+function _computeReticleWarn() {
+  // Compute cheaply each frame: is the crosshair currently over a civilian/teammate?
+  const inMission = session.phase === Phase.MISSION && localIsParticipant();
+  if (!inMission || !player.alive) { _aimTargetKind = 'idle'; _aimTargetId = null; return 'idle'; }
+  const camFwd = scene3d.getCameraForwardXZ?.();
+  const camOrg = scene3d.getCameraOriginXZ?.();
+  if (!camFwd || !camOrg) return 'idle';
+
+  // Build a peer hitscan set (peers aren't in _buildFireTargets because bullets
+  // pass through them — but we still want to detect them for aim warnings).
+  const peerTargets = [];
+  for (const [id, p] of net.peers) {
+    if (!p || p.alive === false) continue;
+    if (p.inMission !== true) continue;
+    if (p.x == null) continue;
+    peerTargets.push({ id, kind: 'peer', x: p.renderX ?? p.x, y: p.renderY ?? p.y, radius: 0.35, alive: true, username: p.username });
+  }
+  const targets = _buildFireTargets();
+  const bodyClear = (player.radius || 0.35) + 0.2;
+  const filter = (t) => {
+    if (!t || t.alive === false) return false;
+    const proj = (t.x - player.x) * camFwd.x + (t.y - player.y) * camFwd.y;
+    return proj >= bodyClear;
+  };
+  const all = [...targets.filter(filter), ...peerTargets.filter(filter)];
+  const w = { range: 40 };
+  const hit = hitscan(camOrg.x, camOrg.y, camFwd.x, camFwd.y, w.range, activeColliders, all);
+  let kind = 'idle';
+  let id = null;
+  let warn = 'idle';
+  if (hit && hit.target) {
+    if (hit.target.kind === 'civilian') { kind = 'civ'; id = hit.target.id; warn = 'civ'; }
+    else if (hit.target.kind === 'peer') { kind = 'peer'; id = hit.target.id; warn = 'idle'; }
+    else { kind = 'alien'; id = hit.target.id; warn = 'idle'; }
+  }
+
+  // Dwell-triggered transmission (fires once per new target after short dwell).
+  const nowMs = performance.now();
+  if (id !== _aimTargetId) {
+    _aimTargetId = id;
+    _aimDwellStart = nowMs;
+    _aimAnnouncedForId = null;
+  }
+  if (kind !== 'idle' && id != null && _aimAnnouncedForId !== id && nowMs - _aimDwellStart > 700) {
+    _aimAnnouncedForId = id;
+    if (kind === 'alien') {
+      _sphereSay('aimAlien', { dwellMs: 2400, rateLimitMs: 8000 });
+    } else if (kind === 'civ') {
+      _sphereSay('aimCiv', { dwellMs: 2800, rateLimitMs: 7000 });
+    } else if (kind === 'peer') {
+      const peerName = hit.target.username || 'hunter';
+      _sphereSay('aimPeer', { dwellMs: 2600, rateLimitMs: 8000, name: peerName });
+    }
+  }
+
+  _aimTargetKind = kind;
+  return warn;
+}
+
+function _buildWorldBadges() {
+  // Project marked aliens + civilians to screen, return an array of badges
+  // to render as absolutely-positioned divs. Skip entries that are behind
+  // the camera or offscreen.
+  const out = [];
+  if (!(session.phase === Phase.MISSION && localIsParticipant())) return out;
+  const now = performance.now();
+  const add = (ent, kind) => {
+    if (!ent || ent.alive === false || !ent.marked) return;
+    const dur = ent._markTimeMs || 1500;
+    const remain = Math.max(0, dur - (now - (ent.markedAt || 0))) / 1000;
+    // Project an elevated point (head level) for nicer placement.
+    const headY = kind === 'alien' ? 2.0 : 1.75;
+    const p = scene3d.worldToScreen?.(ent.x, headY, ent.y);
+    if (!p || p.behind) return;
+    out.push({ sx: p.x, sy: p.y, secs: remain, kind: kind === 'alien' ? 'alien' : 'civ' });
+  };
+  for (const a of aliens) add(a, 'alien');
+  for (const c of civilians) add(c, 'civ');
+  return out;
+}
+
+function _tickGantzHudFrame(dt) {
+  const inMission = session.phase === Phase.MISSION && localIsParticipant();
+  setGantzHudActive(inMission);
+
+  // FP/TP mode swap
+  const nextMode = scene3d.isThirdPerson?.() ? 'tps' : 'fps';
+  if (nextMode !== _lastHudMode) {
+    _lastHudMode = nextMode;
+    setGantzHudView(nextMode);
+  }
+
+  // Points delta edge trigger
+  const pts = player.points | 0;
+  if (pts !== _lastPointsSeen) {
+    const firstObservation = _lastPointsSeen < 0;
+    const delta = firstObservation ? 0 : pts - _lastPointsSeen;
+    if (!firstObservation) gantzHudOnPoints(pts, delta, delta < 0 ? 'loss' : 'gain');
+    // Skip SFX on a total wipe (points slammed to 0 from a big balance) —
+    // that's not a player-driven loss they'd expect to hear.
+    const isWipeReset = pts === 0 && delta < -50;
+    if (!firstObservation && !isWipeReset) {
+      if (delta > 0) audio.play(SFX_POINT_GAIN, 0.7);
+      else if (delta < 0) audio.play(SFX_POINT_LOSS, 0.8);
+    }
+    _lastPointsSeen = pts;
+  }
+
+  if (!inMission) {
+    _hudPrevAliensAlive = -1;
+    _hudAnnouncedLastAlien = false;
+    _hudAnnouncedTenSec = false;
+    _hudAnnouncedFirstBlood = false;
+    _idleSinceMs = 0;
+    _idleNextAnnounceAt = 0;
+    return;
+  }
+
+  // Idle detection: player hasn't moved for a while → sphere nags.
+  {
+    const nowMs = performance.now();
+    const dx = player.x - _idleLastX;
+    const dy = player.y - _idleLastY;
+    if (dx * dx + dy * dy > 0.04) {
+      _idleLastX = player.x;
+      _idleLastY = player.y;
+      _idleSinceMs = nowMs;
+      _idleNextAnnounceAt = nowMs + 8000 + Math.random() * 4000;
+    } else if (_idleSinceMs > 0 && nowMs > _idleNextAnnounceAt && nowMs - _idleSinceMs > 8000) {
+      _sphereSay('idle', { dwellMs: 2800, rateLimitMs: 3000 });
+      _idleNextAnnounceAt = nowMs + 12000 + Math.random() * 8000;
+    }
+  }
+
+  // Reticle warn
+  const warn = _computeReticleWarn();
+  _reticleWarnState = warn;
+
+  // Dialogue triggers on state change
+  const aliveCount = aliens.filter(a => a.alive).length;
+  if (_hudPrevAliensAlive === -1) _hudPrevAliensAlive = aliveCount;
+  if (aliveCount < _hudPrevAliensAlive) {
+    if (!_hudAnnouncedFirstBlood) {
+      _hudAnnouncedFirstBlood = true;
+      gantzHudAmbient('KILL CONFIRMED · TALLY +1');
+    }
+    if (aliveCount === 1 && !_hudAnnouncedLastAlien) {
+      _hudAnnouncedLastAlien = true;
+      _sphereSay('oneLeft', { dwellMs: 3500, rateLimitMs: 0, forceShow: true });
+    } else if (aliveCount === 0 && aliens.length > 0) {
+      _sphereSay('fieldCleared', { dwellMs: 4500, rateLimitMs: 0, forceShow: true });
+    }
+  }
+  _hudPrevAliensAlive = aliveCount;
+
+  const chronoRemainMs = Math.max(0, session.missionEndsAt - Date.now());
+  if (chronoRemainMs < 10000 && !_hudAnnouncedTenSec && chronoRemainMs > 0) {
+    _hudAnnouncedTenSec = true;
+    _sphereSay('tenSecWarning', { dwellMs: 3000, rateLimitMs: 0, forceShow: true });
+  }
+
+  // Weapon bar
+  const wid = activeWeaponId();
+  const w = WEAPONS[wid];
+  const cdMax = w ? (w.cooldown || 0) : 0;
+  const cdRem = Math.max(0, fireCooldown);
+  const ready = cdRem <= 0.001 || cdMax <= 0.001;
+  const barT = ready ? 1 : 1 - (cdRem / cdMax);
+
+  // Dossier target
+  const dossierTarget = _pickDossierTarget();
+
+  // Remote peers as radar blips
+  const remotePeers = [];
+  for (const [, p] of net.peers) {
+    if (!p || p.alive === false) continue;
+    if (p.inMission !== true) continue;
+    if (p.x == null) continue;
+    remotePeers.push({ x: p.renderX ?? p.x, y: p.renderY ?? p.y, name: p.username });
+  }
+
+  const chronoMs = Math.max(0, session.missionEndsAt - Date.now());
+
+  tickGantzHud({
+    phase: session.phase,
+    inMission,
+    username: player.username || '—',
+    peerCount: remotePeers.length + 1,
+    modifierLabel: '',
+    chronoMs,
+    weaponName: w?.name || '—',
+    weaponState: ready ? 'READY' : 'CYCLING',
+    weaponBarT: barT,
+    weaponBarReady: ready,
+    points: pts,
+    aliens,
+    civilians,
+    remotePeers,
+    player: { x: player.x, y: player.y, facing: player.facing, yaw },
+    dossierTarget,
+    reticleWarn: warn,
+    worldBadges: _buildWorldBadges(),
+  }, dt);
+}
+
 // --- Fire weapon on click ---
 function activeWeaponId() {
   const slots = [player.loadout.weapon1, player.loadout.weapon2];
@@ -4811,11 +5697,18 @@ function applyHitResult(hit, w, shooterId, tracerFromX, tracerFromY) {
         payload.ey = camO.y + fwd.y * s;
         payload.ez = camO.z + fwd.z * s;
       } else {
-        // No target → just fly straight along the crosshair.
+        // No target hit (wall or empty sky). Point the bullet at a distant
+        // spot on the CAMERA ray (crosshair ray), not parallel to camFwd
+        // starting at the muzzle. Flying parallel means the bullet stays
+        // offset from the crosshair for its entire travel distance — at
+        // long range you see it pass visibly left-and-down of the reticle
+        // (muzzle sits right+low of the camera in TP). Aiming through a
+        // point far along the camera ray pulls the bullet path back onto
+        // the crosshair.
         const K = 50; // ≥ BULLET_MAX_DIST so direction dominates
-        payload.ex = payload.ox + fwd.x * K;
-        payload.ey = payload.oy + fwd.y * K;
-        payload.ez = payload.oz + fwd.z * K;
+        payload.ex = camO.x + fwd.x * K;
+        payload.ey = camO.y + fwd.y * K;
+        payload.ez = camO.z + fwd.z * K;
       }
     }
     emitTracer(payload);
@@ -4855,6 +5748,9 @@ function _applyHitNow(hit, w, shooterId) {
   if (hit.target.kind === 'alien') {
     if (shooterId === net.selfId) {
       net.sendHit({ kind: 'alien', id: hit.target.id, shooterId, markMs: w.markTime * 1000 });
+      if (!hit.target.marked) {
+        _sphereSay('alienMarkedByYou', { dwellMs: 2600, rateLimitMs: 4500 });
+      }
     }
     if (net.isHost) {
       const a = aliens.find(a => a.id === hit.target.id && a.alive);
@@ -4867,16 +5763,20 @@ function _applyHitNow(hit, w, shooterId) {
       }
     }
   } else if (hit.target.kind === 'civilian') {
-    hit.target.alive = false;
+    // X-family weapons fuse the civilian — they bloat and detonate after
+    // markTime. Host authoritative: host marks + ticks + broadcasts death.
     if (shooterId === net.selfId) {
-      net.sendHit({ kind: 'civilian', id: hit.target.id, shooterId });
+      net.sendHit({ kind: 'civilian', id: hit.target.id, shooterId, markMs: w.markTime * 1000 });
     }
-    if (net.isHost) {
-      if (shooterId === net.selfId) {
-        player.points = Math.max(0, player.points - CIVILIAN_PENALTY);
-        player.civiliansKilled += 1;
-        missionCivilianKills += 1;
-        toast(`-${CIVILIAN_PENALTY} · civilian killed`, 'warn');
+    if (net.isHost && shooterId === net.selfId) {
+      const c = civilians.find(c => c.id === hit.target.id);
+      if (c && c.alive !== false && !c.marked) {
+        c.marked = true;
+        c.markedAt = performance.now();
+        c._markTimeMs = w.markTime * 1000;
+        c._killerId = shooterId;
+        c.vx = 0; c.vy = 0;
+        broadcastCivs();
       }
     }
   }
@@ -4911,6 +5811,15 @@ function tryFire() {
   if (!w) return;
   fireCooldown = w.cooldown;
 
+  // Civilian warning: if the crosshair is on a civilian when we pulled the
+  // trigger, punish cosmetically (flash + inverted clicks + dialogue).
+  if (_aimTargetKind === 'civ') {
+    gantzHudOnFire({ kind: 'civilian' });
+    _sphereSay('civMarkedByYou', { dwellMs: 5000, rateLimitMs: 3000, forceShow: true });
+  } else if (_aimTargetKind === 'peer') {
+    _sphereSay('shotAtPeer', { dwellMs: 3200, rateLimitMs: 4000, forceShow: true });
+  }
+
   // FPS feedback: muzzle flash + screen tint + sound
   scene3d.triggerMuzzleFlash?.();
   _gunFlashEl.classList.remove('active');
@@ -4919,11 +5828,12 @@ function tryFire() {
   // Own gunshot: always full volume, no pan — the sound is "in your hands",
   // not in the world from your listener's POV. Remote peers still hear it
   // positionally via the onShot broadcast.
-  audio.play(SFX_GUN_SHOOT, 0.7);
+  audio.play(SFX_GUN_SHOOT, 0.6);
   fireId++;
   // Dynamic crosshair: each shot pushes the four ticks outward. Spread decays
   // back to 0 every frame in render() when not firing.
-  bumpCrosshairSpread(w.mode === 'spread' ? 28 : 18);
+  // X-Gun is one-shot-per-charge, so each shot slams the crosshair wide open.
+  bumpCrosshairSpread(w.mode === 'spread' ? 130 : 120);
 
   // The bullet hits whatever the CROSSHAIR is actually over. We hitscan from
   // the camera's XZ position along its forward axis (the same 2D collision
@@ -5003,6 +5913,9 @@ function tryFire() {
   } else {
     const hit = verticalCheck(hitscan(camOrg.x, camOrg.y, camFwd.x, camFwd.y, w.range, activeColliders, targets));
     applyHitResult(hit, w, net.selfId, player.x, player.y);
+    if (session.phase === Phase.MISSION && !hit.target && _aimTargetKind === 'idle') {
+      _sphereSay('missedShot', { dwellMs: 2400, rateLimitMs: 7000 });
+    }
   }
 
   noteActivity();
@@ -5013,8 +5926,22 @@ function tryFire() {
 addEventListener('keydown', (e) => {
   if (document.activeElement && document.activeElement.id === 'chat-input') return;
   if (menu.isOpen()) return;
-  if (e.key === '1') { player.activeSlot = 0; updateWeaponHUD(); toast(WEAPONS[player.loadout.weapon1]?.name || '—', 'info'); }
-  else if (e.key === '2' && player.loadout.weapon2) { player.activeSlot = 1; updateWeaponHUD(); toast(WEAPONS[player.loadout.weapon2]?.name || '—', 'info'); }
+  if (e.key === '1') {
+    if (player.activeSlot !== 0) {
+      player.activeSlot = 0;
+      updateWeaponHUD();
+      toast(WEAPONS[player.loadout.weapon1]?.name || '—', 'info');
+      if (session.phase === Phase.MISSION) _sphereSay('weaponSwitch', { dwellMs: 2600, rateLimitMs: 8000 });
+    }
+  }
+  else if (e.key === '2' && player.loadout.weapon2) {
+    if (player.activeSlot !== 1) {
+      player.activeSlot = 1;
+      updateWeaponHUD();
+      toast(WEAPONS[player.loadout.weapon2]?.name || '—', 'info');
+      if (session.phase === Phase.MISSION) _sphereSay('weaponSwitch', { dwellMs: 2600, rateLimitMs: 8000 });
+    }
+  }
 });
 
 // Ball menu click interaction — raycast screen click to UV, map to button region
@@ -5065,6 +5992,41 @@ chatInputEl?.addEventListener('focus', () => {
 
 
 function update(dt) {
+  // Stage 3c: relay remote peers' scans to scene3d. Each peer's pose carries
+  // a compact `scan` descriptor while a scan is active; fire it once per new
+  // `scan.t` onto their 3rd-person mesh.
+  for (const [peerId, peer] of net.peers) {
+    const s = peer?.scan;
+    if (!s) continue;
+    if (_remoteScansFired.get(peerId) === s.t) continue;
+    const opts = { type: s.type };
+    if (s.k === 'b') opts.sourceBall = { x: s.sx, y: s.sy, z: s.sz, r: s.sr };
+    else opts.source = { x: s.sx, y: s.sy, z: s.sz };
+    // startTransferScan returns false if the peer's mesh entry hasn't been
+    // ingested yet (first pose frame arrives before scene3d.render creates the
+    // entry). Only mark as fired on success so we retry next frame instead of
+    // silently dropping the scan.
+    const ok = scene3d.startTransferScan?.(peerId, opts);
+    if (ok) _remoteScansFired.set(peerId, s.t);
+  }
+
+  // Stage 3b: react to scan-phase transitions once per gate open. The host's
+  // hostTick sets scanPhase before the teleport; every peer (including host)
+  // triggers its local dematerialize here when the phase flips.
+  if (session.scanPhase !== _appliedScanPhase) {
+    _appliedScanPhase = session.scanPhase;
+    if (session.scanPhase === 'pre-mission' && localIsParticipant()) {
+      // Dematerialize out of the lobby from the Gantz ball.
+      _triggerTransferScan('dematerialize', {
+        sourceBall: { x: GANTZ_BALL.x, y: 1.2, z: GANTZ_BALL.y, r: GANTZ_BALL.radius },
+      });
+    } else if (session.scanPhase === 'post-mission' && localIsParticipant()) {
+      // Dematerialize out of the field from an overhead satellite beam.
+      _triggerTransferScan('dematerialize', {
+        source: { x: player.x, y: 8, z: player.y },
+      });
+    }
+  }
   // Flush any pending hits whose bullets have now reached their targets.
   // This must run before AI ticks so a civilian/alien that just died still
   // gets to run its death animation frame this tick.
@@ -5171,6 +6133,30 @@ function update(dt) {
         const spd = Math.hypot(v.vx, v.vy);
         if (spd > 0.1) civ.walkPhase = (civ.walkPhase || 0) + dt * 6;
       }
+      // Detonate fused civilians whose fuse has expired. Penalty applies at
+      // detonation (not at mark), so a teammate can't "undo" the kill but the
+      // shooter gets the full anime-accurate moment of dread first.
+      const nowMs = performance.now();
+      for (const c of civilians) {
+        if (!c.alive || !c.marked) continue;
+        const dur = c._markTimeMs != null ? c._markTimeMs : 1500;
+        if (nowMs - c.markedAt < dur) continue;
+        c.alive = false; c.vx = 0; c.vy = 0;
+        const shooterId = c._killerId;
+        net.sendKill({ kind: 'civilianPenalty', shooterId });
+        net.sendKill({ kind: 'civilianDeath',   id: c.id, shooterId });
+        if (shooterId === net.selfId) {
+          player.points = Math.max(0, player.points - CIVILIAN_PENALTY);
+          player.civiliansKilled += 1;
+          missionCivilianKills += 1;
+          _sphereSay('civKilledByYou', { dwellMs: 3800, rateLimitMs: 3500, forceShow: true });
+        } else if (shooterId) {
+          // Host tracks peer points so debrief tallies stay accurate.
+          const peer = net.peers.get(shooterId);
+          if (peer) peer.points = Math.max(0, (peer.points || 0) - CIVILIAN_PENALTY);
+        }
+        broadcastCivs();
+      }
       if (performance.now() - lastCivsBroadcast > CIVS_BROADCAST_MS) broadcastCivs();
     } else {
       // Non-host: extrapolate between broadcasts using the last-known velocity
@@ -5203,8 +6189,13 @@ function update(dt) {
       }
 
       tickMarked(aliens, dt, (alien) => {
-        // alien died: award points to killer
+        // alien died: spawn gib explosion at their last position, award points
         const arch = ARCHETYPES[alien.archetype];
+        scene3d.spawnGibs?.(alien.x, alien.y, {
+          power: alien.archetype === 'boss' ? 1.7 : alien.archetype === 'brute' ? 1.3 : 1,
+          count: alien.archetype === 'boss' ? 48 : alien.archetype === 'brute' ? 36 : 28,
+          centerY: (alien.radius || 0.55) * 1.8,
+        });
         const points = alien._pointsReward || arch.points || ALIEN_KILL_POINTS_DEFAULT;
         net.sendKill({
           kind: 'alienKilled',
@@ -5217,7 +6208,7 @@ function update(dt) {
           player.points += points;
           missionPointsEarned += points;
           if (alien.isBonusBoss) missionBossKilled = true;
-          toast(`+${points} · ${arch.name}`, 'kill');
+          _sphereSay('alienKilledByYou', { dwellMs: 3200, rateLimitMs: 4500 });
         } else {
           // Trystero has no loopback — the host's onKill listener never fires for
           // kills it broadcasts.  Eagerly update the peer's points here so the host's
@@ -5500,9 +6491,16 @@ function render(dt, alpha = 1) {
     if (p.x == null) continue;
     const peerInMission =
       (p.inMission === true)
-      || (parts ? parts.includes(peerId) : false)
+      || (session.phase === Phase.MISSION && parts ? parts.includes(peerId) : false)
       || (session.phase === Phase.MISSION && !!p.ready);
     if (localInMission !== peerInMission) continue;
+    // Spawn-grace gate: hold a brand-new peer out of scene3d until their scan
+    // descriptor reaches us, so scene3d never creates an un-scanned full-body
+    // entry for a peer that's about to beam in.
+    if (p.scan) _remoteSawScan.add(peerId);
+    if (!_remoteFirstSeen.has(peerId)) _remoteFirstSeen.set(peerId, _now);
+    if (!_remoteSawScan.has(peerId)
+        && (_now - _remoteFirstSeen.get(peerId)) < REMOTE_SPAWN_GRACE_MS) continue;
     const bubble = _chatBubbles.get(peerId);
     const bubbleAlive = bubble && _now < bubble.expiresAt;
     remotes.push({
@@ -5612,6 +6610,9 @@ function render(dt, alpha = 1) {
   // update Gantz-prompt and spectate HTML overlays
   updateWorldHtmlOverlays();
 
+  // Gantz Neural HUD (new)
+  _tickGantzHudFrame(dt || 1 / 60);
+
   // Restore the simulation-authoritative player pose so the next update()
   // step runs against the real state, not our interpolated render copy.
   if (_realPx !== undefined) { player.x = _realPx; player.y = _realPy; }
@@ -5656,7 +6657,48 @@ function updateMissionTargetsHUD() {
 }
 
 refreshPhaseOverlay();
+initGantzHud({ drawAlienPortrait });
+// Default to third-person on first-time entry only. After this, the player
+// owns the camera — we don't reset it on phase transitions between lobby and
+// mission; scroll wheel switches modes.
+scene3d.setThirdPerson?.(true);
 startLoop({ update, render });
+
+// First load: arrival in the lobby is itself a Gantz teleport. Wait for the
+// FBX character assets to load AND for a few stable frames before firing —
+// otherwise the scan runs during the asset-load frame-time spikes (FBX parse,
+// GLB weapon, shader compile) and visibly stutters. The scan also has to
+// attach AFTER the FBX entry replaces the procedural fallback, otherwise the
+// material patch gets thrown away when the pool swaps in.
+(function scheduleInitialScan() {
+  const startedAt = performance.now();
+  const MAX_WAIT_MS = 6000;      // hard ceiling — fire even if frames never stabilise
+  const STABLE_FRAMES = 3;       // small burst of clean frames is enough
+  const STABLE_DT_MS = 40;       // tolerate slower machines
+  const POST_READY_DELAY_MS = 150;
+  let stable = 0;
+  let readyAt = 0;
+  let lastT = performance.now();
+  function fire() { try { _triggerTransferScan('materialize'); } catch (e) { console.warn('[scan] initial fire failed:', e); } }
+  function tick(t) {
+    const dt = t - lastT; lastT = t;
+    const ready = scene3d.isCharReady?.() ?? true;
+    if (ready && !readyAt) readyAt = t;
+    // Fire as soon as char is ready, we've waited the post-ready delay, AND a
+    // small burst of fast frames confirms assets have settled. Either way, max
+    // 6s from page load — never leave the scan un-fired, since that also means
+    // no peer would ever see us materialise into the lobby.
+    if (ready && dt < STABLE_DT_MS) stable++;
+    else stable = 0;
+    const postReadyOk = readyAt && (t - readyAt) >= POST_READY_DELAY_MS;
+    const shouldFire =
+      (ready && postReadyOk && stable >= STABLE_FRAMES)
+      || (performance.now() - startedAt) >= MAX_WAIT_MS;
+    if (shouldFire) { fire(); return; }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
 
 window.__gantz = {
   player, props, walls: lobbyWalls, staticColliders: lobbyColliders, world, renderer,
