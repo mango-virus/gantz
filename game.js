@@ -5786,9 +5786,8 @@ function fireRay(originX, originY, dirX, dirY, w, shooterId = net.selfId) {
 }
 
 function tryFire() {
-  const inFightPhase = session.phase === Phase.MISSION || session.phase === Phase.LOBBY;
-  if (!inFightPhase || !player.alive) return;
-  if (session.phase === Phase.MISSION && !localIsParticipant()) return;
+  if (session.phase !== Phase.MISSION || !player.alive) return;
+  if (!localIsParticipant()) return;
   if (fireCooldown > 0) return;
   const wid = activeWeaponId();
   const w = WEAPONS[wid];
