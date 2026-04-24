@@ -79,11 +79,11 @@ const _doorColliders = [
 ];
 
 // Phase timings (chunk 5 values; mission duration scales per alien load in Chunk 7)
-const BRIEFING_MS = 30000;
+const BRIEFING_MS = 16000;
 const MISSION_BASE_MS = 30000;
 const DEBRIEF_MS = 25000;
 const SESSION_REBROADCAST_MS = 1500;
-const READY_COUNTDOWN_MS = 40000;
+const READY_COUNTDOWN_MS = 6000;
 const ALIENS_BROADCAST_MS = 100;
 const CIVILIAN_PENALTY = 20;
 const ALIEN_KILL_POINTS_DEFAULT = 100;
@@ -3402,10 +3402,12 @@ function _drawBallMenu() {
     _typeTickSound(5000 + Math.min(activeRow, rows.length - 1), typing);
     if (contentDone && _briefingContentDoneAt < 0) _briefingContentDoneAt = performance.now();
 
-    // Post-content timing: linger → fade out content → fade in countdown
-    const BFADE_LINGER_MS    = 4000;
-    const BFADE_CONTENT_MS   = 700;
-    const BCLOCK_FADE_IN_MS  = 900;
+    // Post-content timing: linger → fade out content → fade in countdown.
+    // Longer linger keeps the briefing message readable for the full window
+    // before the analog clock takes over for the Gantz-opening scan.
+    const BFADE_LINGER_MS    = 3800;
+    const BFADE_CONTENT_MS   = 500;
+    const BCLOCK_FADE_IN_MS  = 600;
     const sinceContent = (contentDone && _briefingContentDoneAt >= 0)
       ? (performance.now() - _briefingContentDoneAt) : 0;
     const contentAlpha = contentDone
@@ -3443,14 +3445,28 @@ function _drawBallMenu() {
       ctx.restore();
     }
 
-    // 15-second countdown fades in after briefing content fades away
+    // Countdown fades in after briefing content fades away. Shows total time
+    // remaining to mission start across three sub-phases:
+    //   briefing content  → (briefingEndsAt - now) + WAIT + SCAN  (≈33→20)
+    //   pre-mission-wait  → (scanEndsAt - now) + SCAN             (≈20→2.5)
+    //   pre-mission (scan)→ (scanEndsAt - now)                    (≈2.5→0)
+    // Analog clock ticks continuously from briefing end down to mission start.
     if (clockAlpha > 0) {
-      const remain = Math.max(0, session.briefingEndsAt - Date.now());
-      const sec    = Math.ceil(remain / 1000);
+      const now = Date.now();
+      let remain;
+      if (session.scanPhase === 'pre-mission') {
+        remain = Math.max(0, session.scanEndsAt - now);
+      } else if (session.scanPhase === 'pre-mission-wait') {
+        remain = Math.max(0, session.scanEndsAt - now) + PRE_TELEPORT_SCAN_MS;
+      } else {
+        remain = Math.max(0, session.briefingEndsAt - now)
+               + PRE_TELEPORT_WAIT_MS + PRE_TELEPORT_SCAN_MS;
+      }
+      const sec = Math.ceil(remain / 1000);
       const segW = 36, segH = 68, segT = 7;
       const segY   = S * 0.28;
-      const dOnCol  = '#ff1744';
-      const dOffCol = 'rgba(255,23,68,0.12)';
+      const dOnCol  = '#c8102e';
+      const dOffCol = 'rgba(200,16,46,0.12)';
       ctx.save();
       ctx.globalAlpha *= clockAlpha;
       _draw7SegClock(ctx, sec, CX, segY, segW, segH, segT, dOnCol, dOffCol);
@@ -3963,12 +3979,21 @@ function _drawBallMenu() {
 
     const segW = 36, segH = 68, segT = 7;
     const segY = S * 0.22;
-    const NEON_RED = '#ff1744';
-    const NEON_RED_OFF = 'rgba(255,23,68,0.12)';
+    const NEON_RED = '#c8102e';
+    const NEON_RED_OFF = 'rgba(200,16,46,0.12)';
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     const CLOCK_FADE_MS  = 1200;
-    const clockAlpha = Math.min(1, Math.max(0, cElapsed / CLOCK_FADE_MS));
-    const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
+    // Clock displays total time remaining until the mission actually starts,
+    // so it reads 44→31 during queue, continues 31→20 in briefing, then 20→0
+    // during the "Gantz opening" scan. Phase transitions don't reset it.
+    const _queueMs = Math.max(0, session.readyCountdownEnd - Date.now());
+    // Fade the clock + queued list OUT across the final ~1s of queue, so the
+    // briefing takes over a blank ball rather than snapping over live pixels.
+    const CLOCK_FADE_OUT_MS = 1000;
+    const fadeInA  = Math.min(1, Math.max(0, cElapsed / CLOCK_FADE_MS));
+    const fadeOutA = Math.min(1, Math.max(0, _queueMs / CLOCK_FADE_OUT_MS));
+    const clockAlpha = Math.min(fadeInA, fadeOutA);
+    const secs = Math.ceil((_queueMs + BRIEFING_MS + PRE_TELEPORT_WAIT_MS + PRE_TELEPORT_SCAN_MS) / 1000);
     ctx.save();
     ctx.globalAlpha = clockAlpha;
     _draw7SegClock(ctx, secs, CX, segY, segW, segH, segT, NEON_RED, NEON_RED_OFF);
@@ -4030,9 +4055,10 @@ function _drawBallMenu() {
 
     // Queue countdown + names shown above buttons when countdown is running
     if (showQueue) {
-      const secs = Math.max(0, Math.ceil((session.readyCountdownEnd - Date.now()) / 1000));
+      const _qms = Math.max(0, session.readyCountdownEnd - Date.now());
+      const secs = Math.ceil((_qms + BRIEFING_MS + PRE_TELEPORT_WAIT_MS + PRE_TELEPORT_SCAN_MS) / 1000);
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.font = `22px ${_PF}`; ctx.fillStyle = '#ff1744';
+      ctx.font = `22px ${_PF}`; ctx.fillStyle = '#c8102e';
       ctx.fillText(String(secs), CX, y);
       y += 36;
       ctx.font = `9px ${_PF}`; ctx.fillStyle = DL;
@@ -4430,7 +4456,12 @@ const session = {
 // Last scanPhase we already reacted to locally — guards against re-firing the
 // dematerialize every tick while the gate is still open.
 let _appliedScanPhase = null;
-const PRE_TELEPORT_SCAN_MS = 2500; // matches transferScan DEFAULT_DURATION
+// The "Gantz opening" final sequence is 20s total: a 17.5s clock-only wait
+// (scanPhase = 'pre-mission-wait') followed by a 2.5s dematerialize scan
+// (scanPhase = 'pre-mission'). The scan's transferScan visual only fires
+// during the last 2.5s so its DEFAULT_DURATION (2.5) matches PRE_TELEPORT_SCAN_MS.
+const PRE_TELEPORT_WAIT_MS = 17500;
+const PRE_TELEPORT_SCAN_MS = 2500;
 
 // Per-peer `scan.t` of the most recent scan we've already relayed to scene3d.
 // Guards against re-firing the same scan on every 15Hz pose for the duration
@@ -5259,8 +5290,11 @@ function hostTick(nowMs) {
     }
   } else if (p === Phase.BRIEFING) {
     // If everyone has left the queue during briefing, cancel and return to lobby.
+    // Once the scan gates have opened ('pre-mission-wait' or 'pre-mission')
+    // it's too late to abort — the mission is committed.
     const anyReady = player.ready || [...net.peers.values()].some(pr => pr.ready);
-    if (!anyReady && session.scanPhase !== 'pre-mission') {
+    const scanArmed = session.scanPhase === 'pre-mission' || session.scanPhase === 'pre-mission-wait';
+    if (!anyReady && !scanArmed) {
       session.phase = Phase.LOBBY;
       session.briefingEndsAt = 0;
       session.readyCountdownEnd = -1;
@@ -5271,15 +5305,20 @@ function hostTick(nowMs) {
       return;
     }
     if (nowMs >= session.briefingEndsAt) {
-      // Gate the teleport on a dematerialize scan. First crossing: open the
-      // gate and broadcast so every peer fires its local scan. Second crossing:
-      // scan finished, release the gate and do the actual teleport.
-      if (session.scanPhase !== 'pre-mission') {
+      // "Gantz opening" final sequence: first a clock-only wait
+      // ('pre-mission-wait', ~17.5s), then the dematerialize scan fires
+      // ('pre-mission', 2.5s), then the actual mission teleport.
+      if (!session.scanPhase) {
+        session.scanPhase = 'pre-mission-wait';
+        session.scanEndsAt = nowMs + PRE_TELEPORT_WAIT_MS;
+        session.version += 1;
+        broadcastSession();
+      } else if (session.scanPhase === 'pre-mission-wait' && nowMs >= session.scanEndsAt) {
         session.scanPhase = 'pre-mission';
         session.scanEndsAt = nowMs + PRE_TELEPORT_SCAN_MS;
         session.version += 1;
         broadcastSession();
-      } else if (nowMs >= session.scanEndsAt) {
+      } else if (session.scanPhase === 'pre-mission' && nowMs >= session.scanEndsAt) {
         session.scanPhase = null;
         session.scanEndsAt = -1;
         hostStartMission(nowMs);
