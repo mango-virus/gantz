@@ -872,8 +872,9 @@ export function createScene3d({ canvas }) {
   let _worldGunScale = 1; // the _s factor (0.32/maxDim) — applied when cloning
 
   // ── Character model (FBX) ────────────────────────────────────────────────
-  let _charTemplate = null;  // loaded FBX root Object3D (not added to scene)
-  let _charClips = null;     // { clipName → AnimationClip }
+  let _charTemplate  = null;  // male1 loaded FBX root Object3D (not added to scene)
+  let _charTemplate2 = null;  // male2 loaded FBX root Object3D (not added to scene)
+  let _charClips = null;      // { clipName → AnimationClip } — shared by both variants
 
   // Instance pool: pre-cloned character instances that are ready to use instantly.
   // skeletonClone() is expensive (~10-30ms per call). Pre-building the pool one
@@ -1141,8 +1142,14 @@ export function createScene3d({ canvas }) {
     death_13: 'assets/models/character/male1/Dying/player_dying13.fbx',
   };
 
+  const _CHAR2_BASE = 'assets/models/character/male2/male2.fbx';
+
   (function loadCharacter() {
     const loader = new FBXLoader();
+    // Load male2 base mesh in parallel — no animations needed, shares male1 clips.
+    loader.load(_CHAR2_BASE, base2 => {
+      _charTemplate2 = base2;
+    }, undefined, () => console.warn('[char] male2 base mesh load failed — will use male1 only'));
     loader.load(_CHAR_BASE, base => {
       _charTemplate = base;
       const clips = {};
@@ -1221,7 +1228,8 @@ export function createScene3d({ canvas }) {
   })();
 
   function _createCharInstance() {
-    const clone = skeletonClone(_charTemplate);
+    const template = (_charTemplate2 && Math.random() < 0.5) ? _charTemplate2 : _charTemplate;
+    const clone = skeletonClone(template);
     clone.scale.setScalar(0.01); // Mixamo FBX is in cm
     clone.traverse(o => {
       if (!o.isMesh) return;
