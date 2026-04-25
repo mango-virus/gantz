@@ -4263,7 +4263,15 @@ let _sensMultiplier = 1;
 let _headBobEnabled = true;
 
 document.addEventListener('pointerlockchange', () => {
+  const wasLocked = pointerLocked;
   pointerLocked = document.pointerLockElement === canvas;
+  // When pointer lock drops (user pressed ESC in-game), open the pause menu.
+  // Some browsers don't dispatch the ESC keydown to JS while locked, so we
+  // hook the lock-release event instead of relying on the keydown handler.
+  if (wasLocked && !pointerLocked) {
+    const anyOpen = chat?.isOpen?.() || menu?.isOpen?.() || escMenu?.isOpen?.();
+    if (!anyOpen) { escMenu?.open(); setInputSuspended(true); }
+  }
 });
 canvas.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
@@ -4286,10 +4294,14 @@ function requestLockIfAllowed() {
 // releasing the lock, open the pause menu if nothing else is currently open.
 addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (document.pointerLockElement === canvas) document.exitPointerLock();
-    // Open pause menu only when nothing else is consuming ESC.
-    // stopImmediatePropagation prevents the settingsMenu's own ESC listener
-    // (also capture-phase, registered later) from immediately closing it.
+    if (document.pointerLockElement === canvas) {
+      // Release lock; pointerlockchange handler will open the menu.
+      document.exitPointerLock();
+      return;
+    }
+    // No pointer lock — open the pause menu directly if nothing else is open.
+    // stopImmediatePropagation prevents settingsMenu's own capture-phase ESC
+    // listener (registered later) from immediately closing the menu we just opened.
     const anyOpen = chat?.isOpen?.() || menu?.isOpen?.() || escMenu?.isOpen?.();
     if (!anyOpen) { e.stopImmediatePropagation(); escMenu.open(); setInputSuspended(true); }
   }
