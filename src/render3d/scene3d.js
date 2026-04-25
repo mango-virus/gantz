@@ -871,10 +871,15 @@ export function createScene3d({ canvas }) {
   let _worldGunTemplate = null;
   let _worldGunScale = 1; // the _s factor (0.32/maxDim) — applied when cloning
 
-  // ── Character model (FBX) ────────────────────────────────────────────────
-  let _charTemplate  = null;  // male1 loaded FBX root Object3D (not added to scene)
-  let _charTemplate2 = null;  // male2 loaded FBX root Object3D (not added to scene)
-  let _charClips = null;      // { clipName → AnimationClip } — shared by both variants
+  // ── Character model (FBX / GLB) ──────────────────────────────────────────
+  // _charVariants: array of loaded mesh templates (male1 first, others added as they load).
+  // All share the same animation clips — retargeting works because Mixamo rigs
+  // have identical bone names once the namespace prefix is stripped.
+  const _charVariants = [];
+  let _charClips = null;  // { clipName → AnimationClip } — shared by all variants
+
+  // Strip 'mixamorig:' / 'mixamorig' Mixamo namespace from a bone or track name.
+  function _normBone(n) { return n.replace(/^mixamorig[: ]?/, ''); }
 
   // Instance pool: pre-cloned character instances that are ready to use instantly.
   // skeletonClone() is expensive (~10-30ms per call). Pre-building the pool one
@@ -1142,17 +1147,28 @@ export function createScene3d({ canvas }) {
     death_13: 'assets/models/character/male1/Dying/player_dying13.fbx',
   };
 
-  const _CHAR2_BASE = 'assets/models/character/male2/male2.fbx';
+  // Load an additional character variant from a GLB or FBX URL.
+  // Call this any time after scene3d is created — the variant is added to the
+  // pool as soon as it loads and picked randomly from then on.
+  function _loadCharVariant(url) {
+    if (url.endsWith('.glb') || url.endsWith('.gltf')) {
+      new GLTFLoader().load(url, gltf => {
+        _charVariants.push(gltf.scene);
+      }, undefined, () => console.warn('[char] GLB variant load failed:', url));
+    } else {
+      new FBXLoader().load(url, obj => {
+        _charVariants.push(obj);
+      }, undefined, () => console.warn('[char] FBX variant load failed:', url));
+    }
+  }
 
   (function loadCharacter() {
     const loader = new FBXLoader();
-    // Load male2 base mesh in parallel — no animations needed, shares male1 clips.
-    loader.load(_CHAR2_BASE, base2 => {
-      _charTemplate2 = base2;
-    }, undefined, () => console.warn('[char] male2 base mesh load failed — will use male1 only'));
+    // Load male2 in parallel — shares male1 animation clips.
+    _loadCharVariant('assets/models/character/male2/male2.fbx');
     loader.load(_CHAR_BASE, base => {
-      _charTemplate = base;
       const clips = {};
+
       const names = Object.keys(_CHAR_ANIMS);
       let remaining = names.length;
       const done = () => {
@@ -1182,7 +1198,16 @@ export function createScene3d({ canvas }) {
             else if (name === 'pistol_shoot' ||
                 name.startsWith('death_')) _resampleClip(clip, 60);
           }
+          // Normalize track names: strip Mixamo namespace so clips retarget
+          // to any Mixamo skeleton (FBX uses 'mixamorig:Hips', GLB uses 'Hips').
+          for (const clip of Object.values(clips)) {
+            for (const track of clip.tracks) {
+              const dot = track.name.indexOf('.');
+              if (dot > 0) track.name = _normBone(track.name.slice(0, dot)) + track.name.slice(dot);
+            }
+          }
           _charClips = clips;
+          _charVariants.unshift(base); // male1 is always index 0
           // Fill the instance pool one entry per rAF frame so no single frame
           // pays the full skeletonClone cost.  The first entry also triggers a
           // shader compile so GPU programs are ready before any character renders.
@@ -1228,9 +1253,11 @@ export function createScene3d({ canvas }) {
   })();
 
   function _createCharInstance() {
-    const template = (_charTemplate2 && Math.random() < 0.5) ? _charTemplate2 : _charTemplate;
+    const template = _charVariants[Math.floor(Math.random() * _charVariants.length)];
     const clone = skeletonClone(template);
     clone.scale.setScalar(0.01); // Mixamo FBX is in cm
+    // Normalize bone names to match the normalized clip track names.
+    clone.traverse(o => { if (o.isBone) o.name = _normBone(o.name); });
     clone.traverse(o => {
       if (!o.isMesh) return;
       o.castShadow = true;
@@ -3098,5 +3125,8 @@ export function createScene3d({ canvas }) {
     setFpFov(fov) {
       _fpFov = Math.max(50, Math.min(110, fov));
     },
+    // Load an additional character variant (GLB or FBX) and add it to the random pool.
+    // Drop a new Mixamo character GLB in assets/models/character/ and call this once.
+    loadCharVariant(url) { _loadCharVariant(url); },
   };
 }
