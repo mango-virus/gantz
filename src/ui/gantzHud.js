@@ -74,12 +74,14 @@ export function initGantzHud(opts = {}) {
     'gz-radar-canvas', 'gz-radar-scale', 'gz-ambient',
     'gz-points-value', 'gz-points-delta',
     'gz-weapon-name', 'gz-weapon-state', 'gz-weapon-bar-fill',
+    'gz-health-bar-fill', 'gz-health-value',
     'gz-reticle', 'gz-reticle-label', 'gz-screen-flash', 'gz-screen-edge',
     'gz-world-badges',
   ];
   for (const id of ids) _el[id] = document.getElementById(id);
   _el['gz-chrono'] = _el['gz-chrono-digits']?.closest('.gz-chrono');
   _el['gz-weapon-bar'] = _el['gz-weapon-bar-fill']?.parentElement;
+  _el['gz-health-bar'] = _el['gz-health-bar-fill']?.parentElement;
   // Explicit: the HUD starts hidden, shown once the player is in MISSION.
   setGantzHudActive(false);
   setGantzHudView('fps');
@@ -87,7 +89,10 @@ export function initGantzHud(opts = {}) {
 
 export function setGantzHudActive(on) {
   _active = !!on;
-  if (_el['gz-hud']) _el['gz-hud'].dataset.active = _active ? '1' : '0';
+  if (_el['gz-hud']) {
+    _el['gz-hud'].dataset.active = _active ? '1' : '0';
+    if (!_active) _el['gz-hud'].classList.remove('crit-edge');
+  }
 }
 
 export function setGantzHudView(next) {
@@ -253,6 +258,16 @@ export function tickGantzHud(s, dt) {
     _el['gz-weapon-bar-fill'].style.width = Math.max(0, Math.min(1, s.weaponBarT || 0)) * 100 + '%';
   }
   if (_el['gz-weapon-bar']) _el['gz-weapon-bar'].classList.toggle('ready', !!s.weaponBarReady);
+
+  // Health bar -----------------------------------------------------------
+  if (_el['gz-health-bar-fill']) {
+    const hp    = s.hp    ?? 100;
+    const maxHp = s.maxHp ?? 100;
+    const frac  = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
+    _el['gz-health-bar-fill'].style.width = (frac * 100) + '%';
+    if (_el['gz-health-value']) _el['gz-health-value'].textContent = `${hp} / ${maxHp}`;
+    if (_el['gz-health-bar']) _el['gz-health-bar'].classList.toggle('low', frac < 0.3);
+  }
 
   // Target Dossier -----------------------------------------------------
   const tgt = s.dossierTarget;

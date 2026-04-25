@@ -90,68 +90,6 @@ function _buildMuscleTexture() {
   return tex;
 }
 
-// Denser, brighter muscle-fibre pattern for the blueprint band (bigger bands
-// than the thin leading-edge cap so the band reads as "raw muscle" from a
-// distance, not just noise).
-function _buildFiberTexture() {
-  const S = 256;
-  const cvs = document.createElement('canvas');
-  cvs.width = S; cvs.height = S;
-  const g = cvs.getContext('2d');
-
-  g.fillStyle = '#3a070c';
-  g.fillRect(0, 0, S, S);
-
-  // Long, mostly-aligned muscle fibre bands with slight directional wobble.
-  for (let i = 0; i < 550; i++) {
-    const x = Math.random() * S;
-    const y = Math.random() * S;
-    const len = 30 + Math.random() * 70;
-    const thick = 1.5 + Math.random() * 3;
-    const ang = (Math.random() - 0.5) * 0.35;
-    const hue = 352 + (Math.random() - 0.5) * 18;
-    const lgt = 30 + Math.random() * 30;
-    g.save();
-    g.translate(x, y);
-    g.rotate(ang);
-    g.fillStyle = `hsl(${hue} 88% ${lgt}%)`;
-    g.fillRect(-len / 2, -thick / 2, len, thick);
-    g.restore();
-  }
-  // Bright cross-striation highlights along the fibres.
-  for (let i = 0; i < 180; i++) {
-    const x = Math.random() * S;
-    const y = Math.random() * S;
-    const len = 8 + Math.random() * 14;
-    const ang = (Math.random() - 0.5) * 0.35;
-    g.save();
-    g.translate(x, y);
-    g.rotate(ang);
-    g.fillStyle = `hsl(${2 + Math.random() * 6} 95% ${55 + Math.random() * 15}%)`;
-    g.fillRect(-len / 2, -0.6, len, 1.2);
-    g.restore();
-  }
-  // Capillary dots.
-  for (let i = 0; i < 140; i++) {
-    const x = Math.random() * S;
-    const y = Math.random() * S;
-    const r = 1 + Math.random() * 2.2;
-    g.fillStyle = `hsl(${Math.random() * 10} 92% ${45 + Math.random() * 18}%)`;
-    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-  }
-  // Darkening vignette so repeats don't tile obviously.
-  const grd = g.createRadialGradient(S / 2, S / 2, 20, S / 2, S / 2, S * 0.75);
-  grd.addColorStop(0, 'rgba(180, 30, 40, 0)');
-  grd.addColorStop(1, 'rgba(20, 0, 3, 0.5)');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, S, S);
-
-  const tex = new THREE.CanvasTexture(cvs);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 let _muscleTexShared = null;
 let _fiberTexShared = null;
 function _muscleTex() {
@@ -159,7 +97,12 @@ function _muscleTex() {
   return _muscleTexShared;
 }
 function _fiberTex() {
-  if (!_fiberTexShared) _fiberTexShared = _buildFiberTexture();
+  if (!_fiberTexShared) {
+    const tex = new THREE.TextureLoader().load('assets/textures/muscle_fiber.jpg');
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    _fiberTexShared = tex;
+  }
   return _fiberTexShared;
 }
 

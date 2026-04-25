@@ -136,7 +136,7 @@
     <div class="gz-ambient" id="gz-ambient"></div>
   </div>
 
-  <!-- BOTTOM-RIGHT : weapon + charge bar + points -->
+  <!-- BOTTOM-RIGHT : weapon + charge bar + points + health -->
   <div class="gz-panel gz-weapon" data-zone="br">
     <div class="gz-points-wrap">
       <div class="gz-points-label">POINTS</div>
@@ -148,6 +148,16 @@
     <div class="gz-weapon-bar">
       <div class="gz-weapon-bar-fill" id="gz-weapon-bar-fill"></div>
       <div class="gz-weapon-bar-scan"></div>
+    </div>
+    <div class="gz-health-wrap">
+      <div class="gz-health-head">
+        <span class="gz-health-label">VITALS</span>
+        <span class="gz-health-value" id="gz-health-value">100 / 100</span>
+      </div>
+      <div class="gz-health-bar">
+        <div class="gz-health-bar-fill" id="gz-health-bar-fill"></div>
+        <div class="gz-weapon-bar-scan"></div>
+      </div>
     </div>
   </div>
 
@@ -172,7 +182,7 @@
   <div class="gz-world-badges" id="gz-world-badges"></div>
 </div>
 <div id="gantz-prompt" class="world-prompt" style="display: none;">[E] Talk to Gantz</div>
-<div id="door-prompt" class="world-prompt" style="display: none;">[E] Open door</div>
+
 <div id="portal-prompt" class="world-prompt" style="display: none;">[E] Enter Jam Portal</div>
 <div id="gun-flash"></div>
 <canvas id="game"></canvas>

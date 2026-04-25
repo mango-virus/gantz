@@ -36,6 +36,7 @@ import { ARCHETYPES, generateAlienSpec, pickAlienNames } from './src/content/ali
 import { createNetwork } from './src/net/network.js';
 import { createChatUI } from './src/ui/chat.js';
 import { createGantzMenu } from './src/ui/gantzMenu.js';
+import { createDevMode } from './src/ui/devMode.js';
 import {
   initGantzHud, tickGantzHud, setGantzHudView, setGantzHudActive,
   gantzHudOnFire, gantzHudOnPoints, gantzHudTransmission, gantzHudAmbient,
@@ -48,18 +49,7 @@ const APP_ID = 'gantz-jam-2026';
 const ROOM_ID = 'gantz-global-lobby';
 const PLAYER_COLOR = 'c8142b';
 const INTERACT_RADIUS = 2.8;
-const DOOR_INTERACT_RADIUS = 1.8;
 const AFK_MS = 180000;
-
-// Lobby interactive doors — 4 doors matching addDoor calls in factories.js.
-// Game (x, y) positions of the door openings (2D: game-x = 3D-x, game-y = 3D-z).
-const _LOBBY_DOORS = [
-  { x: -5, y:  5.5 },   // 0 — Bedroom  (left wall, near player spawn)
-  { x: -5, y: -1.5 },   // 1 — Bathroom (left wall, mid)
-  { x:  0, y: -8   },   // 2 — Kitchen  (far wall)
-  { x:  0, y:  8   },   // 3 — Hallway  (back wall)
-];
-const _doorOpen = [false, false, false, false];  // toggled by E
 
 // Jam Portal — inside the Hallway room (door 3, back wall).
 // Trigger position in game coords (x=3D-x, y=3D-z): hallway far wall at y≈12.15.
@@ -67,16 +57,6 @@ const _PORTAL_POS    = { x: 0, y: 11.6 };
 const _PORTAL_RADIUS = 1.6;
 let   _portalBusy    = false; // prevent double-trigger before redirect navigates away
 
-// Door colliders — mutable AABBs, tier toggled hard/decorative with door state.
-// Wall AABB centre positions: left wall x = B.minX - t/2 = -5.25,
-//   far wall y = B.minY - t/2 = -8.25, back wall y = B.maxY + t/2 = 8.25.
-// DW = 1.25 (door width), t = 0.5 (wall thickness) — must match lobby.js / factories.js.
-const _doorColliders = [
-  { kind: 'aabb', x: -5.25, y:  5.5, w: 0.5,  h: 1.25, tier: 'hard' }, // 0 Bedroom
-  { kind: 'aabb', x: -5.25, y: -1.5, w: 0.5,  h: 1.25, tier: 'hard' }, // 1 Bathroom
-  { kind: 'aabb', x:  0,    y: -8.25, w: 1.25, h: 0.5,  tier: 'hard' }, // 2 Kitchen
-  { kind: 'aabb', x:  0,    y:  8.25, w: 1.25, h: 0.5,  tier: 'hard' }, // 3 Hallway
-];
 
 // Phase timings (chunk 5 values; mission duration scales per alien load in Chunk 7)
 const BRIEFING_MS = 16000;
@@ -2881,8 +2861,8 @@ let _debugGantzForceOpen = false;
 // Audio file URLs — loaded into the proximity-audio buffer cache on first use.
 const SFX_GUN_SHOOT  = 'assets/audio/x-gun-fire.mp3';
 const SFX_GANTZ_OPEN = 'audio/gantz-open.mp3';
-const SFX_POINT_GAIN = 'audio/point-gain.mp3';
-const SFX_POINT_LOSS = 'audio/point-loss.mp3';
+const SFX_POINT_GAIN = 'assets/audio/point-gain.mp3';
+const SFX_POINT_LOSS = 'assets/audio/point-loss.mp3';
 const SFX_SCAN       = 'assets/audio/gantz-scan.mp3';
 const SFX_MUSIC      = 'assets/audio/gantz-music.mp3';
 const SFX_STEP_WOOD  = [
@@ -2925,11 +2905,17 @@ const SFX_LIGHTNING_STRIKES = [
   'assets/audio/weather-lightning-1.mp3',
   'assets/audio/weather-lightning-2.mp3',
 ];
+const SFX_GORE_EXPLOSIONS = [
+  'assets/audio/gore-explosion-1.mp3',
+  'assets/audio/gore-explosion-2.mp3',
+  'assets/audio/gore-explosion-3.mp3',
+];
 audio.preload([SFX_GUN_SHOOT, SFX_GANTZ_OPEN, SFX_POINT_GAIN, SFX_POINT_LOSS, SFX_SCAN, SFX_MUSIC,
                ...SFX_STEP_WOOD, ...SFX_STEP_CONCRETE,
                ...SFX_JUMP_WOOD_TAKEOFF, ...SFX_JUMP_WOOD_LAND,
                ...SFX_JUMP_CONCRETE_TAKEOFF, ...SFX_JUMP_CONCRETE_LAND,
-               ...Object.values(SFX_WEATHER_LOOPS), ...SFX_LIGHTNING_STRIKES]);
+               ...Object.values(SFX_WEATHER_LOOPS), ...SFX_LIGHTNING_STRIKES,
+               ...SFX_GORE_EXPLOSIONS]);
 
 // Footstep sample selector — random pick that avoids repeating the previous
 // sample, so consecutive steps never use the same clip. Shared across local
@@ -3039,8 +3025,11 @@ function _stopMusic() {
 // uniform everywhere in the lobby regardless of listener position.
 let _weatherHandle = null;
 let _weatherType   = null;           // currently-playing weather key
+let _godMode       = false;
+let _devGoreMul    = 0;    // 0 = archetype defaults; 1-5 = override power
+let _devHostOverride = false; // set by forcePhase so local client acts as host for session authority
 let _lightningSeen = 0;              // last lightning-strike counter we saw
-const WEATHER_VOLUMES = { rain: 1.2, thunderstorm: 0.55, blizzard: 1.2 };
+const WEATHER_VOLUMES = { rain: 1.2, thunderstorm: 0.42, blizzard: 1.2 };
 function _syncWeatherAudio(inLobby) {
   const wt = inLobby ? (scene3d?.getLobbyWeatherType?.() || null) : null;
   const url = wt && SFX_WEATHER_LOOPS[wt] ? SFX_WEATHER_LOOPS[wt] : null;
@@ -3062,7 +3051,7 @@ function _tickLightningAudio(inLobby) {
     // other peers' scenes still run, but the SFX is tied to seeing the flash.
     if (inLobby && n > _lightningSeen) {
       const url = SFX_LIGHTNING_STRIKES[(Math.random() * SFX_LIGHTNING_STRIKES.length) | 0];
-      audio.play(url, 0.75);
+      audio.play(url, 0.58);
     }
     _lightningSeen = n;
   }
@@ -3250,7 +3239,7 @@ function _drawBallMenu() {
 
   // Scale the whole menu down — hit regions in _btn are mapped back to canvas-space via getTransform()
   const SC = 0.72;
-  ctx.translate(CX * (1 - SC), CX * (1 - SC));
+  ctx.translate(CX * (1 - SC), CX * (1 - SC) - S * 0.05);
   ctx.scale(SC, SC);
 
   const G  = '#00e05a';
@@ -4275,6 +4264,7 @@ document.addEventListener('pointerlockchange', () => {
 });
 canvas.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
+  if (scene3d?.flyCam?.active) { scene3d.flyCam.onMouseMove(e.movementX, e.movementY); return; }
   const sens = MOUSE_SENS * (scene3d?.isAds?.() ? ADS_SENS_SCALE : 1);
   yaw -= e.movementX * sens;
   pitch -= e.movementY * sens;
@@ -4301,7 +4291,7 @@ addEventListener('keydown', (e) => {
     // surface facing the scan line. Mission / elsewhere: straight-down overhead point.
     const opts = { type };
     if (session.phase === Phase.LOBBY || session.phase === Phase.BRIEFING) {
-      opts.sourceBall = { x: GANTZ_BALL.x, y: 1.2, z: GANTZ_BALL.y, r: GANTZ_BALL.radius };
+      opts.sourceBall = { x: GANTZ_BALL.x, y: 0.96, z: GANTZ_BALL.y, r: GANTZ_BALL.radius * 0.8 };
     } else {
       opts.source = { x: player.x, y: 8, z: player.y };
     }
@@ -4375,35 +4365,35 @@ world.localPlayerId = player.id;
 const props = buildLobbyProps();
 const lobbyWalls = buildLobbyWalls();
 const gantzCol = getGantzBallCollider();
-
 // Gantz panel colliders — mutable AABBs updated each tick from _gantzOpenProgress.
 // Tier is 'decorative' (ignored) while closed; switched to 'hard' once panels move.
 // 2D coords: 3D X→2D X,  3D -Z→2D -Y  (ball at 2D x=0 y=-4).
-const _PANEL_SLIDE = 2.2;  // must match scene3d SLIDE constant
-const gantzPanelLeft  = { kind: 'aabb', x: GANTZ_BALL.x, y: GANTZ_BALL.y, w: 0.28, h: 1.40, tier: 'decorative' };
-const gantzPanelRight = { kind: 'aabb', x: GANTZ_BALL.x, y: GANTZ_BALL.y, w: 0.28, h: 1.40, tier: 'decorative' };
-const gantzPanelBack  = { kind: 'aabb', x: GANTZ_BALL.x, y: GANTZ_BALL.y, w: 1.40, h: 0.28, tier: 'decorative' };
+const _PANEL_SLIDE = 1.76;  // scene3d SLIDE(2.2) × mesh scale(0.8) = world units
+const gantzPanelLeft  = { kind: 'aabb', x: GANTZ_BALL.x, y: GANTZ_BALL.y, w: 0.22, h: 1.12, tier: 'decorative' };
+const gantzPanelRight = { kind: 'aabb', x: GANTZ_BALL.x, y: GANTZ_BALL.y, w: 0.22, h: 1.12, tier: 'decorative' };
+const gantzPanelBack  = { kind: 'aabb', x: GANTZ_BALL.x, y: GANTZ_BALL.y, w: 1.12, h: 0.22, tier: 'decorative' };
 
 // Rod-pair + slab colliders for each panel — thin AABBs that stretch from the
 // sphere surface to the panel face as the ball opens.
-// Exit-radius insets match factories.js rod geometry (r = exitRadius − 0.08):
-//   Upper rods  (y3D=0.10, lat=0.40):  sqrt(1.44−0.01−0.16) − 0.08 ≈ 1.047
-//   Slab corners (y3D=−0.72, lat=0.40): sqrt(1.44−0.52−0.16) − 0.08 ≈ 0.793
-const _R_ROD = 1.047;  // rod   sphere-exit inset (world units along slide axis)
-const _R_SLB = 0.793;  // slab  sphere-exit inset
-const _ROD_T = 0.20;   // rod AABB lateral thickness (rod diameter + player-radius padding)
-const _SLB_L = 0.90;   // slab AABB lateral span    (SLAB_W + player-radius padding)
+// All values are local-space geometry × 0.8 (mesh world scale).
+// Exit-radius insets at scaled R=0.96 (r = exitRadius − 0.064):
+//   Upper rods  (y3D=0.08, lat=0.32):  sqrt(0.9216−0.0064−0.1024) − 0.064 ≈ 0.838
+//   Slab corners (y3D=−0.576, lat=0.32): sqrt(0.9216−0.3318−0.1024) − 0.064 ≈ 0.634
+const _R_ROD = 0.838;  // rod   sphere-exit inset (world units along slide axis)
+const _R_SLB = 0.634;  // slab  sphere-exit inset
+const _ROD_T = 0.16;   // rod AABB lateral thickness (rod diameter + player-radius padding)
+const _SLB_L = 0.72;   // slab AABB lateral span    (SLAB_W + player-radius padding)
 // Left panel (slides −X): lateral axis = 2D Y
-const gantzRodLeftA  = { kind: 'aabb', x: 0, y: GANTZ_BALL.y - 0.40, w: 0.01, h: _ROD_T, tier: 'decorative' };
-const gantzRodLeftB  = { kind: 'aabb', x: 0, y: GANTZ_BALL.y + 0.40, w: 0.01, h: _ROD_T, tier: 'decorative' };
+const gantzRodLeftA  = { kind: 'aabb', x: 0, y: GANTZ_BALL.y - 0.32, w: 0.01, h: _ROD_T, tier: 'decorative' };
+const gantzRodLeftB  = { kind: 'aabb', x: 0, y: GANTZ_BALL.y + 0.32, w: 0.01, h: _ROD_T, tier: 'decorative' };
 const gantzSlabLeft  = { kind: 'aabb', x: 0, y: GANTZ_BALL.y,        w: 0.01, h: _SLB_L, tier: 'decorative' };
 // Right panel (slides +X): lateral axis = 2D Y
-const gantzRodRightA = { kind: 'aabb', x: 0, y: GANTZ_BALL.y - 0.40, w: 0.01, h: _ROD_T, tier: 'decorative' };
-const gantzRodRightB = { kind: 'aabb', x: 0, y: GANTZ_BALL.y + 0.40, w: 0.01, h: _ROD_T, tier: 'decorative' };
+const gantzRodRightA = { kind: 'aabb', x: 0, y: GANTZ_BALL.y - 0.32, w: 0.01, h: _ROD_T, tier: 'decorative' };
+const gantzRodRightB = { kind: 'aabb', x: 0, y: GANTZ_BALL.y + 0.32, w: 0.01, h: _ROD_T, tier: 'decorative' };
 const gantzSlabRight = { kind: 'aabb', x: 0, y: GANTZ_BALL.y,        w: 0.01, h: _SLB_L, tier: 'decorative' };
 // Back panel (slides −Y in 2D): lateral axis = 2D X
-const gantzRodBackA  = { kind: 'aabb', x: GANTZ_BALL.x - 0.40, y: 0, w: _ROD_T, h: 0.01, tier: 'decorative' };
-const gantzRodBackB  = { kind: 'aabb', x: GANTZ_BALL.x + 0.40, y: 0, w: _ROD_T, h: 0.01, tier: 'decorative' };
+const gantzRodBackA  = { kind: 'aabb', x: GANTZ_BALL.x - 0.32, y: 0, w: _ROD_T, h: 0.01, tier: 'decorative' };
+const gantzRodBackB  = { kind: 'aabb', x: GANTZ_BALL.x + 0.32, y: 0, w: _ROD_T, h: 0.01, tier: 'decorative' };
 const gantzSlabBack  = { kind: 'aabb', x: GANTZ_BALL.x,        y: 0, w: _SLB_L, h: 0.01, tier: 'decorative' };
 
 const lobbyColliders = [
@@ -4414,8 +4404,8 @@ const lobbyColliders = [
   gantzRodLeftA,  gantzRodLeftB,  gantzSlabLeft,
   gantzRodRightA, gantzRodRightB, gantzSlabRight,
   gantzRodBackA,  gantzRodBackB,  gantzSlabBack,
-  ..._doorColliders,
 ];
+const devMode = createDevMode(lobbyWalls, lobbyColliders, () => player, () => scene3d, props);
 const missionBoundaryWalls = buildMissionWalls();
 
 let missionMap = null;
@@ -4658,7 +4648,6 @@ const net = createNetwork({
     fireId,
     moveFwd,
     moveSide,
-    doorStates: _doorOpen.map(o => o ? 1 : 0),
     // Drop the descriptor after scan duration has elapsed so we aren't
     // re-broadcasting stale state forever on 15Hz pose ticks.
     scan: (_lastLocalScan && Date.now() - _lastLocalScan.t < SCAN_BROADCAST_TTL_MS) ? _lastLocalScan : null,
@@ -4679,7 +4668,7 @@ net.onPeerJoin(() => {
 
 net.onSession((incoming) => {
   if (!incoming || typeof incoming.version !== 'number') return;
-  if (net.isHost) return;
+  if (net.isHost || _devHostOverride) return;
   if (incoming.version < session.version) return;
   const prevPhase = session.phase;
   Object.assign(session, incoming);
@@ -4870,10 +4859,11 @@ net.onKill((msg) => {
     const inMissionLocally = session.phase === Phase.MISSION && localIsParticipant();
     if (dead && inMissionLocally && scene3d.spawnGibs) {
       scene3d.spawnGibs(dead.x, dead.y, {
-        power: dead.archetype === 'boss' ? 1.7 : dead.archetype === 'brute' ? 1.3 : 1,
+        power: _devGoreMul > 0 ? _devGoreMul : (dead.archetype === 'boss' ? 1.7 : dead.archetype === 'brute' ? 1.3 : 1),
         count: dead.archetype === 'boss' ? 48 : dead.archetype === 'brute' ? 36 : 28,
         centerY: (dead.radius || 0.55) * 1.8,
       });
+      audio.playAt(SFX_GORE_EXPLOSIONS[Math.floor(Math.random() * SFX_GORE_EXPLOSIONS.length)], dead.x, dead.y, { volume: 1.0, refDist: 4, maxDist: 35 });
     }
     // Everyone: update points if you are the killer
     if (msg.killerId === net.selfId) {
@@ -4943,7 +4933,7 @@ function _triggerTransferScan(type, opts = {}) {
                  || session.phase === Phase.BRIEFING
                  || session.phase === Phase.DEBRIEF;
     if (inLobby) {
-      scanOpts.sourceBall = { x: GANTZ_BALL.x, y: 1.2, z: GANTZ_BALL.y, r: GANTZ_BALL.radius };
+      scanOpts.sourceBall = { x: GANTZ_BALL.x, y: 0.96, z: GANTZ_BALL.y, r: GANTZ_BALL.radius * 0.8 };
     } else {
       scanOpts.source = { x: player.x, y: 8, z: player.y };
     }
@@ -5077,7 +5067,6 @@ function enterPhase(newPhase) {
     // in hostEndMission but can't reach into peer state. Mirror that here.
     if (!net.isHost && session.missionResult === 'wiped') {
       player.hp = 0;
-      player.alive = false;
       player.points = 0;
       player.loadout = baseLoadout();
       player.activeSlot = 0;
@@ -5090,8 +5079,9 @@ function enterPhase(newPhase) {
     const parts = session.participants; // array of peer IDs, or null = all
     _debriefPlayers = [];
     if (!parts || parts.includes(net.selfId)) {
-      _debriefPlayers.push({ name: player.username, pts: localEarned, died: !player.alive,
-        comment: _pickDebriefComment(localEarned, !player.alive) });
+      const localDied = !player.alive || session.missionResult === 'wiped';
+      _debriefPlayers.push({ name: player.username, pts: localEarned, died: localDied,
+        comment: _pickDebriefComment(localEarned, localDied) });
     }
     for (const [id, p] of net.peers) {
       if (!p.username) continue;
@@ -5257,7 +5247,7 @@ function hostReturnToLobby() {
 }
 
 function hostTick(nowMs) {
-  if (!net.isHost) return;
+  if (!net.isHost && !_devHostOverride) return;
 
   const p = session.phase;
   if (p === Phase.LOBBY || p === Phase.DEBRIEF) {
@@ -5543,7 +5533,7 @@ addEventListener('mousedown', noteActivity);
 
 // --- Toast log ---
 const gantzPromptEl  = document.getElementById('gantz-prompt');
-const doorPromptEl   = document.getElementById('door-prompt');
+
 const portalPromptEl = document.getElementById('portal-prompt');
 
 function updateWorldHtmlOverlays() {
@@ -5569,25 +5559,6 @@ function updateWorldHtmlOverlays() {
     }
   } else {
     gantzPromptEl.style.display = 'none';
-  }
-
-  // Door prompt — show when near a lobby door and no menu is open
-  if (!localInMission && !menu.isOpen()) {
-    let nearDoor = -1;
-    for (let di = 0; di < _LOBBY_DOORS.length; di++) {
-      const door = _LOBBY_DOORS[di];
-      if (Math.hypot(player.x - door.x, player.y - door.y) < DOOR_INTERACT_RADIUS) {
-        nearDoor = di; break;
-      }
-    }
-    if (nearDoor >= 0 && gantzPromptEl.style.display === 'none') {
-      doorPromptEl.textContent = _doorOpen[nearDoor] ? '[E] Close door' : '[E] Open door';
-      doorPromptEl.style.display = 'block';
-    } else {
-      doorPromptEl.style.display = 'none';
-    }
-  } else {
-    doorPromptEl.style.display = 'none';
   }
 
   // Portal prompt — show when near the Jam Portal in the hallway room
@@ -5800,8 +5771,8 @@ function _tickGantzHudFrame(dt) {
     // that's not a player-driven loss they'd expect to hear.
     const isWipeReset = pts === 0 && delta < -50;
     if (!firstObservation && !isWipeReset) {
-      if (delta > 0) audio.play(SFX_POINT_GAIN, 0.7);
-      else if (delta < 0) audio.play(SFX_POINT_LOSS, 0.8);
+      if (delta > 0) audio.play(SFX_POINT_GAIN, 0.18);
+      else if (delta < 0) audio.play(SFX_POINT_LOSS, 0.2);
     }
     _lastPointsSeen = pts;
   }
@@ -5893,6 +5864,8 @@ function _tickGantzHudFrame(dt) {
     weaponBarT: barT,
     weaponBarReady: ready,
     points: pts,
+    hp: player.hp ?? 100,
+    maxHp: (SUITS[player.loadout?.suit || 'basic']?.maxHp) ?? 100,
     aliens,
     civilians,
     remotePeers,
@@ -6249,6 +6222,7 @@ addEventListener('click', (e) => {
 
 addEventListener('mousedown', (e) => {
   if (document.activeElement && document.activeElement.id === 'chat-input') return;
+  if (e.target.closest?.('#dev-mode-panel, #dev-mode-btn, #dev-map-window')) return;
   // Re-acquire pointer lock on any click, even if menu is open.
   if (!pointerLocked) requestLockIfAllowed();
   if (menu.isOpen()) return;
@@ -6295,7 +6269,7 @@ function update(dt) {
     if (session.scanPhase === 'pre-mission' && localIsParticipant()) {
       // Dematerialize out of the lobby from the Gantz ball.
       _triggerTransferScan('dematerialize', {
-        sourceBall: { x: GANTZ_BALL.x, y: 1.2, z: GANTZ_BALL.y, r: GANTZ_BALL.radius },
+        sourceBall: { x: GANTZ_BALL.x, y: 0.96, z: GANTZ_BALL.y, r: GANTZ_BALL.radius * 0.8 },
       });
       // Stop the ball music a beat after the scan finishes — the scan default
       // is 2.5s; we give the audio a small extra tail so the silence lands as
@@ -6316,7 +6290,7 @@ function update(dt) {
   for (const [id, p] of net.peers) {
     if (p.username && !_announcedPeers.has(id)) {
       _announcedPeers.add(id);
-      chat.addSystem(`Biological data localized. Reconstructing ${p.username}...`);
+      chat.addSystem(`Reconstructing ${p.username}...`);
     }
   }
 
@@ -6324,7 +6298,8 @@ function update(dt) {
   prevPos.set(player, { x: player.x, y: player.y });
 
   // Movement relative to camera yaw. W=forward, S=back, A/D strafe.
-  const axis = moveAxis();
+  // Fly cam owns WASD while active — don't move the player.
+  const axis = scene3d?.flyCam?.active ? { x: 0, y: 0 } : moveAxis();
   const wsIn = -axis.y;   // moveAxis puts W at y=-1 (screen up)
   const adIn =  axis.x;
   const fx = -Math.sin(yaw), fz = -Math.cos(yaw);      // forward XZ
@@ -6394,7 +6369,7 @@ function update(dt) {
   }
 
   // Jump
-  if (wasPressed(' ') && jumpY === 0 && player.alive) {
+  if (wasPressed(' ') && jumpY === 0 && player.alive && !scene3d?.flyCam?.active) {
     jumpVY = JUMP_SPEED;
     jumpId++;
     _playJump(0.7);
@@ -6507,10 +6482,11 @@ function update(dt) {
         const arch = ARCHETYPES[alien.archetype];
         if (session.phase === Phase.MISSION && localIsParticipant()) {
           scene3d.spawnGibs?.(alien.x, alien.y, {
-            power: alien.archetype === 'boss' ? 1.7 : alien.archetype === 'brute' ? 1.3 : 1,
+            power: _devGoreMul > 0 ? _devGoreMul : (alien.archetype === 'boss' ? 1.7 : alien.archetype === 'brute' ? 1.3 : 1),
             count: alien.archetype === 'boss' ? 48 : alien.archetype === 'brute' ? 36 : 28,
             centerY: (alien.radius || 0.55) * 1.8,
           });
+          audio.playAt(SFX_GORE_EXPLOSIONS[Math.floor(Math.random() * SFX_GORE_EXPLOSIONS.length)], alien.x, alien.y, { volume: 1.0, refDist: 4, maxDist: 35 });
         }
         const points = alien._pointsReward || arch.points || ALIEN_KILL_POINTS_DEFAULT;
         net.sendKill({
@@ -6556,14 +6532,14 @@ function update(dt) {
     const t = _gantzOpenProgress > 0 ? 1 - Math.pow(1 - _gantzOpenProgress, 2) : 0;
     if (t > 0.08) {
       const d = _PANEL_SLIDE * t;
-      const _PO = 1.14; // centroid of 60° sphere arc at R=1.2 (R*sin(halfArc)/halfArc ≈ 1.146)
+      const _PO = 0.91; // centroid of 60° sphere arc at R=0.96 (R*sin(halfArc)/halfArc ≈ 0.917)
       gantzPanelLeft.x  = GANTZ_BALL.x - _PO - d;  gantzPanelLeft.y  = GANTZ_BALL.y;            gantzPanelLeft.tier  = 'hard';
       gantzPanelRight.x = GANTZ_BALL.x + _PO + d;  gantzPanelRight.y = GANTZ_BALL.y;            gantzPanelRight.tier = 'hard';
       gantzPanelBack.x  = GANTZ_BALL.x;             gantzPanelBack.y  = GANTZ_BALL.y - _PO - d; gantzPanelBack.tier  = 'hard';
 
       // Rods & slab: each stretches from a fixed sphere-surface point to the panel inner face.
       // Ball-side end is constant (sphere doesn't move); panel-side end tracks the panel AABB.
-      const PH = 0.14; // half of panel AABB thickness (0.28 / 2)
+      const PH = 0.11; // half of panel AABB thickness (0.22 / 2)
 
       // Left panel (slides −X) ── rods & slab along 2D X
       { const bs_rod = GANTZ_BALL.x - _R_ROD, bs_slb = GANTZ_BALL.x - _R_SLB;
@@ -6598,10 +6574,6 @@ function update(dt) {
       gantzRodBackA.tier  = gantzRodBackB.tier  = gantzSlabBack.tier  = 'decorative';
     }
 
-    // Sync door colliders — hard when closed, decorative (ignored) when open.
-    for (let i = 0; i < _doorColliders.length; i++) {
-      _doorColliders[i].tier = _doorOpen[i] ? 'decorative' : 'hard';
-    }
   }
 
   for (const e of movers) resolveAgainstStatic(e, activeColliders);
@@ -6691,31 +6663,6 @@ function update(dt) {
       } else {
         menu.openMenu();
       }
-    }
-  }
-
-  // ── Lobby door interaction ───────────────────────────────────────────────
-  if (inLobbyScene && !menu.isOpen() && !chat.isOpen?.()) {
-    for (let di = 0; di < _LOBBY_DOORS.length; di++) {
-      const door = _LOBBY_DOORS[di];
-      const dd = Math.hypot(player.x - door.x, player.y - door.y);
-      if (dd < DOOR_INTERACT_RADIUS && wasPressed('e')) {
-        _doorOpen[di] = !_doorOpen[di];
-        break; // consume E for this frame
-      }
-    }
-  }
-
-  // ── Peer door state sync ────────────────────────────────────────────────────
-  if (inLobbyScene) {
-    for (const pr of net.peers.values()) {
-      if (!Array.isArray(pr.doorStates)) continue;
-      for (let i = 0; i < _doorOpen.length; i++) {
-        const cur = !!pr.doorStates[i];
-        const prev = pr._prevDoorStates ? !!pr._prevDoorStates[i] : null;
-        if (prev === null || cur !== prev) _doorOpen[i] = cur;
-      }
-      pr._prevDoorStates = pr.doorStates.slice();
     }
   }
 
@@ -6905,8 +6852,9 @@ function render(dt, alpha = 1) {
     bob,
     jumpY,
     playerAlive: player.alive,
-    doorStates: _doorOpen.map(o => o ? 1 : 0),
   }, dt || 1 / 60);
+
+  devMode.update();
 
   // Decay the dynamic crosshair spread toward resting and push to CSS.
   updateCrosshairSpread(dt || 1 / 60);
@@ -6993,13 +6941,11 @@ function render(dt, alpha = 1) {
 }
 
 function applyDamageToPlayer(amount) {
-  if (!player.alive) return;
+  if (!player.alive || _godMode) return;
   player.hp = Math.max(0, player.hp - amount);
   if (player.hp <= 0) {
     toast('You died. Returning to lobby.', 'warn');
     _sendLocalPlayerToLobby();
-  } else {
-    toast(`-${amount} hp`, 'warn');
   }
   updateWeaponHUD();
 }
@@ -7083,7 +7029,10 @@ startLoop({ update, render });
 
 window.__gantz = {
   player, props, walls: lobbyWalls, staticColliders: lobbyColliders, world, renderer,
-  net, chat, menu, session, scene3d,
+  net, chat, menu, session, scene3d, audio,
+  playGoreExplosion(x, y) {
+    audio.playAt(SFX_GORE_EXPLOSIONS[Math.floor(Math.random() * SFX_GORE_EXPLOSIONS.length)], x, y, { volume: 1.0, refDist: 4, maxDist: 35 });
+  },
   roster: () => roster,
   missionMap: () => missionMap,
   civilians: () => civilians,
@@ -7099,5 +7048,59 @@ window.__gantz = {
     session.missionStats = { pointsEarned: opts.localPts ?? 150, civilianKills: opts.civKills ?? 0, bossKilled: opts.boss ?? false, playerDied: opts.died ?? false, npcDeaths: 0 };
     session.debriefEndsAt = Date.now() + 25000;
     enterPhase('DEBRIEF');
+  },
+  get godMode()       { return _godMode; },
+  set godMode(v)      { _godMode = !!v; },
+  get goreMultiplier()  { return _devGoreMul; },
+  set goreMultiplier(v) { _devGoreMul = Math.max(0, +v || 0); },
+  get gantzBallOpen()   { return _debugGantzForceOpen; },
+  set gantzBallOpen(v)  { _debugGantzForceOpen = !!v; },
+  get devHostOverride()   { return _devHostOverride; },
+  set devHostOverride(v)  { _devHostOverride = !!v; },
+  forcePhase(name) {
+    _devHostOverride = true; // treat local as session authority; ignore remote host broadcasts
+    const now = Date.now(); // must match hostTick's nowMs = Date.now() so timer comparisons are consistent
+    if (name === 'LOBBY') enterPhase('LOBBY');
+    else if (name === 'BRIEFING') hostStartBriefing(now);
+    else if (name === 'MISSION') {
+      session.scanPhase = null;   // clear any stale post-mission scan that would end the mission instantly
+      session.scanEndsAt = -1;
+      player.ready = true;
+      if (!session.missionSeed) session.missionSeed = (Math.random() * 0xffffffff) >>> 0;
+      if (!session.composition?.length) session.composition = ['patroller', 'patroller', 'brute'];
+      session.alienCount = session.composition.length;
+      if (!session.missionIndex) session.missionIndex = 1;
+      hostStartMission(now);
+      // Fallback: directly spawn aliens if net host election hasn't resolved yet
+      if (!aliens.length) {
+        aliens = spawnFromComposition(session.missionSeed >>> 0, MISSION_BOUNDS, session.composition);
+        broadcastAliens();
+      }
+    }
+    else if (name === 'DEBRIEF') { session.phase = 'DEBRIEF'; enterPhase('DEBRIEF'); }
+  },
+  setWeatherType(type) {
+    scene3d?.setLobbyWeatherType?.(type || null);
+    _weatherType = null;
+    _syncWeatherAudio(true);
+  },
+  spawnAlienAt(x, y) {
+    const tmpl = aliens.find(a => a.alive !== false);
+    if (!tmpl) { console.warn('[dev] no alien template — start a mission first'); return; }
+    aliens.push({ ...tmpl, id: `dev-${Date.now()}`, x, y, facing: 0,
+      hp: tmpl.maxHp, alive: true, wanderTarget: null, stuckTime: 0 });
+  },
+  triggerGantzScan(mode) {
+    _triggerTransferScan(mode === 'dematerialize' ? 'dematerialize' : 'materialize');
+  },
+  spawnCivAt(x, y) {
+    if (session.phase !== 'MISSION') { console.warn('[dev] spawn civ requires MISSION phase'); return; }
+    const id = `devciv-${Date.now()}`;
+    civilians.push({
+      id, kind: 'civilian', spec: generateHumanSpec(id),
+      x, y, facing: 0, walkPhase: 0, radius: 0.5,
+      speed: 0.8, alive: true, behavior: 'patrol',
+      wanderTarget: null, wanderRest: 0, stuckTime: 0, freezeTimer: 0,
+    });
   },
 };

@@ -5,7 +5,7 @@ import { clone as skeletonClone } from 'https://esm.sh/three@0.160.0/examples/js
 import {
   buildAlienMesh, buildPropMesh, buildBuildingMesh,
   buildLobbyRoom, buildMissionRoom, buildGantzBallMesh,
-  buildGantzBallDisplay, animateAlienMesh,
+  buildGantzBallDisplay, animateAlienMesh, buildWeatherGroup,
 } from './factories.js';
 import { createScanController } from './transferScan.js';
 
@@ -131,7 +131,7 @@ export function createScene3d({ canvas }) {
 
   const EYE_HEIGHT = 1.7;
 
-  const camera = new THREE.PerspectiveCamera(72, canvas.clientWidth / canvas.clientHeight, 0.005, 4000);
+  const camera = new THREE.PerspectiveCamera(72, canvas.clientWidth / canvas.clientHeight, 0.3, 4000);
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
@@ -501,6 +501,17 @@ export function createScene3d({ canvas }) {
   const hemi = new THREE.HemisphereLight(0x3a3832, 0x1a1712, 0.55);
   scene.add(hemi);
 
+  // Set to false to revert to the procedural lobby room.
+  const USE_GLB_LOBBY = true;
+  // Uniform scale applied to the GLB room — increase to make the space feel larger.
+  const GLB_ROOM_SCALE  = 1.2;
+  // Extra downward shift so the GLB floor aligns with Y=0.
+  // The exterior geometry sits below the floor and pulls the bbox min lower than the actual floor surface.
+  const GLB_ROOM_Y_OFFSET = 0.25;
+  // Shift the room along Z (negative = forward toward the player's default view).
+  const GLB_ROOM_Z_OFFSET = 1.9;
+  const GLB_ROOM_X_OFFSET = 0.2;
+
   // Room switching
   let currentRoomKind = null;
   // Increments once per lightning strike start in thunderstorm weather. Game
@@ -508,7 +519,130 @@ export function createScene3d({ canvas }) {
   let _lightningStrikeCount = 0;
   let currentRoomSeed = null;
   let currentRoomGroup = null;
-  const buildingMeshes = new Map();
+  const buildingMeshes  = new Map();
+  const _devZoneMeshes  = new Map(); // devId → { mesh, mat, lastW, lastH, lastD }
+  const _cityObjects    = new Map(); // id → { mesh: THREE.Group, placement }
+  const _cityGltfCache  = new Map(); // url → loaded gltf.scene (template)
+  let _cityIdCounter    = 0;
+  let _citySelBox       = null;      // THREE.BoxHelper for selected city object
+  let _citySelId        = null;
+
+  // ── Fly cam ────────────────────────────────────────────────────────────────
+  let _flyCamActive  = false;
+  const _flyCamPos   = new THREE.Vector3();
+  let _flyCamYaw     = 0;
+  let _flyCamPitch   = 0;
+  let _flyCamSpeed   = 20;
+  const _flyCamKeys  = new Set();
+  let _fcListenersAdded = false;
+  // ── City drag ──────────────────────────────────────────────────────────────
+  const _cityDragRay    = new THREE.Raycaster();
+  const _cityDragPlane  = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const _cityDragPt     = new THREE.Vector3();
+  const _cityDragOffset = new THREE.Vector3();
+  let _cityDragId       = null;
+  let _cityOnDragSelect = null;  // (id) set by devMode
+  let _cityOnDragEnd    = null;  // (id) set by devMode
+
+  // ── City builder / fly cam private helpers ─────────────────────────────────
+  function _citySetSel(id) {
+    if (_citySelBox) { scene.remove(_citySelBox); _citySelBox.geometry.dispose(); _citySelBox.material.dispose(); _citySelBox = null; }
+    _citySelId = id;
+    if (!id) return;
+    const entry = _cityObjects.get(id);
+    if (!entry) return;
+    _citySelBox = new THREE.BoxHelper(entry.mesh, 0x00ff88);
+    scene.add(_citySelBox);
+  }
+
+
+  function _flyCamTick(dt) {
+    const spd = _flyCamSpeed * dt;
+    const cy = Math.cos(_flyCamYaw), sy = Math.sin(_flyCamYaw);
+    const cp = Math.cos(_flyCamPitch), sp = Math.sin(_flyCamPitch);
+    const fx = -sy * cp, fy = sp, fz = -cy * cp; // forward (pitch-aware)
+    const rx = cy,                 rz = -sy;      // right (horizontal)
+    if (_flyCamKeys.has('w')) { _flyCamPos.x += fx*spd; _flyCamPos.y += fy*spd; _flyCamPos.z += fz*spd; }
+    if (_flyCamKeys.has('s')) { _flyCamPos.x -= fx*spd; _flyCamPos.y -= fy*spd; _flyCamPos.z -= fz*spd; }
+    if (_flyCamKeys.has('a')) { _flyCamPos.x -= rx*spd; _flyCamPos.z -= rz*spd; }
+    if (_flyCamKeys.has('d')) { _flyCamPos.x += rx*spd; _flyCamPos.z += rz*spd; }
+    if (_flyCamKeys.has('q') || _flyCamKeys.has(' '))      _flyCamPos.y += spd;
+    if (_flyCamKeys.has('e') || _flyCamKeys.has('shift'))  _flyCamPos.y -= spd;
+  }
+
+  function _ensureFcListeners() {
+    if (_fcListenersAdded) return;
+    _fcListenersAdded = true;
+    window.addEventListener('keydown', e => { if (_flyCamActive) _flyCamKeys.add(e.key.toLowerCase()); });
+    window.addEventListener('keyup',   e => { _flyCamKeys.delete(e.key.toLowerCase()); });
+    const cnv = renderer.domElement;
+    cnv.addEventListener('mousedown', e => {
+      if (!_flyCamActive || document.pointerLockElement || e.button !== 0) return;
+      const rect = cnv.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
+      const ndcY = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
+      _cityDragRay.setFromCamera({ x: ndcX, y: ndcY }, camera);
+      let bestId = null, bestDist = Infinity;
+      const tmpBox = new THREE.Box3(), tmpPt = new THREE.Vector3();
+      for (const [id, entry] of _cityObjects) {
+        tmpBox.setFromObject(entry.mesh);
+        if (tmpBox.isEmpty()) continue;
+        if (_cityDragRay.ray.intersectBox(tmpBox, tmpPt)) {
+          const d = camera.position.distanceTo(tmpPt);
+          if (d < bestDist) { bestDist = d; bestId = id; }
+        }
+      }
+      if (!bestId) return;
+      const ent = _cityObjects.get(bestId);
+      _cityDragPlane.constant = -ent.placement.y;
+      _cityDragRay.ray.intersectPlane(_cityDragPlane, _cityDragPt);
+      _cityDragOffset.set(ent.placement.x - _cityDragPt.x, 0, ent.placement.z - _cityDragPt.z);
+      _cityDragId = bestId;
+      _citySetSel(bestId);
+      if (_cityOnDragSelect) _cityOnDragSelect(bestId);
+    });
+    cnv.addEventListener('mousemove', e => {
+      if (!_flyCamActive || document.pointerLockElement) { cnv.style.cursor = ''; return; }
+      const rect = cnv.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
+      const ndcY = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
+      _cityDragRay.setFromCamera({ x: ndcX, y: ndcY }, camera);
+      if (_cityDragId) {
+        if (_cityDragRay.ray.intersectPlane(_cityDragPlane, _cityDragPt)) {
+          const ent = _cityObjects.get(_cityDragId);
+          if (ent) {
+            const nx = _cityDragPt.x + _cityDragOffset.x;
+            const nz = _cityDragPt.z + _cityDragOffset.z;
+            ent.mesh.position.x = nx; ent.mesh.position.z = nz;
+            ent.placement.x = nx;     ent.placement.z = nz;
+            if (_citySelBox) _citySelBox.update();
+          }
+        }
+        cnv.style.cursor = 'grabbing';
+      } else {
+        const tmpBox = new THREE.Box3();
+        let hit = false;
+        for (const [, ent] of _cityObjects) {
+          tmpBox.setFromObject(ent.mesh);
+          if (!tmpBox.isEmpty() && _cityDragRay.ray.intersectsBox(tmpBox)) { hit = true; break; }
+        }
+        cnv.style.cursor = hit ? 'grab' : '';
+      }
+    });
+    window.addEventListener('mouseup', e => {
+      if (e.button !== 0 || !_cityDragId) return;
+      const id = _cityDragId;
+      _cityDragId = null;
+      renderer.domElement.style.cursor = '';
+      if (_cityOnDragEnd) _cityOnDragEnd(id);
+    });
+    // Scroll wheel adjusts fly speed while pointer is locked
+    cnv.addEventListener('wheel', e => {
+      if (!_flyCamActive || !document.pointerLockElement) return;
+      e.preventDefault();
+      _flyCamSpeed = Math.max(1, Math.min(500, _flyCamSpeed * (e.deltaY > 0 ? 0.85 : 1 / 0.85)));
+    }, { passive: false });
+  }
 
   function clearRoom() {
     if (currentRoomGroup) {
@@ -546,9 +680,90 @@ export function createScene3d({ canvas }) {
   function setRoom(kind, missionMap, lobbySeed) {
     clearRoom();
     currentRoomKind = kind;
+    // City builder buildings are lobby-only — hide them in missions
+    const cityInLobby = kind === 'lobby';
+    for (const entry of _cityObjects.values()) entry.mesh.visible = cityInLobby;
+    if (_citySelBox) _citySelBox.visible = cityInLobby;
     currentRoomSeed = missionMap?._seed ?? null;
     if (kind === 'lobby') {
       currentRoomGroup = buildLobbyRoom(lobbySeed || 0);
+      if (USE_GLB_LOBBY) {
+        // Async-load the GLB room. Capture the group reference so a phase
+        // transition that clears the room before load finishes is a no-op.
+        const targetGroup = currentRoomGroup;
+        new GLTFLoader().load('assets/models/gantz_room.glb', gltf => {
+          if (targetGroup !== currentRoomGroup) return;
+          const root = gltf.scene;
+          root.scale.setScalar(GLB_ROOM_SCALE);
+          // Fix perfectly-smooth interior material (roughness=0 → looks mirror-like without envmap).
+          root.traverse(n => {
+            if (!n.isMesh) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            for (const m of mats) { if (m.roughness < 0.1) m.roughness = 0.5; }
+          });
+          // Model was authored Z-up (3ds Max): Y is room depth, Z is height.
+          // Rotate -90° around X to map Z-up → Y-up so the room stands correctly.
+          const _b0 = new THREE.Box3().setFromObject(root);
+          const _s0 = _b0.getSize(new THREE.Vector3());
+          if (_s0.y > _s0.z) root.rotation.x = -Math.PI / 2;
+          // Center at origin, floor at Y=0.
+          root.updateMatrixWorld(true);
+          const box  = new THREE.Box3().setFromObject(root);
+          const cent = box.getCenter(new THREE.Vector3());
+          root.position.x -= cent.x - GLB_ROOM_X_OFFSET;
+          root.position.z -= cent.z;
+          root.position.y -= box.min.y + GLB_ROOM_Y_OFFSET;
+          root.position.z += GLB_ROOM_Z_OFFSET;
+          targetGroup.add(root);
+          _tpCollidableKey = ''; // GLB meshes now in group — force TP raycaster rebuild
+          // Interior lighting — added to the room group so they auto-clear on phase change.
+          // Extra ambient lift: the GLB has baked textures that need more base light.
+          targetGroup.add(new THREE.AmbientLight(0xfff6e8, 1.8));
+          // Ceiling fill lights spread along the room depth.
+          const _ceilY = box.max.y - 0.3;
+          for (const [lx, lz] of [[-1.5, -5], [1.5, 0], [-1.5, 5]]) {
+            const _pl = new THREE.PointLight(0xfff5d0, 3.5, 14, 2);
+            _pl.position.set(lx, _ceilY, lz);
+            targetGroup.add(_pl);
+          }
+          // Ceiling lamp directly above the Gantz ball (3D: x=0, z=-4).
+          {
+            const lg = new THREE.Group();
+            lg.position.set(0, _ceilY, -4);
+            const darkMat = new THREE.MeshStandardMaterial({ color: 0x1c1c2e, roughness: 0.65, metalness: 0.55 });
+            // Ceiling mount disc
+            const mount = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.04, 12), darkMat);
+            mount.position.y = -0.02;
+            lg.add(mount);
+            // Hanging cord
+            const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.25, 6),
+              new THREE.MeshStandardMaterial({ color: 0x0d0d0d, roughness: 0.9 }));
+            cord.position.y = -0.04 - 0.125;
+            lg.add(cord);
+            // Lamp shade — inverted frustum, open-ended
+            const shade = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.09, 0.34, 0.30, 16, 1, true),
+              new THREE.MeshStandardMaterial({ color: 0x1c1c2e, roughness: 0.55, metalness: 0.45, side: THREE.DoubleSide }),
+            );
+            shade.position.y = -0.04 - 0.25 - 0.15;
+            lg.add(shade);
+            // Shade top cap
+            const shadeCap = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.015, 12), darkMat);
+            shadeCap.position.y = -0.04 - 0.25;
+            lg.add(shadeCap);
+            // Bulb
+            const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8),
+              new THREE.MeshBasicMaterial({ color: 0xffd890 }));
+            bulb.position.y = -0.04 - 0.25 - 0.06;
+            lg.add(bulb);
+            // Point light
+            const lampPt = new THREE.PointLight(0xffd890, 5.0, 12, 2);
+            lampPt.position.y = -0.04 - 0.65 - 0.06;
+            lg.add(lampPt);
+            targetGroup.add(lg);
+          }
+        });
+      }
     } else if (kind === 'mission') {
       currentRoomGroup = buildMissionRoom(missionMap);
       // buildings
@@ -1665,8 +1880,10 @@ export function createScene3d({ canvas }) {
   function ensureGantzBall(visible) {
     if (visible && !gantzBall) {
       gantzBall = buildGantzBallMesh();
+      gantzBall.scale.setScalar(0.8);
       scene.add(gantzBall);
       ballDisplay = buildGantzBallDisplay();
+      ballDisplay.mesh.scale.setScalar(0.8);
       scene.add(ballDisplay.mesh);
     } else if (!visible && gantzBall) {
       scene.remove(gantzBall);
@@ -1857,26 +2074,6 @@ export function createScene3d({ canvas }) {
       }
     }
 
-    // Animate lobby door pivots
-    if (currentRoomKind === 'lobby') {
-      const doors = currentRoomGroup?.userData.doors;
-      const doorStates = state.doorStates; // array of progress values 0..1
-      if (doors && doorStates) {
-        const SPEED = 4.5; // radians per second (door swings in ~0.4 s)
-        for (let i = 0; i < doors.length; i++) {
-          const { pivot, openAngle } = doors[i];
-          const target = (doorStates[i] || 0) * openAngle;
-          const cur    = pivot.rotation.y;
-          const diff   = target - cur;
-          if (Math.abs(diff) > 0.0005) {
-            const step = Math.sign(diff) * Math.min(Math.abs(diff), SPEED * dt);
-            pivot.rotation.y = cur + step;
-          } else {
-            pivot.rotation.y = target;
-          }
-        }
-      }
-    }
 
     // Animate Jam Portal shimmer (hallway back wall)
     if (currentRoomKind === 'lobby') {
@@ -1898,7 +2095,7 @@ export function createScene3d({ canvas }) {
     // Gantz ball visible when not in mission
     ensureGantzBall(state.phase !== 'MISSION');
     if (gantzBall && state.gantzBallPos) {
-      gantzBall.position.set(state.gantzBallPos.x, 1.2, state.gantzBallPos.y);
+      gantzBall.position.set(state.gantzBallPos.x, 0.96, state.gantzBallPos.y);
 
       // ── Opening animation ────────────────────────────────────────────────
       // Panels are curved sphere segments that TRANSLATE straight outward.
@@ -2132,10 +2329,7 @@ export function createScene3d({ canvas }) {
       g.position.z += (a.y - g.position.z) * _alf;
       g.position.y += (baseY - g.position.y) * _alf;
       g.rotation.y = facingToRotY(a.facing || 0);
-      const mark = g.userData.markRing;
-      if (mark) {
-        mark.material.opacity = a.marked ? (0.4 + 0.5 * Math.abs(Math.sin(a.markFlash * 8 || now * 8))) : 0;
-      }
+
       if (a.alive === false) {
         // X-Gun detonation vaporizes the alien — the gib burst handles the
         // visual, so just hide the mesh.
@@ -2421,7 +2615,20 @@ export function createScene3d({ canvas }) {
         camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 10);
         camera.updateProjectionMatrix();
       }
+      // ── FLY CAM overrides any FP/TP camera ──────────────────────────────
+      if (_flyCamActive) {
+        _flyCamTick(dt);
+        camera.position.copy(_flyCamPos);
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = _flyCamYaw;
+        camera.rotation.x = _flyCamPitch;
+        camera.rotation.z = 0;
+        camera.fov = 72;
+        camera.updateProjectionMatrix();
+        viewWeapon.visible = false;
+      }
     }
+
 
     // Pass 1 — main scene on layer 0 (viewmodel + vm lights excluded).
     camera.layers.set(0);
@@ -2625,6 +2832,19 @@ export function createScene3d({ canvas }) {
       if (currentRoomKind !== 'lobby') return null;
       return currentRoomGroup?.userData?.weatherType ?? null;
     },
+    setLobbyWeatherType(type) {
+      if (currentRoomKind !== 'lobby' || !currentRoomGroup) return;
+      const oldWg = currentRoomGroup.userData.weatherGroup;
+      if (oldWg) { currentRoomGroup.remove(oldWg); disposeGroup(oldWg); }
+      const { group, fogNear, fogFar, fogColor } = buildWeatherGroup(type || 'clear');
+      if (group) { currentRoomGroup.add(group); currentRoomGroup.userData.weatherGroup = group; }
+      else currentRoomGroup.userData.weatherGroup = null;
+      currentRoomGroup.userData.weatherType = type || null;
+      const bg = currentRoomGroup.userData.bgColor ?? 0x04050a;
+      scene.fog.color.set(fogColor ?? bg);
+      scene.fog.near = fogNear;
+      scene.fog.far  = fogFar;
+    },
     getLightningStrikeCount() { return _lightningStrikeCount; },
     resize,
     get camera() { return camera; },
@@ -2666,6 +2886,83 @@ export function createScene3d({ canvas }) {
       }));
       return { templateLoaded: !!_worldGunTemplate, worldGunScale: _worldGunScale, entries };
     },
+    // Dev tool: create/update/remove wireframe box overlays for custom collision zones.
+    // Game coords: (x, y) → 3D (X, 0, Z). Called each frame by devMode.update().
+    setDevZones(zones) {
+      if (!_devZoneMeshes) return;
+      const inLobby = currentRoomKind === 'lobby';
+      const seen = new Set();
+      for (const z of zones) {
+        seen.add(z._devId);
+        const yLo = z.yMin ?? 0;
+        const yHi = z.yMax ?? 3;
+        let entry = _devZoneMeshes.get(z._devId);
+        if (!entry) {
+          const mat = new THREE.LineBasicMaterial({
+            color: 0xff8800, transparent: true, opacity: 0.75,
+            depthTest: true, depthWrite: false,
+          });
+          const mesh = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), mat);
+          scene.add(mesh);
+          entry = { mesh, mat, lastW: -1, lastH: -1, lastD: -1, lastKind: '' };
+          _devZoneMeshes.set(z._devId, entry);
+        }
+        const sh = Math.max(0.01, yHi - yLo);
+        const sw = z.kind === 'circle' ? (z.r || 1) : z.w;
+        const sd = z.kind === 'circle' ? (z.r || 1) : z.h;
+        const geomChanged = entry.lastW !== sw || entry.lastH !== sh || entry.lastD !== sd || entry.lastKind !== z.kind;
+        if (geomChanged) {
+          entry.mesh.geometry.dispose();
+          if (z.kind === 'circle') {
+            entry.mesh.geometry = new THREE.EdgesGeometry(new THREE.CylinderGeometry(sw, sw, sh, 16));
+          } else {
+            entry.mesh.geometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(sw, sh, sd));
+          }
+          entry.lastW = sw; entry.lastH = sh; entry.lastD = sd; entry.lastKind = z.kind;
+        }
+        const centerY = (yLo + yHi) / 2;
+        entry.mesh.position.set(z.x, centerY, z.y);
+        entry.mesh.visible = inLobby && !z.hidden;
+        entry.mat.color.setHex(0xff8800);
+        // Fill mesh for "visible colored wall"
+        const wantFill = !!(z.wallColor);
+        if (wantFill !== !!entry.fillMesh || geomChanged) {
+          if (entry.fillMesh) { scene.remove(entry.fillMesh); entry.fillMesh.geometry.dispose(); entry.fillMesh.material.dispose(); entry.fillMesh = null; }
+          if (wantFill) {
+            const fillGeo = z.kind === 'circle'
+              ? new THREE.CylinderGeometry(sw, sw, sh, 16)
+              : new THREE.BoxGeometry(sw, sh, sd);
+            const fillMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(z.wallColor), transparent: true, opacity: z.wallOpacity ?? 0.28, depthWrite: true, side: THREE.DoubleSide });
+            entry.fillMesh = new THREE.Mesh(fillGeo, fillMat);
+            scene.add(entry.fillMesh);
+            entry.lastFillColor = z.wallColor;
+          }
+        }
+        if (entry.fillMesh) {
+          const op = z.wallOpacity ?? 0.28;
+          entry.fillMesh.position.set(z.x, centerY, z.y);
+          entry.fillMesh.visible = inLobby;
+          entry.fillMesh.material.opacity = op;
+          entry.fillMesh.material.transparent = op < 0.99;
+          entry.fillMesh.material.depthWrite = op >= 0.99;
+          entry.fillMesh.material.color.set(z.wallColor);
+        }
+      }
+      for (const [id, entry] of _devZoneMeshes) {
+        if (!seen.has(id)) {
+          scene.remove(entry.mesh);
+          if (entry.fillMesh) { scene.remove(entry.fillMesh); entry.fillMesh.geometry.dispose(); entry.fillMesh.material.dispose(); }
+          entry.mesh.geometry.dispose(); entry.mat.dispose();
+          _devZoneMeshes.delete(id);
+        }
+      }
+    },
+    toggleEntityLabels(show) {
+      for (const entry of [...humans.values(), ...aliens.values()]) {
+        const label = entry.group?.children.find(c => c.userData.isNameLabel);
+        if (label) label.visible = show;
+      }
+    },
     // Force-reattach all live hand guns with current offset/rotation values.
     // Also forces a detach+reattach so new rotation is applied from scratch.
     reattachHandGuns() {
@@ -2676,6 +2973,118 @@ export function createScene3d({ canvas }) {
         }
       }
       // _setHandGun will re-attach on next render tick
+    },
+    flyCam: {
+      get active() { return _flyCamActive; },
+      onMouseMove(dx, dy) {
+        _flyCamYaw   -= dx * 0.0022;
+        _flyCamPitch -= dy * 0.0022;
+        _flyCamPitch  = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, _flyCamPitch));
+      },
+      enable() {
+        _ensureFcListeners();
+        _flyCamPos.set(camera.position.x, camera.position.y, camera.position.z);
+        _flyCamYaw   = camera.rotation.y;
+        _flyCamPitch = camera.rotation.x;
+        _flyCamActive = true;
+      },
+      disable() {
+        _flyCamActive = false;
+        _flyCamKeys.clear();
+        _cityDragId = null;
+        renderer.domElement.style.cursor = '';
+      },
+      get speed() { return _flyCamSpeed; },
+      set speed(v) { _flyCamSpeed = Math.max(1, Math.min(500, v)); },
+    },
+    cityBuilder: {
+      _load(url, cb) {
+        if (_cityGltfCache.has(url)) { cb(_cityGltfCache.get(url)); return; }
+        const loader = new GLTFLoader();
+        loader.load(url, gltf => {
+          _cityGltfCache.set(url, gltf.scene);
+          cb(gltf.scene);
+        }, undefined, err => console.warn('[cityBuilder] load error', url, err));
+      },
+      getModelChildren(url, cb) {
+        this._load(url, tmpl => {
+          let children = tmpl.children;
+          while (children.length === 1 && children[0].isObject3D && !children[0].isMesh) {
+            children = children[0].children;
+          }
+          cb(children.map((c, i) => ({ index: i, name: c.name || `Object_${i}` })));
+        });
+      },
+      place(placement) {
+        const id = `cb${++_cityIdCounter}`;
+        const { url, childName = null, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, scale = 1 } = placement;
+        const DEG = Math.PI / 180;
+        const wrapper = new THREE.Group();
+        wrapper.position.set(x, y, z);
+        wrapper.rotation.set(rx * DEG, ry * DEG, rz * DEG);
+        wrapper.scale.setScalar(scale);
+        scene.add(wrapper);
+        _cityObjects.set(id, { mesh: wrapper, placement: { url, childName, x, y, z, rx, ry, rz, scale, id } });
+        this._load(url, tmpl => {
+          if (!_cityObjects.has(id)) return;
+          let source = tmpl;
+          if (childName) {
+            const found = tmpl.getObjectByName(childName);
+            if (found) source = found;
+          }
+          const inst = source.clone(true);
+          // Add to scene first so matrixWorld is valid for world-space bbox checks
+          wrapper.add(inst);
+          inst.updateWorldMatrix(true, true);
+          inst.traverse(o => {
+            if (!o.isMesh) return;
+            // 3ds Max backdrop room meshes: Exterior_Material_#NNN_N / INTERIOR_Material_#NNN_N
+            if (/Material_#\d+_\d+/i.test(o.name)) { o.visible = false; return; }
+            // Size-based fallback for other models: hide if > 600m world-space in any axis
+            if (o.geometry) {
+              o.geometry.computeBoundingBox();
+              const worldBB = o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
+              const dims = [worldBB.max.x-worldBB.min.x, worldBB.max.y-worldBB.min.y, worldBB.max.z-worldBB.min.z];
+              if (Math.max(...dims) > 600) { o.visible = false; return; }
+            }
+            if (Array.isArray(o.material)) o.material = o.material.map(m => m.clone());
+            else if (o.material) o.material = o.material.clone();
+          });
+          if (_citySelId === id && _citySelBox) _citySelBox.update();
+        });
+        return id;
+      },
+      remove(id) {
+        const entry = _cityObjects.get(id);
+        if (!entry) return;
+        if (_citySelId === id) _citySetSel(null);
+        scene.remove(entry.mesh);
+        disposeGroup(entry.mesh);
+        _cityObjects.delete(id);
+      },
+      update(id, patch) {
+        const entry = _cityObjects.get(id);
+        if (!entry) return;
+        Object.assign(entry.placement, patch);
+        const p = entry.placement;
+        const DEG = Math.PI / 180;
+        entry.mesh.position.set(p.x ?? 0, p.y ?? 0, p.z ?? 0);
+        entry.mesh.rotation.set((p.rx ?? 0) * DEG, (p.ry ?? 0) * DEG, (p.rz ?? 0) * DEG);
+        entry.mesh.scale.setScalar(p.scale ?? 1);
+        if (_citySelId === id && _citySelBox) _citySelBox.update();
+      },
+      setSelection(id) { _citySetSel(id); },
+      refreshSelection() { if (_citySelBox) _citySelBox.update(); },
+      get onDragSelect() { return _cityOnDragSelect; },
+      set onDragSelect(fn) { _cityOnDragSelect = fn; },
+      get onDragEnd() { return _cityOnDragEnd; },
+      set onDragEnd(fn) { _cityOnDragEnd = fn; },
+      getAll() { return [..._cityObjects.values()].map(e => ({ ...e.placement })); },
+      clearAll() {
+        _citySetSel(null);
+        for (const entry of _cityObjects.values()) { scene.remove(entry.mesh); disposeGroup(entry.mesh); }
+        _cityObjects.clear();
+      },
     },
   };
 }

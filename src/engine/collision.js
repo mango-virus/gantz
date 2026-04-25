@@ -45,10 +45,17 @@ export function circleVsAABB(cx, cy, cr, bx, by, bw, bh) {
 
 export function resolveAgainstStatic(e, colliders) {
   const r = e.radius || 0.35;
+  // Entity vertical extent in 3D world Y (jumpY = offset from floor, height ≈ 1.8m).
+  const eBottom = e.jumpY || 0;
+  const eTop    = eBottom + 1.8;
   for (let pass = 0; pass < 3; pass++) {
     let touched = false;
     for (const c of colliders) {
-      if (!c || c.tier === 'decorative') continue;
+      if (!c || c.tier === 'decorative' || c.disabled) continue;
+      // Skip collider if entity is entirely above or below its vertical range.
+      if (c.yMin !== undefined || c.yMax !== undefined) {
+        if (eTop <= (c.yMin ?? -Infinity) || eBottom >= (c.yMax ?? Infinity)) continue;
+      }
       let hit = null;
       if (c.kind === 'circle') {
         hit = circleVsCircle(e.x, e.y, r, c.x, c.y, c.r);

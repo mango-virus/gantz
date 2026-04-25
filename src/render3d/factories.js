@@ -773,6 +773,22 @@ function _makeWeatherParticles(type, W, midZ, winSpan, STREET_Y) {
   return group;
 }
 
+const _WEATHER_FOG = {
+  clear:        { near: 300, far: 1200, color: null  },
+  rain:         { near: 180, far:  700, color: null  },
+  snow:         { near: 120, far:  500, color: null  },
+  light_fog:    { near:  18, far:   90, color: 0x5a6878 },
+  blizzard:     { near:   6, far:   38, color: 0x8898b0 },
+  thunderstorm: { near:  50, far:  280, color: 0x07090a },
+};
+
+// Rebuild just the weather particle group (used by dev tools to swap weather at runtime).
+export function buildWeatherGroup(type) {
+  const fog = _WEATHER_FOG[type] ?? { near: 300, far: 1200, color: null };
+  const group = _makeWeatherParticles(type || 'clear', 8.5, 0.21, 13.92, -35);
+  return { group, fogNear: fog.near, fogFar: fog.far, fogColor: fog.color };
+}
+
 function _makeCityGroundTex() {
   const rng = _mkRng(0x8fa2c3);
   const S = 512;
@@ -1201,9 +1217,6 @@ function buildBipedAlien(spec) {
     g.add(barrel);
   }
 
-  const markRing = _markRing(spec, hipY - 0.35 * sc * htS, 0.9);
-  g.add(markRing);
-  g.userData.markRing = markRing;
 
   // Local forward axis: head faces -Z (forward in scene3d after facingToRotY).
   // Rotate so that "forward" (i.e. where eyes look) is +X world by default.
@@ -1345,9 +1358,6 @@ function buildQuadrupedAlien(spec) {
   tail.add(tipBall);
   g.add(tail);
 
-  const markRing = _markRing(spec, 0.1, 1.0);
-  g.add(markRing);
-  g.userData.markRing = markRing;
 
   g.userData.bodyPlan = 'quadruped';
   g.userData.parts = { legs, head: headGrp, tail, torso };
@@ -1414,9 +1424,6 @@ function buildSerpentAlien(spec) {
     pupil.position.set(t * 0.16 * sc, 0.08 * sc, 0.22 * sc);
   });
 
-  const markRing = _markRing(spec, 0.1, 1.0);
-  g.add(markRing);
-  g.userData.markRing = markRing;
 
   g.userData.bodyPlan = 'serpent';
   g.userData.parts = { segments };
@@ -1527,9 +1534,6 @@ function buildFloaterAlien(spec) {
     g.add(tent);
   }
 
-  const markRing = _markRing(spec, bellY - 0.3 * sc, 1.0);
-  g.add(markRing);
-  g.userData.markRing = markRing;
 
   g.userData.bodyPlan = 'floater';
   g.userData.parts = { bell: bellGrp, tentacles };
@@ -1686,9 +1690,6 @@ function buildInsectoidAlien(spec) {
     g.add(wing);
   }
 
-  const markRing = _markRing(spec, 0.1, 1.0);
-  g.add(markRing);
-  g.userData.markRing = markRing;
 
   g.userData.bodyPlan = 'insectoid';
   g.userData.parts = { legs, abdomen, mandL, mandR, head: headGrp, thorax };
@@ -1742,8 +1743,8 @@ export function animateAlienMesh(g, a, time, dt) {
     // attack: both arms slam forward, torso lunge
     if (attackPulse > 0) {
       const p = attackPulse;
-      if (parts.armL) parts.armL.rotation.x = -1.6 * p;
-      if (parts.armR) parts.armR.rotation.x = -1.6 * p;
+      if (parts.armL) parts.armL.rotation.x = 1.6 * p;
+      if (parts.armR) parts.armR.rotation.x = 1.6 * p;
       if (parts.torso) parts.torso.rotation.x = -0.4 * p;
     } else if (parts.torso) {
       parts.torso.rotation.x = 0;
@@ -2459,28 +2460,14 @@ export function buildGantzBallDisplay() {
 export function buildLobbyRoom(lobbySeed = 0) {
   const group = new THREE.Group();
 
-  // ── Time-of-day + weather randomisation ───────────────────────────────────
-  // DEV: force thunderstorm for testing — remove this line to restore random selection
-  // const _FORCE = ['storm', 'thunderstorm'];
-  // Weighted sky→weather pairing table.  Each entry: [skyVariant, weatherType, weight].
+  // ── Time-of-day + weather randomisation ──────────────────────────────────
   const _PAIRINGS = [
-    ['night',        'clear',        6],
-    ['night',        'rain',         3],
-    ['night',        'snow',         2],
-    ['midnight',     'clear',        8],
-    ['midnight',     'light_fog',    2],
-    ['midnight',     'snow',         3],
-    ['dawn',         'clear',        5],
-    ['dawn',         'light_fog',    2],
-    ['dusk',         'clear',        5],
-    ['dusk',         'rain',         3],
-    ['day',          'clear',        6],
-    ['day',          'light_fog',    2],
-    ['overcast',     'light_fog',    2],
-    ['overcast',     'rain',         2],
-    ['overcast',     'snow',         3],
-    ['storm',        'thunderstorm', 8],
-    ['blizzard_sky', 'blizzard',     8],
+    ['midnight', 'clear',        6],
+    ['midnight', 'rain',         4],
+    ['midnight', 'thunderstorm', 4],
+    ['midnight', 'snow',         3],
+    ['midnight', 'blizzard',     3],
+    ['midnight', 'light_fog',    2],
   ];
   const _totalW = _PAIRINGS.reduce((s, p) => s + p[2], 0);
   const _rng = mulberry32(lobbySeed);
@@ -2490,14 +2477,12 @@ export function buildLobbyRoom(lobbySeed = 0) {
   const skyVariant  = _picked[0];
   const weatherType = _picked[1];
 
-  // Scene background + fog base colour per sky variant
   const _BG = {
     night: 0x04050a, midnight: 0x010103, dawn: 0x12080e, dusk: 0x0e0606,
     day: 0x1a3a68, overcast: 0x0c1018, storm: 0x020408, blizzard_sky: 0x060c18,
   };
   const bgColor = _BG[skyVariant] ?? 0x04050a;
 
-  // Fog settings per weather type  (fogColor: null = use bgColor)
   const _FOG = {
     clear:        { near: 300, far: 1200, color: null  },
     rain:         { near: 180, far:  700, color: null  },
@@ -2513,781 +2498,19 @@ export function buildLobbyRoom(lobbySeed = 0) {
   group.userData.fogNear     = _FOG.near;
   group.userData.fogFar      = _FOG.far;
   group.userData.fogColor    = _FOG.color ?? bgColor;
-  const W    = 10;   // x-span (interior width)
-  const H    = 16;   // z-span (interior depth)
-  const CEIL = 3.8;  // ceiling height
-  const WT   = 0.15; // wall thickness
 
-  // ---- Palette ----
-  const WALL_C    = 0xe8dfc0; // warm cream plaster
-  const CEIL_C    = 0xe4dbb8; // ceiling, slightly warmer
-  const BEAM_C    = 0xddd4aa; // perimeter drop-beam, a shade darker
-  const DOOR_C    = 0x7a3535; // reddish-brown door/frame
-  const FRAME_C   = 0x4a5258; // dark charcoal aluminium window frame
-  const FLOOR_A   = 0xb88040;
-  const FLOOR_B   = 0xc89050;
-  const FLOOR_C_  = 0xb07838;
-  const FLOOR_D   = 0xbc8848;
-
-  const plasterTex = _makePlasterTex();
-  plasterTex.repeat.set(5, 3);
-  const wallMat  = new THREE.MeshStandardMaterial({ map: plasterTex, color: WALL_C, roughness: 0.94 });
-  const ceilMat  = new THREE.MeshStandardMaterial({ color: CEIL_C, roughness: 0.92 });
-  const beamMat  = new THREE.MeshStandardMaterial({ color: BEAM_C, roughness: 0.92 });
-  const doorMat  = new THREE.MeshStandardMaterial({ color: DOOR_C, roughness: 0.68 });
-  const glassMat = new THREE.MeshStandardMaterial({
-    color: 0xd8e8f0, roughness: 0.02, metalness: 0.05,
-    transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide,
-  });
-  const frameMat = new THREE.MeshStandardMaterial({ color: FRAME_C, roughness: 0.5, metalness: 0.55 });
-
-  // ---- Hardwood plank floor (procedurally textured) ----
-  { const floorTex = _makeLobbyFloorTex();
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(W, H),
-      new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.82 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0.001;
-    floor.receiveShadow = true;
-    group.add(floor); }
-
-  // ---- Walls ----
-  // Shared door constants (must match addDoor below)
-  const DW = 1.25; // door width
-  const DH = 2.35; // door height
-
-  // Left (-X): wall patches with openings for two doors at z=+5.5 and z=-1.5
-  {
-    const LX  = -W / 2 - WT / 2;                     // wall centre x = -5.075
-    const ZMN = -H / 2 - WT / 2, ZMX = H / 2 + WT / 2; // z extents: -8.075 → 8.075
-    const D0Z = 5.5, D1Z = -1.5;                      // door z centres
-    const wp = (z0, z1, y0 = 0, y1 = CEIL) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(WT, y1 - y0, z1 - z0), wallMat);
-      m.position.set(LX, (y0 + y1) / 2, (z0 + z1) / 2);
-      m.receiveShadow = true; group.add(m);
-    };
-    wp(ZMN,            D1Z - DW / 2);        // far end → door-1 left
-    wp(D1Z + DW / 2,   D0Z - DW / 2);        // between doors
-    wp(D0Z + DW / 2,   ZMX);                 // door-0 right → back end
-    wp(D1Z - DW / 2,   D1Z + DW / 2, DH, CEIL); // above door 1
-    wp(D0Z - DW / 2,   D0Z + DW / 2, DH, CEIL); // above door 0
-  }
-  // Far (-Z): wall patches with opening for one door at x=0
-  {
-    const FZ  = -H / 2 - WT / 2;
-    const XMN = -W / 2 - WT / 2, XMX = W / 2 + WT / 2;
-    const fp = (x0, x1, y0 = 0, y1 = CEIL) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, WT), wallMat);
-      m.position.set((x0 + x1) / 2, (y0 + y1) / 2, FZ);
-      m.receiveShadow = true; group.add(m);
-    };
-    fp(XMN, -DW / 2);               // left section
-    fp( DW / 2, XMX);               // right section
-    fp(-DW / 2,  DW / 2, DH, CEIL); // above door
-  }
-  // Back (+Z): wall patches with opening for one door at x=0
-  {
-    const BZ  = H / 2 + WT / 2;
-    const XMN = -W / 2 - WT / 2, XMX = W / 2 + WT / 2;
-    const bp = (x0, x1, y0 = 0, y1 = CEIL) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, WT), wallMat);
-      m.position.set((x0 + x1) / 2, (y0 + y1) / 2, BZ);
-      m.receiveShadow = true; group.add(m);
-    };
-    bp(XMN, -DW / 2);
-    bp( DW / 2, XMX);
-    bp(-DW / 2,  DW / 2, DH, CEIL);
-  }
-
-  // Right (+X) wall — solid sections around the window bank
-  // Window spans z: WIN_START → WIN_END, y: WIN_SILL → WIN_TOP
-  const WIN_START = -H / 2 + 1.2;  // z of window left edge  (1.2 m from far wall)
-  const WIN_END   =  H / 2 - 2.2;  // z of window right edge (2.2 m from back wall)
-  const WIN_SILL  = 0.07;
-  const WIN_TOP   = CEIL - 0.13;
-  const winSpan   = WIN_END - WIN_START;
-  const winH      = WIN_TOP - WIN_SILL;
-
-  const wallX = W / 2 + WT / 2; // centre of right-wall thickness
-  const addWallPatch = (cx, cy, cz, w, h, d) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
-    m.position.set(cx, cy, cz); m.receiveShadow = true; group.add(m);
-  };
-  // End cap: z from -H/2 to WIN_START
-  addWallPatch(wallX, CEIL / 2, (-H / 2 + WIN_START) / 2,
-               WT, CEIL, WIN_START + H / 2);
-  // End cap: z from WIN_END to +H/2
-  addWallPatch(wallX, CEIL / 2, (WIN_END + H / 2) / 2,
-               WT, CEIL, H / 2 - WIN_END);
-  // Strip above window
-  addWallPatch(wallX, WIN_TOP + (CEIL - WIN_TOP) / 2, (WIN_START + WIN_END) / 2,
-               WT, CEIL - WIN_TOP, winSpan);
-  // Sill strip below window
-  addWallPatch(wallX, WIN_SILL / 2, (WIN_START + WIN_END) / 2,
-               WT, WIN_SILL, winSpan);
-
-  // ---- Ceiling ----
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W + WT * 2, H + WT * 2), ceilMat);
-  ceil.rotation.x = Math.PI / 2; ceil.position.y = CEIL; ceil.receiveShadow = true;
-  group.add(ceil);
-
-  // Perimeter drop-beam — wide structural soffit running around all four walls.
-  // The underside is a distinct warm-yellow tone like the reference photos.
-  const BW = 0.68, BH = 0.32;
-  const beamY = CEIL - BH / 2;
-  const beamUndersideMat = new THREE.MeshStandardMaterial({ color: 0xd8cc90, roughness: 0.9 });
-  [
-    [new THREE.BoxGeometry(BW, BH, H),          -W / 2 + BW / 2, beamY, 0],
-    [new THREE.BoxGeometry(BW, BH, H),            W / 2 - BW / 2, beamY, 0],
-    [new THREE.BoxGeometry(W - BW * 2, BH, BW),  0, beamY, -H / 2 + BW / 2],
-    [new THREE.BoxGeometry(W - BW * 2, BH, BW),  0, beamY,  H / 2 - BW / 2],
-  ].forEach(([geo, x, y, z]) => {
-    const m = new THREE.Mesh(geo, beamMat);
-    m.position.set(x, y, z); group.add(m);
-    // Warm yellow underside plane — matches reference photo colouring
-    const uw = geo.parameters.width, ud = geo.parameters.depth;
-    const u = new THREE.Mesh(new THREE.PlaneGeometry(uw, ud), beamUndersideMat);
-    u.rotation.x = Math.PI / 2;
-    u.position.set(x, CEIL - BH - 0.001, z);
-    group.add(u);
-  });
-
-  // ---- Cassette AC unit + dome pendant lamp helper ----
-  function addCassetteLight(x, z) {
-    // Outer frame (dark square flush with ceiling)
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.06, 0.92),
-      new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.8 }));
-    frame.position.set(x, CEIL - 0.03, z);
-    group.add(frame);
-    // Inner vent panel (off-white)
-    const vent = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.04, 0.78),
-      new THREE.MeshStandardMaterial({ color: 0xd8d0bc, roughness: 0.7 }));
-    vent.position.set(x, CEIL - 0.02, z);
-    group.add(vent);
-    // Suspension cord + canopy mount
-    const cordLen = 0.52;
-    const cordY   = CEIL - 0.06 - cordLen / 2;
-    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, cordLen, 6),
-      new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.9 }));
-    cord.position.set(x, cordY, z);
-    group.add(cord);
-    // Wide inverted-cone shade (open at bottom, closed at top) — matches reference
-    const shadeMat = new THREE.MeshStandardMaterial({
-      color: 0xf0ead8, roughness: 0.55, side: THREE.DoubleSide,
-    });
-    const shadeH = 0.22, shadeTopR = 0.06, shadeBotR = 0.30;
-    const shadeY = CEIL - 0.06 - cordLen - shadeH / 2;
-    // Cone body (open cylinder with different top/bottom radii)
-    const shade = new THREE.Mesh(
-      new THREE.CylinderGeometry(shadeTopR, shadeBotR, shadeH, 20, 1, true),
-      shadeMat,
-    );
-    shade.position.set(x, shadeY, z);
-    group.add(shade);
-    // Top disc to close the cap
-    const cap = new THREE.Mesh(new THREE.CircleGeometry(shadeTopR, 20), shadeMat);
-    cap.rotation.x = -Math.PI / 2;
-    cap.position.set(x, shadeY + shadeH / 2, z);
-    group.add(cap);
-    // Warm point light from the pendant
-    const pl = new THREE.PointLight(0xfff8e8, 2.4, 14, 1.8);
-    pl.position.set(x, shadeY - shadeH / 2, z);
-    pl.castShadow = true;
-    pl.shadow.mapSize.set(512, 512);
-    group.add(pl);
-  }
-
-  addCassetteLight(0, -2.5);  // near the ball
-  addCassetteLight(0,  4.5);  // toward the player-spawn end
-
-  // ---- Recessed can spotlights ----
-  const canMat = new THREE.MeshBasicMaterial({ color: 0xfffae8 });
-  function addCan(x, z) {
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.065, 12), canMat);
-    disc.rotation.x = Math.PI / 2;
-    disc.position.set(x, CEIL - 0.005, z);
-    group.add(disc);
-    const sl = new THREE.SpotLight(0xfff5e0, 0.9, 7, Math.PI / 7, 0.55, 1.5);
-    sl.position.set(x, CEIL - 0.02, z);
-    sl.target.position.set(x, 0, z);
-    group.add(sl); group.add(sl.target);
-  }
-
-  for (const x of [-2.2, 2.2]) {
-    for (const z of [-6, -3, 0, 3, 6]) addCan(x, z);
-  }
-
-  // ---- Reddish slatted doors ----
-  // Each door: dark reddish-brown frame, animated slab on a hinge pivot.
-  // Returns { pivot, openAngle } so the scene can animate the slab.
-  const _lobbyDoors = [];
-  function addDoor(wx, wz, rotY, openAngle) {
-    const DW = 1.25;
-    const DH = 2.35;
-    const SLATS = 6;
-    const KICK  = 0.24;     // solid kick-panel height at bottom
-    const FT    = 0.055;    // frame thickness
-    const STILE = 0.058;    // door stile (side rail) width
-    const DT    = 0.052;    // door slab depth
-
-    const dg = new THREE.Group();
-
-    const slatMat = new THREE.MeshStandardMaterial({
-      color: 0xc8d0d4, roughness: 0.1, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
-    });
-
-    // ── Static frame (jambs + header) ────────────────────────────────────────
-    const jambMat = new THREE.MeshStandardMaterial({ color: 0x3a3e44, roughness: 0.6 });
-    const jbox = (w, h, d, x, y, z) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), jambMat);
-      m.position.set(x, y, z); dg.add(m);
-    };
-    jbox(DW + FT * 2, FT,       DT + 0.02,  0,                  DH + FT / 2, 0);
-    jbox(FT,          DH + FT,  DT + 0.02, -(DW / 2 + FT / 2),  DH / 2,      0);
-    jbox(FT,          DH + FT,  DT + 0.02,  (DW / 2 + FT / 2),  DH / 2,      0);
-
-    // ── Animated slab — pivot sits at hinge edge (local x = -DW/2) ───────────
-    // All slab geometry is shifted +DW/2 in x so it's centred in the opening
-    // when the pivot is at x=-DW/2.  Rotating the pivot swings the slab open.
-    const slabPivot = new THREE.Group();
-    slabPivot.position.set(-DW / 2, 0, 0);
-    dg.add(slabPivot);
-
-    const sbox = (w, h, d, x, y, z) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), doorMat);
-      m.position.set(x + DW / 2, y, z); m.castShadow = true; slabPivot.add(m);
-    };
-
-    // Kick panel (solid)
-    sbox(DW - FT, KICK, DT, 0, KICK / 2, 0);
-    // Door stiles (left & right vertical rails)
-    sbox(STILE, DH - KICK, DT, -(DW / 2 - STILE / 2), KICK + (DH - KICK) / 2, 0);
-    sbox(STILE, DH - KICK, DT,  (DW / 2 - STILE / 2), KICK + (DH - KICK) / 2, 0);
-    // Top rail of door slab
-    sbox(DW - FT, FT, DT, 0, DH - FT / 2, 0);
-
-    // Glass slats + horizontal rails between them
-    const slatSection = DH - KICK - FT;
-    const slatH = slatSection / SLATS;
-    for (let s = 0; s < SLATS; s++) {
-      const sy = KICK + slatH * s + slatH / 2;
-      const gp = new THREE.Mesh(
-        new THREE.BoxGeometry(DW - STILE * 2 - 0.02, slatH - 0.038, 0.018),
-        slatMat,
-      );
-      gp.position.set(DW / 2, sy, 0);
-      slabPivot.add(gp);
-      if (s > 0) sbox(DW - FT * 0.5, 0.038, DT, 0, KICK + slatH * s, 0);
-    }
-
-    // Door handle: lever-style pull on the latch side
-    const handleMat = new THREE.MeshStandardMaterial({ color: 0xc8a050, roughness: 0.25, metalness: 0.75 });
-    const handleX = DW / 2 - STILE * 0.7; // near the latch edge (right side)
-    for (const side of [-1, 1]) {
-      const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.095, 8), handleMat);
-      lever.rotation.x = Math.PI / 2;
-      lever.position.set(handleX + DW / 2, 1.02, side * (DT / 2 + 0.05));
-      slabPivot.add(lever);
-      const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.012, 10), handleMat);
-      rose.rotation.x = Math.PI / 2;
-      rose.position.set(handleX + DW / 2, 1.02, side * (DT / 2 + 0.006));
-      slabPivot.add(rose);
-    }
-
-    dg.position.set(wx, 0, wz);
-    dg.rotation.y = rotY;
-    group.add(dg);
-
-    const doorEntry = { pivot: slabPivot, openAngle };
-    _lobbyDoors.push(doorEntry);
-    return doorEntry;
-  }
-
-  // Left wall (-X = -5): two doors
-  //   rotY = π/2  → local +x = world -z; slab hinge on far-Z side.
-  //   openAngle = -0.8π → slab swings 144° toward world +x (into lobby). ✓
-  addDoor(-W / 2, +5.5,  Math.PI / 2, -Math.PI * 0.8);  // door 0 (Bedroom)
-  addDoor(-W / 2, -1.5,  Math.PI / 2, -Math.PI * 0.8);  // door 1 (Bathroom)
-
-  // Far wall (-Z = -8): rotY=0 → local = world.
-  //   openAngle < 0 → slab right side swings toward world +z (into lobby). ✓
-  addDoor(0, -H / 2, 0, -Math.PI * 0.8);          // door 2 (Kitchen)
-
-  // Back wall (+Z = +8): rotY=π → local +x = world -x.
-  //   openAngle < 0 → slab right side swings toward world -z (into lobby). ✓
-  addDoor(0,  H / 2, Math.PI, -Math.PI * 0.8);    // door 3 (Hallway)
-
-  // Expose door pivot array for scene3d
-  group.userData.doors = _lobbyDoors;
-
-  // ---- Adjacent rooms --------------------------------------------------------
-  // Rooms use the same lobby materials (wallMat = cream plaster, ceilMat).
-  // Floor: warm hardwood tone matching the lobby floor colour.
-  const adjFloorMat = new THREE.MeshStandardMaterial({ color: 0xc09060, roughness: 0.84 });
-  const ADJ_FT = 0.12; // floor/ceiling slab thickness
-
-  // Open-face must sit at the lobby wall OUTER face so no room geometry clips
-  // into the lobby.  Outer faces: left X = -(W/2+WT) = -5.15, far/back Z = ±(H/2+WT) = ±8.15.
-  const RW_OUTER = W / 2 + WT;  // 5.15
-  const RH_OUTER = H / 2 + WT;  // 8.15
-
-  function addAdjRoom(cx, cz, rw, rd, openSide, floorMat) {
-    // cx,cz = room centre in 3D world.
-    // rw = room width (X), rd = room depth (Z).
-    // openSide: 'maxX'|'minX'|'maxZ'|'minZ' — wall facing the lobby (not built).
-    // floorMat: MeshStandardMaterial for this room's floor (unique per room).
-    // Floor and ceiling extend by WT on the open side so they reach the lobby
-    // inner wall face, sealing the floor gap under the lobby wall thickness.
-    // Shift floor/ceiling toward the lobby (open) side by WT so they cover the
-    // gap under the lobby wall thickness and reach the lobby inner wall face.
-    // Rule: shift center in the direction of the open face (+x for maxX, etc.)
-    let fx = cx, fz = cz, frw = rw, frd = rd;
-    if (openSide === 'maxX') { frw += WT; fx += WT / 2; }
-    if (openSide === 'minX') { frw += WT; fx -= WT / 2; }
-    if (openSide === 'maxZ') { frd += WT; fz += WT / 2; }
-    if (openSide === 'minZ') { frd += WT; fz -= WT / 2; }
-
-    // Floor — top surface at y=0.001 to match lobby hardwood floor level
-    const floorY = 0.001 - ADJ_FT / 2;
-    { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), floorMat || adjFloorMat);
-      m.position.set(fx, floorY, fz); m.receiveShadow = true; group.add(m); }
-    // Ceiling
-    { const m = new THREE.Mesh(new THREE.BoxGeometry(frw, ADJ_FT, frd), ceilMat);
-      m.position.set(fx, CEIL + ADJ_FT / 2, fz); group.add(m); }
-
-    // Walls — match lobby: same wallMat (cream plaster with texture), skip open side
-    const wdefs = [
-      // [geom_w, geom_h, geom_d, px, py, pz, skip_if]
-      [WT, CEIL, rd, cx - rw / 2, CEIL / 2, cz,        'minX'],
-      [WT, CEIL, rd, cx + rw / 2, CEIL / 2, cz,        'maxX'],
-      [rw, CEIL, WT, cx,          CEIL / 2, cz - rd / 2, 'minZ'],
-      [rw, CEIL, WT, cx,          CEIL / 2, cz + rd / 2, 'maxZ'],
-    ];
-    for (const [gw, gh, gd, px, py, pz, skip] of wdefs) {
-      if (skip === openSide) continue;
-      const m = new THREE.Mesh(new THREE.BoxGeometry(gw, gh, gd), wallMat);
-      m.position.set(px, py, pz); m.castShadow = true; m.receiveShadow = true;
-      group.add(m);
-    }
-
-    // ---- Cap walls: close portions of the open face that extend beyond lobby ----
-    // The lobby wall covers the adj room's open face only within the lobby's own
-    // wall span.  If the room extends past the lobby extents (e.g. bedroom north
-    // end juts past the lobby back wall), that strip has no geometry — plug it.
-    const lobbyZMin = -H / 2 - WT / 2;  // -8.075
-    const lobbyZMax =  H / 2 + WT / 2;  //  +8.075
-    const lobbyXMin = -W / 2 - WT / 2;  // -5.075
-    const lobbyXMax =  W / 2 + WT / 2;  //  +5.075
-
-    // Helper: add a thin wall panel along Z (for openSide maxX/minX cases)
-    const capZ = (fx, z0, z1) => {
-      if (z1 - z0 < 0.001) return;
-      const m = new THREE.Mesh(new THREE.BoxGeometry(WT, CEIL, z1 - z0), wallMat);
-      m.position.set(fx, CEIL / 2, (z0 + z1) / 2);
-      m.castShadow = true; m.receiveShadow = true; group.add(m);
-    };
-    // Helper: add a thin wall panel along X (for openSide maxZ/minZ cases)
-    const capX = (x0, x1, fz) => {
-      if (x1 - x0 < 0.001) return;
-      const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, CEIL, WT), wallMat);
-      m.position.set((x0 + x1) / 2, CEIL / 2, fz);
-      m.castShadow = true; m.receiveShadow = true; group.add(m);
-    };
-
-    const roomZMin = cz - rd / 2, roomZMax = cz + rd / 2;
-    const roomXMin = cx - rw / 2, roomXMax = cx + rw / 2;
-
-    if (openSide === 'maxX') {
-      const fx = cx + rw / 2;
-      capZ(fx, roomZMin, Math.min(roomZMax, lobbyZMin)); // south overhang (below lobby)
-      capZ(fx, Math.max(roomZMin, lobbyZMax), roomZMax); // north overhang (above lobby)
-    } else if (openSide === 'minX') {
-      const fx = cx - rw / 2;
-      capZ(fx, roomZMin, Math.min(roomZMax, lobbyZMin));
-      capZ(fx, Math.max(roomZMin, lobbyZMax), roomZMax);
-    } else if (openSide === 'maxZ') {
-      const fz = cz + rd / 2;
-      capX(roomXMin, Math.min(roomXMax, lobbyXMin), fz); // left overhang
-      capX(Math.max(roomXMin, lobbyXMax), roomXMax, fz); // right overhang
-    } else if (openSide === 'minZ') {
-      const fz = cz - rd / 2;
-      capX(roomXMin, Math.min(roomXMax, lobbyXMin), fz);
-      capX(Math.max(roomXMin, lobbyXMax), roomXMax, fz);
-    }
-
-    // Warm pendant light
-    const apl = new THREE.PointLight(0xfff5e0, 1.6, 8, 1.8);
-    apl.position.set(cx, CEIL - 0.3, cz);
-    group.add(apl);
-  }
-
-  // ---- Per-room floor materials ------------------------------------------------
-  // Bedroom — short-pile carpet (slate-blue, woven grid)
-  const bedroomFloorTex = _makeCaretTex();
-  bedroomFloorTex.repeat.set(4.5, 5.5);   // ~0.6m per canvas repeat → fine carpet weave
-  const bedroomFloorMat = new THREE.MeshStandardMaterial({ map: bedroomFloorTex, roughness: 0.95 });
-
-  // Bathroom — small ceramic square tiles with grey grout
-  const bathroomFloorTex = _makeTileTex();
-  bathroomFloorTex.repeat.set(1.5, 1.5);  // ~26cm tiles across 5m room
-  const bathroomFloorMat = new THREE.MeshStandardMaterial({ map: bathroomFloorTex, roughness: 0.08, metalness: 0.05 });
-
-  // Kitchen — black-and-cream checkerboard vinyl
-  const kitchenFloorTex = _makeCheckerTex();
-  kitchenFloorTex.repeat.set(2.0, 1.5);   // ~31cm checker squares
-  const kitchenFloorMat = new THREE.MeshStandardMaterial({ map: kitchenFloorTex, roughness: 0.55 });
-
-  // Hallway — herringbone parquet (warm amber)
-  const hallwayFloorTex = _makeParquetTex();
-  hallwayFloorTex.repeat.set(2.5, 2.0);   // compact parquet planks
-  const hallwayFloorMat = new THREE.MeshStandardMaterial({ map: hallwayFloorTex, roughness: 0.80 });
-
-  // Room sizes and positions — must match adj room colliders in lobby.js.
-  // Bedroom  (door 0 at z=+5.5, left wall): rw=5.5, rd=7.0
-  //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.75) = -7.9
-  addAdjRoom(-(RW_OUTER + 5.5 / 2),  5.5, 5.5, 7.0, 'maxX', bedroomFloorMat);
-  // Bathroom (door 1 at z=-1.5, left wall): rw=5.0, rd=5.0
-  //   cx = -(RW_OUTER + rw/2) = -(5.15 + 2.5)  = -7.65
-  addAdjRoom(-(RW_OUTER + 5.0 / 2), -1.5, 5.0, 5.0, 'maxX', bathroomFloorMat);
-  // Kitchen  (door 2 at x=0, far wall): rw=5.0, rd=4.0
-  //   cz = -(RH_OUTER + rd/2) = -(8.15 + 2.0)  = -10.15
-  addAdjRoom(0, -(RH_OUTER + 4.0 / 2), 5.0, 4.0, 'maxZ', kitchenFloorMat);
-  // Hallway  (door 3 at x=0, back wall): rw=5.0, rd=4.0
-  //   cz =  (RH_OUTER + rd/2) =  (8.15 + 2.0)  = +10.15
-  addAdjRoom(0,  (RH_OUTER + 4.0 / 2), 5.0, 4.0, 'minZ', hallwayFloorMat);
-
-  // ---- Jam Portal (hallway back wall) ----------------------------------------
-  // Positioned on the inner face of the hallway's far (+Z) wall, centred on X.
-  // The hallway far wall is at z = RH_OUTER + 4.0 - WT/2 = 12.075 (inner face).
-  {
-    const HW_CZ   = RH_OUTER + 4.0 / 2;   // hallway centre z = 10.15
-    const HW_BZ   = HW_CZ + 4.0 / 2;      // hallway far-wall centre z = 12.15
-    const PZ      = HW_BZ - WT / 2 - 0.01; // portal plane: just inside the inner wall face
-    const PW_W    = 1.8;   // portal opening width
-    const PW_H    = 2.8;   // portal opening height
-    const PW_BOT  = 0.0;   // bottom Y (flush with floor)
-    const PW_MID  = PW_BOT + PW_H / 2;    // 1.4
-
-    // Frame — dark gunmetal bars flush against the wall
-    const FT = 0.06;  // bar thickness
-    const FD = 0.08;  // bar depth (protrusion from wall)
-    const frameMat = new THREE.MeshStandardMaterial({ color: 0x080810, roughness: 0.25, metalness: 0.92 });
-    // Horizontal bars
-    const hBar = (y) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(PW_W + FT * 2, FT, FD), frameMat);
-      m.position.set(0, y, PZ); m.castShadow = true; group.add(m);
-    };
-    hBar(PW_BOT + FT / 2);          // bottom
-    hBar(PW_BOT + PW_H - FT / 2);   // top
-    // Vertical bars
-    const vBar = (x) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(FT, PW_H, FD), frameMat);
-      m.position.set(x, PW_MID, PZ); m.castShadow = true; group.add(m);
-    };
-    vBar(-PW_W / 2 - FT / 2);  // left
-    vBar( PW_W / 2 + FT / 2);  // right
-
-    // Portal surface — animated shimmer plane; faces -Z (toward player approaching)
-    const portalSurface = new THREE.Mesh(
-      new THREE.PlaneGeometry(PW_W, PW_H),
-      new THREE.MeshBasicMaterial({ color: 0x00eeff, transparent: true, opacity: 0.82, side: THREE.FrontSide }),
-    );
-    portalSurface.rotation.y = Math.PI;   // face toward -Z (lobby direction)
-    portalSurface.position.set(0, PW_MID, PZ);
-    group.add(portalSurface);
-
-    // Glow light — pulses with portal animation
-    const portalLight = new THREE.PointLight(0x00eeff, 2.2, 7, 2);
-    portalLight.position.set(0, PW_MID, PZ - 0.5);
-    group.add(portalLight);
-
-    group.userData.portalSurface = portalSurface;
-    group.userData.portalLight   = portalLight;
-
-    // Sign above the portal frame
-    {
-      const SW = PW_W + FT * 2;   // sign width  (matches frame outer width)
-      const SH = 0.38;             // sign height in metres
-      const SY = PW_BOT + PW_H + FT + SH / 2 + 0.06;  // just above top bar (~3.10 m)
-
-      // Canvas texture — dark panel, cyan text to match portal
-      const sc = document.createElement('canvas');
-      sc.width = 512; sc.height = 128;
-      const sx = sc.getContext('2d');
-      // Background
-      sx.fillStyle = '#05060e';
-      sx.fillRect(0, 0, 512, 128);
-      // Outer border
-      sx.strokeStyle = '#00ccdd'; sx.lineWidth = 4;
-      sx.strokeRect(3, 3, 506, 122);
-      // Inner border
-      sx.strokeStyle = '#003344'; sx.lineWidth = 2;
-      sx.strokeRect(9, 9, 494, 110);
-      // Text — two passes: glow then solid
-      sx.font = 'bold 54px monospace';
-      sx.textAlign = 'center'; sx.textBaseline = 'middle';
-      sx.fillStyle = 'rgba(0,220,255,0.25)';
-      for (let g = 0; g < 3; g++) sx.fillText('JAM LOBBY', 256, 64);  // soft glow build-up
-      sx.fillStyle = '#00eeff';
-      sx.fillText('JAM LOBBY', 256, 64);
-
-      const signTex = new THREE.CanvasTexture(sc);
-      // Note: rotation.y = Math.PI does NOT flip PlaneGeometry UVs — no repeat trick needed.
-
-      // Backing plate — protrudes INTO the room (toward -Z from wall face at PZ).
-      // Depth = 0.06 m, centre at PZ - 0.03 → back face at PZ (against wall),
-      // front face at PZ - 0.06. No wall clipping, no z-fighting with sign plane.
-      const plateMat = new THREE.MeshStandardMaterial({ color: 0x05060e, roughness: 0.28, metalness: 0.90 });
-      const plate = new THREE.Mesh(new THREE.BoxGeometry(SW + 0.05, SH + 0.05, 0.06), plateMat);
-      plate.position.set(0, SY, PZ - 0.03);
-      group.add(plate);
-      // Sign face plane — 8 mm in front of the plate front face (PZ - 0.06)
-      const signMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(SW, SH),
-        new THREE.MeshBasicMaterial({ map: signTex, side: THREE.FrontSide }),
-      );
-      signMesh.rotation.y = Math.PI;  // face toward -Z (toward approaching player)
-      signMesh.position.set(0, SY, PZ - 0.068);
-      group.add(signMesh);
-    }
-  }
-
-  // ---- Structural RC pilasters ----
-  // Rectangular columns protruding from walls — very visible in the reference photos.
-  const pilMat = new THREE.MeshStandardMaterial({ color: WALL_C, roughness: 0.94 });
-  const PILW = 0.30; // pilaster width along the wall face
-  const PILD = 0.14; // protrusion depth into the room
-  // Left wall (-X): two pilasters between the door positions
-  for (const pz of [-4.5, +2.5]) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(PILD, CEIL, PILW), pilMat);
-    m.position.set(-W / 2 + PILD / 2, CEIL / 2, pz);
-    m.castShadow = true; m.receiveShadow = true;
-    group.add(m);
-  }
-  // Far wall (-Z): pilasters flanking the two doors
-  for (const px of [-3.8, 3.8]) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(PILW, CEIL, PILD), pilMat);
-    m.position.set(px, CEIL / 2, -H / 2 + PILD / 2);
-    m.castShadow = true; m.receiveShadow = true;
-    group.add(m);
-  }
-  // Back wall (+Z): pilasters flanking the door
-  for (const px of [-3.8, 3.8]) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(PILW, CEIL, PILD), pilMat);
-    m.position.set(px, CEIL / 2, H / 2 - PILD / 2);
-    m.castShadow = true; m.receiveShadow = true;
-    group.add(m);
-  }
-  // Right wall (+X): one structural column breaking the window bank
-  {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(PILD, CEIL, PILW), pilMat);
-    m.position.set(W / 2 - PILD / 2, CEIL / 2, -2.5);
-    m.castShadow = true; m.receiveShadow = true;
-    group.add(m);
-  }
-
-  // ---- Baseboard skirting ----
-  // Dark grey strip at the base of every wall — clearly visible in reference photos.
-  const bbMat = new THREE.MeshStandardMaterial({ color: 0x9a9488, roughness: 0.8 });
-  const bbH = 0.09, bbT = 0.03;
-  // Left wall
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(bbT, bbH, H), bbMat);
-    m.position.set(-W / 2 + bbT / 2, bbH / 2, 0); group.add(m); }
-  // Far wall
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(W, bbH, bbT), bbMat);
-    m.position.set(0, bbH / 2, -H / 2 + bbT / 2); group.add(m); }
-  // Back wall
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(W, bbH, bbT), bbMat);
-    m.position.set(0, bbH / 2, H / 2 - bbT / 2); group.add(m); }
-  // Right wall — end caps only (no baseboard across glass)
-  { const d = WIN_START + H / 2;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(bbT, bbH, d), bbMat);
-    m.position.set(W / 2 - bbT / 2, bbH / 2, (-H / 2 + WIN_START) / 2); group.add(m); }
-  { const d = H / 2 - WIN_END;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(bbT, bbH, d), bbMat);
-    m.position.set(W / 2 - bbT / 2, bbH / 2, (WIN_END + H / 2) / 2); group.add(m); }
-
-  // ---- Smoke detector on ceiling ----
-  { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.03, 16),
-      new THREE.MeshStandardMaterial({ color: 0xf0ece0, roughness: 0.6 }));
-    m.position.set(-1.5, CEIL - 0.015, 1.0); group.add(m); }
-
-  // ---- Large window bank on right wall (+X = +5) ----
-  // 7 panes of ~1.7 m each, nearly floor-to-ceiling, aluminium grid frames.
-  const midZ     = (WIN_START + WIN_END) / 2;
-  group.userData._midZ = midZ; // needed by scene3d for thunderstorm lightning positioning
-  const paneCount = 7;
-  const paneSpan  = winSpan / paneCount; // ~1.7 m
-
-  // Frame built on the interior wall face (x = W/2) so it's flush from inside.
-  // Frames are flat rectangles (very thin in X), visible from -X direction.
-  const FX = W / 2; // x position of the window plane
-
-  // Outer border rails
-  const mkFrame = (w, h, d, x, y, z) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), frameMat);
-    m.position.set(x, y, z); group.add(m);
-  };
-  mkFrame(0.06, winH + 0.06, 0.06, FX, WIN_SILL + winH / 2, WIN_START);   // left outer jamb
-  mkFrame(0.06, winH + 0.06, 0.06, FX, WIN_SILL + winH / 2, WIN_END);     // right outer jamb
-  mkFrame(0.06, 0.06, winSpan + 0.06, FX, WIN_TOP,  midZ);                 // top rail
-  mkFrame(0.06, 0.06, winSpan + 0.06, FX, WIN_SILL, midZ);                 // bottom rail
-
-  for (let i = 0; i < paneCount; i++) {
-    const pz = WIN_START + paneSpan * (i + 0.5);
-
-    // Glass pane — slightly inside room so z-ordering is clean
-    const pane = new THREE.Mesh(
-      new THREE.PlaneGeometry(paneSpan - 0.065, winH - 0.065),
-      glassMat,
-    );
-    pane.rotation.y = -Math.PI / 2;
-    pane.position.set(FX - 0.01, WIN_SILL + winH / 2, pz);
-    group.add(pane);
-
-    // Inner vertical dividers (between panes, not at the outer edges)
-    if (i > 0) mkFrame(0.06, winH, 0.06, FX, WIN_SILL + winH / 2, WIN_START + paneSpan * i);
-
-    // Horizontal mid-rail (two rows of glass per pane like the reference)
-    mkFrame(0.06, 0.06, paneSpan - 0.065, FX, WIN_SILL + winH * 0.52, pz);
-  }
-
-  // ---- Exterior: balcony railing + high-rise Tokyo cityscape ----
-  // The apartment is high up — street level is STREET_Y below room floor (y=0).
-  const STREET_Y = -35;
-  const extX     = W / 2 + 0.70; // front railing — pulled slightly in from slab edge
-  const sideLen  = extX - W / 2;  // depth of the side return rails (wall → front railing)
-  const sideCX   = W / 2 + sideLen / 2; // centre X of side rails
-  const skyX     = W / 2 + 20;
-
-  // Balcony slab — matches window span exactly
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.14, winSpan),
-      new THREE.MeshStandardMaterial({ color: 0xb0a890, roughness: 0.9 }));
-    m.position.set(W / 2 + 0.45, -0.07, midZ); group.add(m); }
-
-  // ── Front railing (parallel to wall, window span) ──
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, winSpan), frameMat);
-    m.position.set(extX, 1.08, midZ); group.add(m); }
-  { const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, winSpan), frameMat);
-    m.position.set(extX, 0.12, midZ); group.add(m); }
-  for (let rz = WIN_START; rz <= WIN_END + 0.01; rz += 0.12) {
-    const b = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.96, 0.015), frameMat);
-    b.position.set(extX, 0.6, rz); group.add(b);
-  }
-
-  // ── Side return rails — connect front railing back to the lobby wall at each end ──
-  for (const sz of [WIN_START, WIN_END]) {
-    // Top rail
-    { const m = new THREE.Mesh(new THREE.BoxGeometry(sideLen, 0.05, 0.06), frameMat);
-      m.position.set(sideCX, 1.08, sz); group.add(m); }
-    // Bottom rail
-    { const m = new THREE.Mesh(new THREE.BoxGeometry(sideLen, 0.05, 0.06), frameMat);
-      m.position.set(sideCX, 0.12, sz); group.add(m); }
-    // Balusters along the depth
-    for (let rx = W / 2 + 0.12; rx < extX; rx += 0.12) {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.96, 0.015), frameMat);
-      b.position.set(rx, 0.6, sz); group.add(b);
-    }
-  }
-
-  // Sky sphere — large inverted sphere surrounds the entire scene
+  // Sky sphere
   { const skyTex = _makeSkyTex(skyVariant);
     const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false });
     const sky = new THREE.Mesh(new THREE.SphereGeometry(2000, 48, 24), skyMat);
-    group.userData.skyMat = skyMat; // exposed for lightning flash
+    group.userData.skyMat = skyMat;
     group.add(sky); }
 
-  // Street / ground — covers full building footprint (X: window→far buildings, Z: full spread)
-  { const gt = _makeCityGroundTex();
-    gt.repeat.set(18, 60);
-    const groundW = 160, groundD = 520;
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(groundW, groundD),
-      new THREE.MeshStandardMaterial({ map: gt, roughness: 1.0, fog: false }));
-    m.rotation.x = -Math.PI / 2;
-    m.position.set(W / 2 + groundW / 2, STREET_Y, midZ); group.add(m); }
-
-  // Buildings with window textures — two depth layers for parallax
-  const brng = _mkRng(0x7a3bc1d2);
-  const FLOOR_H = 3.2;
-  const GAP = 4.0; // minimum separation between buildings
-  const placed = []; // {x0,x1,z0,z1}
-  const canPlace = (x0, x1, z0, z1) => {
-    for (const p of placed) {
-      if (x0 < p.x1 + GAP && x1 > p.x0 - GAP && z0 < p.z1 + GAP && z1 > p.z0 - GAP) return false;
-    }
-    return true;
-  };
-
-  for (let b = 0; b < 160; b++) {
-    const layer = b < 55 ? 0 : b < 110 ? 1 : 2;
-    const bw = [6.0, 8.0, 10.0][layer] + brng() * [8.0, 10.0, 12.0][layer];
-    const bh = [14,  18,  22][layer]  + brng() * [50,  60,  70][layer];
-    const bd = [5.0, 7.0, 9.0][layer] + brng() * 8.0;
-    const spread = [160, 200, 240][layer]; // extend far beyond window in both Z directions
-    const xBase  = [W / 2 + 14, W / 2 + 32, W / 2 + 54][layer];
-    const xRange = [18, 22, 32][layer];
-
-    let bx = 0, bz = 0, ok = false;
-    for (let attempt = 0; attempt < 25; attempt++) {
-      const tx = xBase  + brng() * xRange;
-      const tz = midZ - spread + brng() * spread * 2;
-      if (canPlace(tx - bd / 2, tx + bd / 2, tz - bw / 2, tz + bw / 2)) {
-        bx = tx; bz = tz; ok = true; break;
-      }
-    }
-    if (!ok) continue;
-
-    placed.push({ x0: bx - bd / 2, x1: bx + bd / 2, z0: bz - bw / 2, z1: bz + bw / 2 });
-
-    const floors = Math.max(3, (bh / FLOOR_H) | 0);
-    const tex    = _makeBuildingTex(b * 179 + 0x3f1a, floors, bw);
-
-    const sideMat = new THREE.MeshBasicMaterial({ color: 0x060a0e });
-    const roofMat = new THREE.MeshBasicMaterial({ color: 0x0c1018 });
-    const winFace = new THREE.MeshBasicMaterial({ map: tex });
-    const bldg = new THREE.Mesh(
-      new THREE.BoxGeometry(bd, bh, bw),
-      [sideMat, winFace, roofMat, sideMat, winFace, winFace],
-    );
-    bldg.position.set(bx, STREET_Y + bh / 2, bz);
-    group.add(bldg);
-  }
-
-
-  // ---- Lighting (variant-aware) ----
-  // Each sky variant has its own city-glow, key-light, and fill colours.
-  const _L = {
-    night:       { glow: 0xff8820, glowI: 0.45, blue: 0x2255cc, blueI: 0.20, sun: 0xfff0d8, sunI: 0.65, fill: 0xd0e8f8, fillI: 0.40 },
-    midnight:    { glow: 0xff7010, glowI: 0.30, blue: 0x1840aa, blueI: 0.16, sun: 0xd8e8ff, sunI: 0.38, fill: 0x182858, fillI: 0.22 },
-    dawn:        { glow: 0xff5030, glowI: 0.20, blue: 0x9050c0, blueI: 0.14, sun: 0xffa060, sunI: 0.95, fill: 0xffb878, fillI: 0.55 },
-    dusk:        { glow: 0xff4010, glowI: 0.55, blue: 0x5020a0, blueI: 0.22, sun: 0xff6020, sunI: 1.00, fill: 0xff8040, fillI: 0.48 },
-    day:         { glow: 0xffaa50, glowI: 0.06, blue: 0x60a0e0, blueI: 0.14, sun: 0xfff8e0, sunI: 2.20, fill: 0xa0c8f0, fillI: 0.90 },
-    overcast:    { glow: 0xff8840, glowI: 0.18, blue: 0x5880cc, blueI: 0.38, sun: 0xc8d8f0, sunI: 0.35, fill: 0xa8c4e0, fillI: 0.65 },
-    storm:       { glow: 0x402808, glowI: 0.12, blue: 0x0a180a, blueI: 0.10, sun: 0x182010, sunI: 0.18, fill: 0x080c04, fillI: 0.28 },
-    blizzard_sky:{ glow: 0xf08030, glowI: 0.20, blue: 0x4070b0, blueI: 0.32, sun: 0xa8c0d8, sunI: 0.42, fill: 0xb0c8e0, fillI: 0.58 },
-  }[skyVariant] ?? { glow: 0xff8820, glowI: 0.45, blue: 0x2255cc, blueI: 0.20, sun: 0xfff0d8, sunI: 0.65, fill: 0xd0e8f8, fillI: 0.40 };
-
-  const cityGlow = new THREE.PointLight(_L.glow, _L.glowI, 50, 1.6);
-  cityGlow.position.set(W / 2 + 10, STREET_Y + 8, midZ);
-  group.add(cityGlow);
-
-  const cityBlue = new THREE.PointLight(_L.blue, _L.blueI, 40, 2.0);
-  cityBlue.position.set(W / 2 + 8, 4, midZ - 4);
-  group.add(cityBlue);
-
-  const sun = new THREE.DirectionalLight(_L.sun, _L.sunI);
-  sun.position.set(W / 2 + 12, 16, -4);
-  sun.target.position.set(-2, 0, 0);
-  sun.castShadow = false;
-  group.add(sun); group.add(sun.target);
-
-  const skyFill = new THREE.PointLight(_L.fill, _L.fillI, 18, 1.4);
-  skyFill.position.set(W / 2, 1.8, midZ);
-  group.add(skyFill);
-
-  // ---- Weather particles ----
-  const weatherGroup = _makeWeatherParticles(weatherType, W, midZ, winSpan, STREET_Y);
+  // Weather particles — outside the GLB room window (+X wall at X ≈ 4.25,
+  // spanning Z ≈ −6.75 to 7.17). W/2 = 4.25 sets the particle spawn start.
+  const midZ = 0.21;
+  group.userData._midZ = midZ;
+  const weatherGroup = _makeWeatherParticles(weatherType, 8.5, midZ, 13.92, -35);
   if (weatherGroup) {
     group.add(weatherGroup);
     group.userData.weatherGroup = weatherGroup;
