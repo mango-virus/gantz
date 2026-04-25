@@ -18,6 +18,32 @@ let _ctx = null;
 const _buffers = new Map();   // url -> AudioBuffer
 const _pending = new Map();   // url -> Promise<AudioBuffer>
 
+// Volume category gain nodes (created lazily with the audio context)
+let _masterGain = null;
+const _catGains = {};
+const _vol = { master: 1, music: 1, sfx: 1, ambient: 1 };
+
+function _initGains(ctx) {
+  if (_masterGain) return;
+  _masterGain = ctx.createGain();
+  _masterGain.gain.value = _vol.master;
+  _masterGain.connect(ctx.destination);
+  for (const cat of ['music', 'sfx', 'ambient']) {
+    const g = ctx.createGain();
+    g.gain.value = _vol[cat];
+    g.connect(_masterGain);
+    _catGains[cat] = g;
+  }
+}
+
+function _dest(url) {
+  if (!_masterGain) return _ctx.destination;
+  const name = url ? url.split('/').pop() : '';
+  if (name === 'gantz-music.mp3') return _catGains.music;
+  if (name.startsWith('weather-') || name.includes('lightning')) return _catGains.ambient;
+  return _catGains.sfx;
+}
+
 // Listener state, updated every frame by the game loop.
 let _lx = 0, _ly = 0, _lYaw = 0;
 
@@ -33,6 +59,7 @@ function _getCtx() {
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return null;
   _ctx = new AC();
+  _initGains(_ctx);
   // Browsers block audio until a user gesture; resume on the first click/key.
   const resume = () => {
     if (_ctx.state === 'suspended') _ctx.resume().catch(() => {});
@@ -80,6 +107,14 @@ function _updateLoops() {
 export const audio = {
   preload(urls) { for (const u of urls) _load(u); },
 
+  setVolume(category, value) {
+    const v = Math.max(0, Math.min(1, value));
+    _vol[category] = v;
+    if (category === 'master' && _masterGain) _masterGain.gain.value = v;
+    else if (_catGains[category]) _catGains[category].gain.value = v;
+  },
+  getVolume(category) { return _vol[category] ?? 1; },
+
   setListener(x, y, yaw) {
     _lx = x; _ly = y; _lYaw = yaw || 0;
     if (_loops.size > 0) _updateLoops();
@@ -95,7 +130,7 @@ export const audio = {
       src.playbackRate.value = rate;
       const g = ctx.createGain();
       g.gain.value = Math.max(0, Math.min(3, volume));
-      src.connect(g).connect(ctx.destination);
+      src.connect(g).connect(_dest(url));
       src.start(0);
     });
   },
@@ -144,9 +179,9 @@ export const audio = {
       if (typeof ctx.createStereoPanner === 'function') {
         panNode = ctx.createStereoPanner();
         panNode.pan.value = pan;
-        src.connect(g).connect(panNode).connect(ctx.destination);
+        src.connect(g).connect(panNode).connect(_dest(url));
       } else {
-        src.connect(g).connect(ctx.destination);
+        src.connect(g).connect(_dest(url));
       }
       src.start(0);
     });
@@ -184,7 +219,7 @@ export const audio = {
       src.loop = opts.loop !== false;
       const g = ctx.createGain();
       g.gain.value = 0;
-      src.connect(g).connect(ctx.destination);
+      src.connect(g).connect(_dest(url));
       loop.src = src;
       loop.gainNode = g;
       loop.pending = false;

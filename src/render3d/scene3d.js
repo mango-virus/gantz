@@ -131,7 +131,8 @@ export function createScene3d({ canvas }) {
 
   const EYE_HEIGHT = 1.7;
 
-  const camera = new THREE.PerspectiveCamera(72, canvas.clientWidth / canvas.clientHeight, 0.3, 4000);
+  let _fpFov = 72;
+  const camera = new THREE.PerspectiveCamera(_fpFov, canvas.clientWidth / canvas.clientHeight, 0.3, 4000);
   camera.position.set(0, 10, 8);
 
   // First-person weapon view model (parented to the camera). Only visible in FP.
@@ -2517,7 +2518,7 @@ export function createScene3d({ canvas }) {
         const fpLookX = focus.x + fpFwdX * LOOK_DIST;
         const fpLookY = fpEyeY  + fpFwdY * LOOK_DIST;
         const fpLookZ = focus.y + fpFwdZ * LOOK_DIST;
-        const fpFov   = 72;
+        const fpFov   = _fpFov;
 
         // Smoothstep the blend weight so FP↔TP eases in/out of the motion.
         const e = _tpMix * _tpMix * (3 - 2 * _tpMix);
@@ -2610,8 +2611,8 @@ export function createScene3d({ canvas }) {
         if (_panelR) _panelR.position.x =  0.08 * _be; // fire spike only
         if (_panelB) _panelB.position.x =  0.08 * _be; // fire spike only
 
-        // FOV narrows from 72° → 55° during ADS (subtle zoom)
-        const fovTarget = 72 - 17 * _adsE;
+        // FOV narrows 17° during ADS (subtle zoom)
+        const fovTarget = _fpFov - 17 * _adsE;
         camera.fov += (fovTarget - camera.fov) * Math.min(1, dt * 10);
         camera.updateProjectionMatrix();
       }
@@ -2623,7 +2624,7 @@ export function createScene3d({ canvas }) {
         camera.rotation.y = _flyCamYaw;
         camera.rotation.x = _flyCamPitch;
         camera.rotation.z = 0;
-        camera.fov = 72;
+        camera.fov = _fpFov;
         camera.updateProjectionMatrix();
         viewWeapon.visible = false;
       }
@@ -3085,6 +3086,9 @@ export function createScene3d({ canvas }) {
         for (const entry of _cityObjects.values()) { scene.remove(entry.mesh); disposeGroup(entry.mesh); }
         _cityObjects.clear();
       },
+    },
+    setFpFov(fov) {
+      _fpFov = Math.max(50, Math.min(110, fov));
     },
   };
 }

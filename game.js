@@ -37,6 +37,7 @@ import { createNetwork } from './src/net/network.js';
 import { createChatUI } from './src/ui/chat.js';
 import { createGantzMenu } from './src/ui/gantzMenu.js';
 import { createDevMode } from './src/ui/devMode.js';
+import { createEscMenu } from './src/ui/settingsMenu.js';
 import {
   initGantzHud, tickGantzHud, setGantzHudView, setGantzHudActive,
   gantzHudOnFire, gantzHudOnPoints, gantzHudTransmission, gantzHudAmbient,
@@ -4258,6 +4259,8 @@ const MOUSE_SENS = 0.0022;
 const ADS_SENS_SCALE = 0.45;
 const PITCH_LIMIT = Math.PI / 2 - 0.05;
 let pointerLocked = false;
+let _sensMultiplier = 1;
+let _headBobEnabled = true;
 
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === canvas;
@@ -4265,7 +4268,7 @@ document.addEventListener('pointerlockchange', () => {
 canvas.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
   if (scene3d?.flyCam?.active) { scene3d.flyCam.onMouseMove(e.movementX, e.movementY); return; }
-  const sens = MOUSE_SENS * (scene3d?.isAds?.() ? ADS_SENS_SCALE : 1);
+  const sens = MOUSE_SENS * _sensMultiplier * (scene3d?.isAds?.() ? ADS_SENS_SCALE : 1);
   yaw -= e.movementX * sens;
   pitch -= e.movementY * sens;
   if (pitch >  PITCH_LIMIT) pitch =  PITCH_LIMIT;
@@ -4274,14 +4277,21 @@ canvas.addEventListener('mousemove', (e) => {
 function requestLockIfAllowed() {
   if (document.activeElement && document.activeElement.id === 'chat-input') return;
   if (document.pointerLockElement === canvas) return;
+  if (escMenu?.isOpen?.()) return;
   const p = canvas.requestPointerLock?.();
   if (p && typeof p.catch === 'function') p.catch(() => {});
 }
 // Intercept Escape in capture phase: call exitPointerLock() ourselves so the
-// browser treats it as a programmatic release (no re-lock cooldown).
+// browser treats it as a programmatic release (no re-lock cooldown). After
+// releasing the lock, open the pause menu if nothing else is currently open.
 addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.pointerLockElement === canvas) {
-    document.exitPointerLock();
+  if (e.key === 'Escape') {
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+    // Open pause menu only when nothing else is consuming ESC.
+    // stopImmediatePropagation prevents the settingsMenu's own ESC listener
+    // (also capture-phase, registered later) from immediately closing it.
+    const anyOpen = chat?.isOpen?.() || menu?.isOpen?.() || escMenu?.isOpen?.();
+    if (!anyOpen) { e.stopImmediatePropagation(); escMenu.open(); setInputSuspended(true); }
   }
   // DEV: F8 replays the Gantz transfer scan on the local player (Stage 1).
   //      Shift+F8 plays the dematerialize (top-down) variant.
@@ -4610,6 +4620,9 @@ const menu = createGantzMenu({
   getState: getMenuState,
   getPhase: () => session.phase,
 });
+
+// ---- ESC pause menu ----
+const escMenu = createEscMenu();
 
 // ---- Network ----
 const net = createNetwork({
@@ -6351,7 +6364,7 @@ function update(dt) {
     const _prevBob = bobPhase;
     player.walkPhase += dt * (sprinting ? 14 : walking ? 6 : 9);
     bobPhase += dt * (sprinting ? 16 : walking ? 7 : 10);
-    bob = Math.abs(Math.sin(bobPhase)) * (sprinting ? 0.055 : walking ? 0.02 : 0.035);
+    bob = _headBobEnabled ? Math.abs(Math.sin(bobPhase)) * (sprinting ? 0.055 : walking ? 0.02 : 0.035) : 0;
     // Footstep trigger: bob = |sin(bobPhase)| returns to 0 every π radians,
     // which is when a foot plants. Fire a step SFX each time the floor(φ/π)
     // bucket increments — one per foot. _playFootstep picks a sample from the
@@ -6985,6 +6998,13 @@ function updateMissionTargetsHUD() {
 
 refreshPhaseOverlay();
 initGantzHud({ drawAlienPortrait });
+escMenu.applyAll({
+  audio,
+  setSensitivity: v => { _sensMultiplier = v; },
+  setFov:         v => { scene3d.setFpFov?.(v); },
+  setHeadBob:     v => { _headBobEnabled = v; },
+  onClose:        () => { setInputSuspended(false); },
+});
 // Default to third-person on first-time entry only. After this, the player
 // owns the camera — we don't reset it on phase transitions between lobby and
 // mission; scroll wheel switches modes.
