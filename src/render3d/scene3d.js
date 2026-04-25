@@ -878,8 +878,9 @@ export function createScene3d({ canvas }) {
   const _charVariants = [];
   let _charClips = null;  // { clipName → AnimationClip } — shared by all variants
 
-  // Strip 'mixamorig:' / 'mixamorig' Mixamo namespace from a bone or track name.
-  function _normBone(n) { return n.replace(/^mixamorig[: ]?/, ''); }
+  // Strip Mixamo namespace prefix from a bone or track name.
+  // Handles: 'mixamorig:Hips' (FBX colon), 'mixamorigHips' (anim FBX), 'mixamorig9Hips' (Blender GLB digit separator).
+  function _normBone(n) { return n.replace(/^mixamorig[^A-Za-z]*/, ''); }
 
   // Instance pool: pre-cloned character instances that are ready to use instantly.
   // skeletonClone() is expensive (~10-30ms per call). Pre-building the pool one
@@ -1153,10 +1154,12 @@ export function createScene3d({ canvas }) {
   function _loadCharVariant(url) {
     if (url.endsWith('.glb') || url.endsWith('.gltf')) {
       new GLTFLoader().load(url, gltf => {
+        gltf.scene.userData.scaleFactor = 1.0; // GLB from Blender is in meters
         _charVariants.push(gltf.scene);
       }, undefined, () => console.warn('[char] GLB variant load failed:', url));
     } else {
       new FBXLoader().load(url, obj => {
+        obj.userData.scaleFactor = 0.01; // Mixamo FBX is in cm
         _charVariants.push(obj);
       }, undefined, () => console.warn('[char] FBX variant load failed:', url));
     }
@@ -1167,6 +1170,7 @@ export function createScene3d({ canvas }) {
     // Load male2 in parallel — shares male1 animation clips.
     _loadCharVariant('assets/models/character/male2/male2.glb');
     new GLTFLoader().load(_CHAR_BASE, gltf => { const base = gltf.scene;
+      base.userData.scaleFactor = 1.0; // GLB from Blender is in meters
       const clips = {};
 
       const names = Object.keys(_CHAR_ANIMS);
@@ -1204,6 +1208,47 @@ export function createScene3d({ canvas }) {
             for (const track of clip.tracks) {
               const dot = track.name.indexOf('.');
               if (dot > 0) track.name = _normBone(track.name.slice(0, dot)) + track.name.slice(dot);
+            }
+          }
+          // Compensate for Blender's coordinate correction baked into the GLB Armature.
+          // The Mixamo FBX animations were authored with the skeleton root at identity,
+          // but Blender's GLB exporter wraps the skeleton in an "Armature" Object3D
+          // rotated +π/2 around X to convert Z-up → Y-up. The animation sets Hips.quaternion
+          // absolutely, so without compensation Hips world rot = Armature(+π/2) × track =
+          // +π/2 × track → character lies face-down. Pre-multiplying each Hips track
+          // keyframe by Armature⁻¹ cancels the parent rotation at runtime.
+          let _armatureNode = null;
+          base.traverse(o => {
+            if (!_armatureNode && !o.isBone && o.children.some(c => c.isBone)) _armatureNode = o;
+          });
+          if (_armatureNode && (_armatureNode.quaternion.x !== 0 || _armatureNode.quaternion.y !== 0 ||
+              _armatureNode.quaternion.z !== 0 || Math.abs(_armatureNode.quaternion.w - 1) > 1e-6)) {
+            const armatureInv = _armatureNode.quaternion.clone().invert();
+            const tmpQ = new THREE.Quaternion();
+            const tmpV = new THREE.Vector3();
+            for (const clip of Object.values(clips)) {
+              for (const track of clip.tracks) {
+                if (track.name === 'Hips.quaternion') {
+                  const v = track.values;
+                  for (let i = 0; i < v.length; i += 4) {
+                    tmpQ.set(v[i], v[i+1], v[i+2], v[i+3]);
+                    tmpQ.premultiply(armatureInv);
+                    v[i] = tmpQ.x; v[i+1] = tmpQ.y; v[i+2] = tmpQ.z; v[i+3] = tmpQ.w;
+                  }
+                } else if (track.name === 'Hips.position') {
+                  // Same compensation for position keyframes: the Mixamo clip
+                  // authors hip translation in its own Y-up frame, but the GLB
+                  // Armature rotates +π/2 X, which would map "Y up" → "Z forward".
+                  // Pre-multiplying by armatureInv cancels the Armature rotation
+                  // so the death animation's downward fall stays vertical.
+                  const v = track.values;
+                  for (let i = 0; i < v.length; i += 3) {
+                    tmpV.set(v[i], v[i+1], v[i+2]);
+                    tmpV.applyQuaternion(armatureInv);
+                    v[i] = tmpV.x; v[i+1] = tmpV.y; v[i+2] = tmpV.z;
+                  }
+                }
+              }
             }
           }
           _charClips = clips;
@@ -1255,7 +1300,7 @@ export function createScene3d({ canvas }) {
   function _createCharInstance() {
     const template = _charVariants[Math.floor(Math.random() * _charVariants.length)];
     const clone = skeletonClone(template);
-    clone.scale.setScalar(0.01); // Mixamo FBX is in cm
+    clone.scale.setScalar(template.userData.scaleFactor ?? 0.01);
     // Normalize bone names to match the normalized clip track names.
     clone.traverse(o => { if (o.isBone) o.name = _normBone(o.name); });
     clone.traverse(o => {
@@ -1268,12 +1313,24 @@ export function createScene3d({ canvas }) {
         // Kill any emissive baked into the FBX — prevents the character self-glowing.
         if (mat.emissive) mat.emissive.set(0, 0, 0);
         mat.emissiveIntensity = 0;
+        // GLB MeshPhysicalMaterial adds a glossy specular layer (KHR_materials_specular,
+        // default specularIntensity=1) on top of the PBR result, so the character looks
+        // like wet vinyl even at roughness=1. Zero it out for a Lambertian/cloth feel.
+        if (mat.specularIntensity !== undefined) mat.specularIntensity = 0;
         if (mat.alphaMap) {
           // Hair: alpha-cutout mode with minimal threshold so near-fully-transparent
           // edge pixels are the only ones discarded.  transparent=false keeps depth
           // writing on so the solid hair strands correctly occlude geometry behind them
           // and render densely like the source FBX in Blender.
           mat.alphaTest   = 0.01;
+          mat.transparent = false;
+          mat.depthWrite  = true;
+          o.renderOrder   = 0;
+        } else if (mat.transparent && mat.map && mat.map.format === THREE.RGBAFormat) {
+          // GLB hair/eyelash materials encode transparency in the diffuse map's alpha
+          // channel (glTF alphaMode=BLEND). Switch to alpha-cutout so they render
+          // without the depth-sort artefacts that BLEND produces on overlapping strands.
+          mat.alphaTest   = 0.5;
           mat.transparent = false;
           mat.depthWrite  = true;
           o.renderOrder   = 0;
@@ -1294,7 +1351,7 @@ export function createScene3d({ canvas }) {
     }
     const startClip = 'lobby_idle';
     actions[startClip]?.play();
-    return { group: clone, mixer, actions, currentAnim: startClip };
+    return { group: clone, mixer, actions, currentAnim: startClip, scaleFactor: template.userData.scaleFactor ?? 0.01 };
   }
 
   function _pickGroundAnim(phase, h) {
@@ -1793,7 +1850,7 @@ export function createScene3d({ canvas }) {
   function getOrCreateHuman(id, spec, opts) {
     let entry = humans.get(id);
     const suit = !!opts?.suit;
-    const charReady = !!(_charTemplate && _charClips);
+    const charReady = !!(_charVariants.length > 0 && _charClips);
 
     // Don't create any mesh until the FBX character + clips are ready. The old
     // procedural fallback used to render here during the few hundred ms of FBX
@@ -1831,7 +1888,7 @@ export function createScene3d({ canvas }) {
       // soon as it fires, so extending the ceiling costs nothing in the happy
       // path — it just prevents a premature reveal if the scan is delayed.
       const graceMs = id === '__player__' ? 7000 : 150;
-      entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, labelText: null, labelColor: null, bubbleText: null, handGun: null, __firstShowAt: isFreshEntry ? (performance.now() + graceMs) : 0 };
+      entry = { group: inst.group, mixer: inst.mixer, actions: inst.actions, currentAnim: inst.currentAnim, lastJumpId: 0, lastCrouchId: 0, lastFireId: 0, specSeed: spec.seed, suit, isFbx: true, scaleFactor: inst.scaleFactor, labelText: null, labelColor: null, bubbleText: null, handGun: null, __firstShowAt: isFreshEntry ? (performance.now() + graceMs) : 0 };
       humans.set(id, entry);
     }
     return entry;
@@ -1844,7 +1901,9 @@ export function createScene3d({ canvas }) {
   // shrink the pill to ~1cm tall at ground level and make it invisible.
   function _compensateForParentScale(sprite, entry) {
     if (!entry.isFbx) return;
-    const k = 100; // inverse of 0.01
+    const sf = entry.scaleFactor ?? 0.01;
+    if (Math.abs(sf - 1) < 1e-6) return;
+    const k = 1 / sf;
     sprite.position.multiplyScalar(k);
     sprite.scale.multiplyScalar(k);
   }
@@ -2676,15 +2735,23 @@ export function createScene3d({ canvas }) {
     const _prevAutoClear = renderer.autoClear;
     const _prevBackground = scene.background;
     const _prevFog = scene.fog;
+    const _prevNear = camera.near;
     renderer.autoClear = false;
     scene.background = null;
     scene.fog = null; // fog would darken the gun as if it were at scene depth
+    // Pull the near plane in so ADS doesn't clip the front of the barrel —
+    // in ADS the viewmodel sits ~0.45m from camera and parts of the gun
+    // extend forward of the scene-wide 0.3m near plane.
+    camera.near = 0.02;
+    camera.updateProjectionMatrix();
     renderer.clearDepth();
     camera.layers.set(VIEWMODEL_LAYER);
     renderer.render(scene, camera);
     scene.background = _prevBackground;
     scene.fog = _prevFog;
     renderer.autoClear = _prevAutoClear;
+    camera.near = _prevNear;
+    camera.updateProjectionMatrix();
     camera.layers.set(0); // restore for any post-render layer-sensitive logic
   }
 
@@ -2856,7 +2923,7 @@ export function createScene3d({ canvas }) {
     // scan doesn't run on the procedural fallback and lose its material patch
     // when the pool swaps in later.
     isCharReady() {
-      return !!(_charTemplate && _charClips && _charPool.length > 0);
+      return !!(_charVariants.length > 0 && _charClips && _charPool.length > 0);
     },
     worldToScreen,
     raycastBallDisplay,

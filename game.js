@@ -432,7 +432,11 @@ function _startTypeSound() {
     src.buffer = _typeAudioBuf;
     src.loop = true;
     const gain = _typeAudioCtx.createGain();
-    gain.gain.value = 0.55;
+    // Track the user's master*sfx volume so this typing sound respects the
+    // settings menu sliders. Base level 1.6 — the raw blip sample is quiet,
+    // so we boost above unity to match the perceived loudness of other SFX.
+    const userVol = (audio.getVolume?.('master') ?? 1) * (audio.getVolume?.('sfx') ?? 1);
+    gain.gain.value = 1.6 * userVol;
     src.connect(gain);
     gain.connect(_typeAudioCtx.destination);
     src.start(_typeAudioCtx.currentTime);
