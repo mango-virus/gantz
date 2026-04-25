@@ -878,6 +878,49 @@ export function createScene3d({ canvas }) {
   const _charVariants = [];
   let _charClips = null;  // { clipName → AnimationClip } — shared by all variants
 
+  // Some variant GLBs were exported from Blender flat (no Armature Object3D
+  // between the scene root and the bones), while male1 has the standard
+  // Armature wrapper with q=+π/2 X and scale=0.01 baked in. The shared
+  // _charClips compensation pre-multiplies Hips tracks by male1's armatureInv,
+  // which makes flat variants lie face-down at runtime. _wrapVariantInArmature
+  // detects the missing wrapper and inserts an equivalent Armature node,
+  // adjusting child local transforms so world transforms stay unchanged
+  // (preserving skinning bind matrices).
+  function _wrapVariantInArmature(scene) {
+    let hasWrapper = false;
+    scene.traverse(o => {
+      if (hasWrapper || o === scene || o.isBone) return;
+      if (o.children.some(c => c.isBone)) hasWrapper = true;
+    });
+    if (hasWrapper) return;
+    const arm = new THREE.Object3D();
+    arm.name = 'Armature';
+    arm.quaternion.set(Math.SQRT1_2, 0, 0, Math.SQRT1_2); // +π/2 X
+    arm.scale.setScalar(0.01);
+    const armQInv = arm.quaternion.clone().invert();
+    const invScale = 1 / arm.scale.x;
+    const movable = scene.children.filter(c => c.isBone || c.isMesh);
+    for (const child of movable) {
+      child.position.multiplyScalar(invScale);
+      child.position.applyQuaternion(armQInv);
+      child.quaternion.premultiply(armQInv);
+      child.scale.multiplyScalar(invScale);
+      arm.add(child);
+      // Adjust SkinnedMesh.bindMatrix so skinning (which uses bindMatrixInverse
+      // captured at original world transform) keeps matching the new world
+      // transform. Since we preserved world transforms, bindMatrix stays valid
+      // numerically; recomputing keeps three.js internals consistent.
+      if (child.isSkinnedMesh) {
+        child.updateMatrixWorld(true);
+        child.bind(child.skeleton, child.matrixWorld);
+      }
+    }
+    scene.add(arm);
+    // scaleFactor stays at the loader-assigned 1.0: the Armature's 0.01 scale
+    // handles cm→m, mirroring male1 where gltf.scene is scale 1 and Armature
+    // is 0.01.
+  }
+
   // Strip Mixamo namespace prefix from a bone or track name.
   // Handles: 'mixamorig:Hips' (FBX colon), 'mixamorigHips' (anim FBX), 'mixamorig9Hips' (Blender GLB digit separator).
   function _normBone(n) { return n.replace(/^mixamorig[^A-Za-z]*/, ''); }
@@ -1155,6 +1198,7 @@ export function createScene3d({ canvas }) {
     if (url.endsWith('.glb') || url.endsWith('.gltf')) {
       new GLTFLoader().load(url, gltf => {
         gltf.scene.userData.scaleFactor = 1.0; // GLB from Blender is in meters
+        _wrapVariantInArmature(gltf.scene); // normalize to male1's Armature structure
         _charVariants.push(gltf.scene);
       }, undefined, () => console.warn('[char] GLB variant load failed:', url));
     } else {
@@ -1167,8 +1211,14 @@ export function createScene3d({ canvas }) {
 
   (function loadCharacter() {
     const loader = new FBXLoader();
-    // Load male2 in parallel — shares male1 animation clips.
-    _loadCharVariant('assets/models/character/male2/male2.glb');
+    // Load all sibling variants in parallel — they share male1's animation clips.
+    for (const v of [
+      'male2',  'male3',  'male4',  'male5',  'male6',
+      'male7',  'male8',  'male9',  'male10', 'male11',
+      'female1','female2','female3','female4','female5',
+    ]) {
+      _loadCharVariant(`assets/models/character/${v}/${v}.glb`);
+    }
     new GLTFLoader().load(_CHAR_BASE, gltf => { const base = gltf.scene;
       base.userData.scaleFactor = 1.0; // GLB from Blender is in meters
       const clips = {};
