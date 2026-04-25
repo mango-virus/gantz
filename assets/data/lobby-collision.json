@@ -1,0 +1,14 @@
+{
+  "bounds": {
+    "minX": -4.41,
+    "maxX": 4.25,
+    "minY": -6.87,
+    "maxY": 7.29
+  },
+  "customZones": [
+    { "kind": "aabb", "x": -4.09, "y": -1.6, "w": 0.9, "h": 1.5, "r": 1, "tier": "hard", "hidden": true },
+    { "kind": "aabb", "x":  3.9,  "y": -1.6, "w": 0.9, "h": 1.5, "r": 1, "tier": "hard", "hidden": true },
+    { "kind": "aabb", "x":  4.8,  "y":  7.9, "w": 2,   "h": 2,   "r": 1, "tier": "hard", "hidden": true },
+    { "kind": "aabb", "x": -4.94, "y":  7.9, "w": 2,   "h": 2,   "r": 1, "tier": "hard", "hidden": true }
+  ]
+}

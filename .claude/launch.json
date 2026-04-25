@@ -4,7 +4,7 @@
     {
       "name": "gantz",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8766", "--directory", "D:/Documents/Game Jam Code/gantz"],
+      "runtimeArgs": ["D:/Documents/Game Jam Code/gantz/dev-server.py", "8766"],
       "port": 8766
     }
   ]

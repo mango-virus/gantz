@@ -1,0 +1,24 @@
+[
+  {
+    "url": "assets/models/low-poly_city_night.glb",
+    "childName": null,
+    "x": 33.9,
+    "y": -20,
+    "z": 5.3,
+    "rx": 0,
+    "ry": -90,
+    "rz": 0,
+    "scale": 25.2
+  },
+  {
+    "url": "assets/models/low-poly_city_night.glb",
+    "childName": null,
+    "x": 28.3,
+    "y": -20,
+    "z": 95.3,
+    "rx": 0,
+    "ry": -1800,
+    "rz": 0,
+    "scale": 22.4
+  }
+]

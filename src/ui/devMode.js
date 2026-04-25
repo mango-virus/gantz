@@ -46,6 +46,14 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
   const customZones = [];
   let zoneCounter = 0;
 
+  function _writeBack(key, data) {
+    fetch('/dev/write-back', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, data }),
+    }).catch(() => {}); // silently ignored on live site (no write-back server)
+  }
+
   // ─── Wall mutation helpers ─────────────────────────────────────────────────
   function readBounds() {
     return {
@@ -79,6 +87,7 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
       })),
     };
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+    _writeBack('collision', data);
   }
 
   const DEFAULT_COLLISION = {
@@ -1067,13 +1076,25 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
     function savePlacements() {
       const cb = window.__gantz?.scene3d?.cityBuilder;
       if (!cb) return;
-      try { localStorage.setItem(CB_KEY, JSON.stringify(cb.getAll())); } catch (_) {}
+      const all = cb.getAll();
+      try { localStorage.setItem(CB_KEY, JSON.stringify(all)); } catch (_) {}
+      _writeBack('city-builder', all);
     }
 
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
         const raw = localStorage.getItem(CB_KEY);
-        const list = raw ? JSON.parse(raw) : DEFAULT_CITY_PLACEMENTS;
+        let list;
+        if (raw) {
+          list = JSON.parse(raw);
+        } else {
+          try {
+            const res = await fetch('assets/data/city-builder.json');
+            list = await res.json();
+          } catch {
+            list = DEFAULT_CITY_PLACEMENTS;
+          }
+        }
         if (!Array.isArray(list)) return;
         const cb = window.__gantz?.scene3d?.cityBuilder;
         if (!cb) return;
