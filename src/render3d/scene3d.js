@@ -1165,7 +1165,7 @@ export function createScene3d({ canvas }) {
   (function loadCharacter() {
     const loader = new FBXLoader();
     // Load male2 in parallel — shares male1 animation clips.
-    _loadCharVariant('assets/models/character/male2/male2.fbx');
+    _loadCharVariant('assets/models/character/male2/male2.glb');
     loader.load(_CHAR_BASE, base => {
       const clips = {};
 
