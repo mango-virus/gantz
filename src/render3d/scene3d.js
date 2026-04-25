@@ -1093,7 +1093,7 @@ export function createScene3d({ canvas }) {
     });
   }
 
-  const _CHAR_BASE = 'assets/models/character/male1/male1.fbx';
+  const _CHAR_BASE = 'assets/models/character/male1/male1.glb';
   const _CHAR_ANIMS = {
     lobby_idle:       'assets/models/character/male1/Lobby/male1_idle.fbx',
     lobby_walk:       'assets/models/character/male1/Lobby/male1_walking.fbx',
@@ -1166,7 +1166,7 @@ export function createScene3d({ canvas }) {
     const loader = new FBXLoader();
     // Load male2 in parallel — shares male1 animation clips.
     _loadCharVariant('assets/models/character/male2/male2.glb');
-    loader.load(_CHAR_BASE, base => {
+    new GLTFLoader().load(_CHAR_BASE, gltf => { const base = gltf.scene;
       const clips = {};
 
       const names = Object.keys(_CHAR_ANIMS);
