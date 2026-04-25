@@ -81,13 +81,21 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
   }
 
+  const DEFAULT_COLLISION = {
+    bounds: { minX: -4.41, maxX: 4.25, minY: -6.87, maxY: 7.29 },
+    customZones: [
+      { kind: 'aabb', x: -4.09, y: -1.6, w: 0.9, h: 1.5, r: 1, tier: 'hard', hidden: true },
+      { kind: 'aabb', x:  3.9,  y: -1.6, w: 0.9, h: 1.5, r: 1, tier: 'hard', hidden: true },
+      { kind: 'aabb', x:  4.8,  y:  7.9, w: 2,   h: 2,   r: 1, tier: 'hard', hidden: true },
+      { kind: 'aabb', x: -4.94, y:  7.9, w: 2,   h: 2,   r: 1, tier: 'hard', hidden: true },
+    ],
+  };
+
   // Apply saved bounds immediately (before the panel is ever opened).
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const data = JSON.parse(raw);
-      if (data.bounds) applyBounds(data.bounds);
-    }
+    const data = raw ? JSON.parse(raw) : DEFAULT_COLLISION;
+    if (data.bounds) applyBounds(data.bounds);
   } catch (_) {}
 
   // ─── Panel shell ──────────────────────────────────────────────────────────
@@ -553,21 +561,19 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
     // ── Restore saved custom zones ─────────────────────────────────────────
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const data = JSON.parse(raw);
-        if (Array.isArray(data.customZones)) {
-          for (const saved of data.customZones) {
-            zoneCounter++;
-            const z = { kind: saved.kind || 'aabb', x: saved.x, y: saved.y,
-                        w: saved.w ?? 2, h: saved.h ?? 2, r: saved.r ?? 1,
-                        tier: saved.tier || 'hard', _devId: zoneCounter,
-                        ...(saved.hidden ? { hidden: true } : {}),
-                        ...(saved.wallColor ? { wallColor: saved.wallColor, wallOpacity: saved.wallOpacity ?? 0.28 } : {}),
-                        ...(saved.yMin !== undefined ? { yMin: saved.yMin, yMax: saved.yMax } : {}) };
-            customZones.push(z);
-            lobbyColliders.push(z);
-            appendZoneRow(z);
-          }
+      const data = raw ? JSON.parse(raw) : DEFAULT_COLLISION;
+      if (Array.isArray(data.customZones)) {
+        for (const saved of data.customZones) {
+          zoneCounter++;
+          const z = { kind: saved.kind || 'aabb', x: saved.x, y: saved.y,
+                      w: saved.w ?? 2, h: saved.h ?? 2, r: saved.r ?? 1,
+                      tier: saved.tier || 'hard', _devId: zoneCounter,
+                      ...(saved.hidden ? { hidden: true } : {}),
+                      ...(saved.wallColor ? { wallColor: saved.wallColor, wallOpacity: saved.wallOpacity ?? 0.28 } : {}),
+                      ...(saved.yMin !== undefined ? { yMin: saved.yMin, yMax: saved.yMax } : {}) };
+          customZones.push(z);
+          lobbyColliders.push(z);
+          appendZoneRow(z);
         }
       }
     } catch (_) {}
@@ -792,6 +798,10 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
   // ─── Section: City Builder ────────────────────────────────────────────────
   addSection('city-builder', 'CITY BUILDER', (body) => {
     const CB_KEY = 'gantz:cityBuilder';
+    const DEFAULT_CITY_PLACEMENTS = [
+      { url: 'assets/models/low-poly_city_night.glb', childName: null, x: 33.9, y: -20, z: 5.3,  rx: 0, ry: -90,   rz: 0, scale: 25.2 },
+      { url: 'assets/models/low-poly_city_night.glb', childName: null, x: 28.3, y: -20, z: 95.3, rx: 0, ry: -1800, rz: 0, scale: 22.4 },
+    ];
     let selectedId = null;
     let modelsScanned = false;
     let callbacksSet = false;
@@ -1063,8 +1073,7 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
     setTimeout(() => {
       try {
         const raw = localStorage.getItem(CB_KEY);
-        if (!raw) return;
-        const list = JSON.parse(raw);
+        const list = raw ? JSON.parse(raw) : DEFAULT_CITY_PLACEMENTS;
         if (!Array.isArray(list)) return;
         const cb = window.__gantz?.scene3d?.cityBuilder;
         if (!cb) return;
