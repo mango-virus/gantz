@@ -433,6 +433,17 @@ body:has(#gz-hud[data-active="1"]) #hud {
   padding-right: 0.55em; /* compensate letter-spacing */
 }
 
+.menu-hunt {
+  text-align: center;
+  font-size: 0.78rem;
+  letter-spacing: 0.42em;
+  color: var(--g-bright);
+  margin-top: -0.2rem;
+  margin-bottom: 0.3rem;
+  padding-right: 0.42em;
+  text-shadow: 0 0 6px var(--g-glow);
+}
+
 .menu-subtitle {
   text-align: center;
   font-size: 0.70rem;
