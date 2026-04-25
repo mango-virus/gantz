@@ -186,6 +186,21 @@ don't stack or lock up.
   3. `mat.transparent && opacity >= 0.99` materials (FBX loader marks some fully-opaque
      mats transparent by mistake): force `transparent = false, depthWrite = true`.
 
+- **Character variant GLB structure**: male1/male2 export with the standard
+  Blender Armature wrapper (`gltf.scene → Armature(q=+π/2 X, scale=0.01) → bones`),
+  while male3-11 + female1-5 came in flat (`gltf.scene → bones` directly, scale 1,
+  bones in meters). The shared `_charClips` are pre-multiplied by male1's
+  `armatureInv`, so flat variants render face-down without compensation.
+  `_wrapVariantInArmature` (scene3d.js) inserts the missing wrapper at load time
+  and rewrites child local transforms by inverse so world transforms — and
+  therefore SkinnedMesh `bindMatrixInverse` — stay valid. Add new variants by
+  pushing to the variant list in `loadCharacter`; the wrapper handles structural
+  differences automatically.
+
+- **Character GLB compression**: `npx @gltf-transform/cli optimize <in> <out>
+  --texture-compress webp --compress false`. The `--compress false` is required
+  (meshopt-compressed GLBs trip Three.js skinning). Typical ratio ~4× smaller.
+
 ### Briefing UI — canvas renderer, NOT the HTML overlay
 The briefing screen is drawn entirely on a 2D canvas by the **Gantz ball renderer**
 in `game.js` (search `// ── BRIEFING phase ──`, ~line 1715). It uses a pixel font
