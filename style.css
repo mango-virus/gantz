@@ -1573,7 +1573,7 @@ body:has(#gz-hud[data-active="1"]) #hud {
 }
 .esc-disc-btn { border-color: #5a0b15; color: #c8142b; }
 .esc-disc-btn:hover { background: #c8142b; color: #fff; border-color: #c8142b; }
-.esc-disc-btn.confirming { border-color: #c8142b; color: #ff4060; animation: gzArcSpin 0.5s linear infinite; }
+.esc-disc-btn.confirming { border-color: #c8142b; color: #ff4060; }
 
 .esc-section {
   margin-bottom: 0.75rem;
