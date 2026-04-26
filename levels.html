@@ -27,7 +27,7 @@
 <header>
   <div class="title">LEVEL PREVIEW</div>
   <div class="sub">DEV TOOLS · author + iterate hand-built levels</div>
-  <a class="back" href="/">← back to game</a>
+  <a class="back" href="./">← back to game</a>
 </header>
 <main id="grid"></main>
 <script type="module">
@@ -40,7 +40,7 @@ if (!LEVELS.length) {
   for (const lvl of LEVELS) {
     const a = document.createElement('a');
     a.className = 'card';
-    a.href = `/level.html?id=${encodeURIComponent(lvl.id)}`;
+    a.href = `level.html?id=${encodeURIComponent(lvl.id)}`;
     a.innerHTML = `
       <h2>${lvl.title}</h2>
       <div class="id">id: ${lvl.id}</div>

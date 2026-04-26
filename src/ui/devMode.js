@@ -208,7 +208,7 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
         btn.title = lvl.description ?? '';
         btn.style.cssText = CSS.btn + ';width:100%;text-align:left;margin-bottom:4px';
         btn.addEventListener('click', () => {
-          window.open(`/level.html?id=${encodeURIComponent(lvl.id)}`, '_blank', 'noopener');
+          window.open(`level.html?id=${encodeURIComponent(lvl.id)}`, '_blank', 'noopener');
         });
         body.appendChild(btn);
       }
@@ -220,11 +220,11 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
     const allBtn = document.createElement('button');
     allBtn.textContent = '☰ All Levels';
     allBtn.style.cssText = CSS.btn;
-    allBtn.addEventListener('click', () => window.open('/levels.html', '_blank', 'noopener'));
+    allBtn.addEventListener('click', () => window.open('levels.html', '_blank', 'noopener'));
     const threeBtn = document.createElement('button');
     threeBtn.textContent = '◈ 3D Scratch';
     threeBtn.style.cssText = CSS.btn;
-    threeBtn.addEventListener('click', () => window.open('/3d.html', '_blank', 'noopener'));
+    threeBtn.addEventListener('click', () => window.open('3d.html', '_blank', 'noopener'));
     linksRow.appendChild(allBtn);
     linksRow.appendChild(threeBtn);
     body.appendChild(linksRow);

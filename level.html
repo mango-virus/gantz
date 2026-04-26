@@ -99,7 +99,7 @@
   </div>
 </div>
 <div id="toolbar">
-  <a href="/levels.html">← Levels</a>
+  <a href="levels.html">← Levels</a>
   <button id="btn-new">＋ New (N)</button>
   <button id="btn-delete" class="danger" disabled>− Delete (X)</button>
   <button id="btn-save" class="save">💾 Save (Ctrl+S)</button>
@@ -132,7 +132,7 @@ const entry = levelId ? getLevel(levelId) : null;
 if (!entry) {
   document.body.innerHTML = `<div id="err">
     Unknown level id: <b>${levelId ?? '(none)'}</b><br><br>
-    <a href="/levels.html">← back to level picker</a>
+    <a href="levels.html">← back to level picker</a>
   </div>`;
   throw new Error('Level not found: ' + levelId);
 }
