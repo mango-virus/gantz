@@ -7123,10 +7123,22 @@ export function buildKabukichoLevel(THREE, opts = {}) {
 
   // Animator: an update(dt, time) function that handles flicker, sway, vehicles.
   let flickerSeed = 1;
+  // Cosmetic effects (sign flicker, lantern sway, hanging-sign sway, steam,
+  // antenna blink) drive a sin/cos with no gameplay state — running them at
+  // 30 Hz instead of 60 Hz is visually indistinguishable but halves the
+  // emissive-uniform / scale writes per frame. Vehicles, traffic lights,
+  // and hazards keep running every frame because they affect collision /
+  // damage timing.
+  const HALF_RATE_KINDS = new Set([
+    'signFlicker', 'lanternSway', 'hangingSway', 'steamPulse',
+    'steamGrate', 'antennaBlink', 'birdFlock', 'clubSpotlight',
+  ]);
+  let _frameParity = 0;
   // opts.obstacles: optional [{ x, z, r? }] — characters (player, civilians,
   // aliens) for vehicles to brake for. r defaults to 0.5u.
   const update = (dt, time, opts = {}) => {
     const obstacles = opts.obstacles || null;
+    _frameParity ^= 1;
     flickerSeed = (flickerSeed * 1664525 + 1013904223) | 0;
     for (const fl of flickerLights) {
       const r = ((flickerSeed >>> 0) / 4294967296);
@@ -7139,8 +7151,11 @@ export function buildKabukichoLevel(THREE, opts = {}) {
       }
       flickerSeed = (flickerSeed * 1664525 + 1013904223) | 0;
     }
-    // Animated entries (signs, lanterns, hanging signs, vehicles, steam)
-    for (const a of animated) {
+    // Animated entries (signs, lanterns, hanging signs, vehicles, steam).
+    // Cosmetic kinds run at 30 Hz via parity skip; gameplay kinds run at 60 Hz.
+    for (let i = 0; i < animated.length; i++) {
+      const a = animated[i];
+      if (HALF_RATE_KINDS.has(a.kind) && ((i ^ _frameParity) & 1)) continue;
       if (a.kind === 'signFlicker') {
         const seedR = (Math.sin(time * 7.7 + a.seed) + 1) * 0.5;
         const blackout = seedR > 0.985;

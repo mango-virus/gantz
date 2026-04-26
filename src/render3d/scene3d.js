@@ -2101,7 +2101,18 @@ export function createScene3d({ canvas }) {
         setRoom('mission', state.missionMap);
         scene.background.set(0x04050a);
         scene.fog.color.set(0x04050a);
-        scene.fog.near = 300; scene.fog.far = 1200;
+        // Mission map is 250×250 — old fog (300–1200) never engaged, so every
+        // mesh on the far side of the map drew at full opacity. From the
+        // center that's the entire city. Pull fog in tight so neon/buildings
+        // dissolve into the night past ~140m, and drop camera.far to 200m so
+        // frustum culling actually removes the back half from the draw list.
+        // The per-fragment cost stays the same; the win is in fewer draw
+        // calls and less overdraw at the densest spot (the center).
+        scene.fog.near = 60; scene.fog.far = 140;
+        if (camera.far !== 200) {
+          camera.far = 200;
+          camera.updateProjectionMatrix();
+        }
       }
     } else {
       if (currentRoomKind !== 'lobby') {
@@ -2111,6 +2122,12 @@ export function createScene3d({ canvas }) {
         scene.fog.color.set(ud.fogColor ?? ud.bgColor ?? 0x04050a);
         scene.fog.near = ud.fogNear ?? 300;
         scene.fog.far  = ud.fogFar  ?? 1200;
+        // Restore the wide camera frustum — the lobby's Tokyo skyline lives
+        // way out at z≈350+, so 4000 keeps it visible.
+        if (camera.far !== 4000) {
+          camera.far = 4000;
+          camera.updateProjectionMatrix();
+        }
       }
     }
 
