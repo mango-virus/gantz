@@ -59,8 +59,9 @@
   <div class="row"><b>Camera</b>
     · <span class="k">right-click</span> fly mode
     · <span class="k">WASD</span> move
+    · <span class="k">Space/Shift</span> up/down
     · <span class="k">Q/E</span> down/up
-    · <span class="k">Shift</span> sprint
+    · <span class="k">Ctrl</span> sprint
     · <span class="k">scroll</span> speed
   </div>
   <div class="row"><b>Editing</b>
@@ -449,10 +450,12 @@ addEventListener('keydown', (e) => {
   // Single-letter editor verbs (only when not typing in an input).
   if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
 
-  // Hold-keys for fly cam.
-  if (FLY.active || ['w','a','s','d','q','e','shift'].includes(k)) {
+  // Hold-keys for fly cam. Space and Shift are vertical movement; Ctrl sprints.
+  if (FLY.active || ['w','a','s','d','q','e','shift','control',' '].includes(k)) {
     FLY.keys.add(k);
   }
+  // Stop Space from scrolling / triggering buttons while held in fly mode.
+  if (FLY.active && (k === ' ' || k === 'shift')) e.preventDefault();
 
   if (k === 'g' && (e.shiftKey || e.altKey)) {
     // Hide ground decals (alternate binding to avoid collision with G=translate)
@@ -487,7 +490,7 @@ function resetCamera() {
 function flyTick(dt) {
   if (!FLY.keys.size) return;
   let mul = 1;
-  if (FLY.keys.has('shift')) mul *= FLY.sprintMul;
+  if (FLY.keys.has('control')) mul *= FLY.sprintMul;
   const v = FLY.speed * mul * dt;
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
@@ -495,8 +498,8 @@ function flyTick(dt) {
   if (FLY.keys.has('s')) camera.position.addScaledVector(fwd,   -v);
   if (FLY.keys.has('d')) camera.position.addScaledVector(right,  v);
   if (FLY.keys.has('a')) camera.position.addScaledVector(right, -v);
-  if (FLY.keys.has('e')) camera.position.y += v;
-  if (FLY.keys.has('q')) camera.position.y -= v;
+  if (FLY.keys.has('e') || FLY.keys.has(' ')) camera.position.y += v;
+  if (FLY.keys.has('q') || FLY.keys.has('shift')) camera.position.y -= v;
 }
 
 // ── Selection + TransformControls gizmo ────────────────────────────────────
