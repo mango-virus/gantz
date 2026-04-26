@@ -74,6 +74,48 @@ body:has(#gz-hud[data-active="1"]) #hud {
   display: none !important;
 }
 
+/* Dev menu — bottom-edge cluster of links to the level preview and the
+   3D viewer.  Lives outside `#hint` so the gameplay help can stay
+   hidden while the dev tools remain reachable in-game.  Bottom-center
+   chosen because the HUD's used corners (TR radar, BL dossier, BR
+   weapon, TL identity) all sit elsewhere. Hides itself during mission
+   to keep the action UI clean. */
+#dev-menu {
+  position: fixed;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  z-index: 60;
+  pointer-events: auto;
+  opacity: 0.55;
+  transition: opacity 160ms;
+}
+#dev-menu:hover {
+  opacity: 1;
+}
+#dev-menu a {
+  color: #c8142b;
+  text-decoration: none;
+  padding: 3px 8px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(200, 20, 43, 0.55);
+  text-shadow: 0 0 6px rgba(200, 20, 43, 0.6);
+  transition: background 120ms, border-color 120ms;
+}
+#dev-menu a:hover {
+  background: rgba(200, 20, 43, 0.18);
+  border-color: #c8142b;
+}
+/* Stay out of the way during the mission HUD. */
+body:has(#gz-hud[data-active="1"]) #dev-menu {
+  display: none;
+}
+
 #gun-flash {
   position: fixed;
   inset: 0;
