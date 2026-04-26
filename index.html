@@ -3,10 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- GitHub Pages defaults to a 10-min browser cache for JS/HTML which causes
+     peers to keep seeing stale builds long after a deploy (e.g. the old
+     procedural mission map). These directives + the service worker below
+     force a network-first fetch so a hard refresh always pulls fresh code. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <title>Gantz: Eternal Hunt</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
+<script>
+  // Network-first service worker for same-origin JS/HTML/CSS. After the SW
+  // installs once (on the next visit after this code lands), every future load
+  // hits the network — so peers pick up new deploys without needing to clear
+  // cache or hard-refresh. Falls back to cached copy when offline.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* ignore */ });
+  }
+</script>
 </head>
 <body>
 <div id="hud">
