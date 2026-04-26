@@ -205,8 +205,12 @@ const edits = {
   props: {
     modified: { ...(savedEdits?.props?.modified ?? {}) },
     added:    JSON.parse(JSON.stringify(savedEdits?.props?.added ?? [])),
+    removed:  [...(savedEdits?.props?.removed ?? [])],
   },
-  buildings: { modified: { ...(savedEdits?.buildings?.modified ?? {}) } },
+  buildings: {
+    modified: { ...(savedEdits?.buildings?.modified ?? {}) },
+    removed:  [...(savedEdits?.buildings?.removed ?? [])],
+  },
 };
 // Track dirty since last save.
 let dirty = false;
@@ -490,7 +494,7 @@ addEventListener('keydown', (e) => {
   if (k === 'f')             { resetCamera(); return; }
   if (k === 'n')             { addAtCursor(); return; }
   if (k === 'p')             { dropPropFromCatalog(); return; }
-  if (k === 'x' && selectedEntry) { deleteSelected(); return; }
+  if (k === 'x' && selection) { deleteSelected(); return; }
   if (k === '[' && selectedEntry) { cycleCategory(-1); return; }
   if (k === ']' && selectedEntry) { cycleCategory(+1); return; }
 });
@@ -728,7 +732,7 @@ function select(sel) {
 
   setMode('translate');
   document.getElementById('sel').style.display = 'block';
-  document.getElementById('btn-delete').disabled = (sel.kind !== 'collider');
+  document.getElementById('btn-delete').disabled = false;
   refreshSelectedHud();
 }
 
@@ -865,6 +869,15 @@ function recordModification(c) {
 }
 
 function deleteSelected() {
+  if (!selection) return;
+  if (selection.kind === 'collider') { deleteSelectedCollider(); return; }
+  if (selection.kind === 'prop' || selection.kind === 'building') {
+    deleteSelectedEntity();
+    return;
+  }
+}
+
+function deleteSelectedCollider() {
   if (!selectedEntry) return;
   pushUndo();
   const c = selectedEntry.collider;
@@ -889,6 +902,72 @@ function deleteSelected() {
   setDirty();
   refreshStats();
   deselect();
+}
+
+// Delete the currently-selected prop or building. Tears down meshes +
+// tagged colliders live, leaves a tombstone in level.props/buildings to
+// keep array indices stable, and writes to edits.<kind>.removed so the
+// removal survives reload.
+function deleteSelectedEntity() {
+  const sel = selection;
+  if (!sel || (sel.kind !== 'prop' && sel.kind !== 'building')) return;
+  const kind = sel.kind;
+  const idx = sel.index;
+  const list = kind === 'prop' ? level.props : level.buildings;
+  if (!Array.isArray(list) || !list[idx]) return;
+
+  pushUndo();
+  const groupRoot = kind === 'prop' ? level.groups?.props : level.groups?.buildings;
+  const tagKey = kind === 'prop' ? 'propIndex' : 'buildingIndex';
+
+  // 1) Detach matching Three.js children and dispose them.
+  if (groupRoot) {
+    for (let i = groupRoot.children.length - 1; i >= 0; i--) {
+      const ch = groupRoot.children[i];
+      const ref = ch.userData?.editorRef;
+      if (!ref || ref.kind !== kind || ref.index !== idx) continue;
+      groupRoot.remove(ch);
+      ch.traverse?.((o) => {
+        o.geometry?.dispose?.();
+        const m = o.material;
+        if (Array.isArray(m)) m.forEach(mat => mat.dispose?.());
+        else m?.dispose?.();
+      });
+    }
+  }
+
+  // 2) Drop tagged colliders (and their editor wireframe entries).
+  const cs = level.colliders ?? [];
+  for (let i = cs.length - 1; i >= 0; i--) {
+    if (cs[i]?.[tagKey] !== idx) continue;
+    const dead = cs[i];
+    cs.splice(i, 1);
+    // Tear down the matching collider entry, if any.
+    const ei = colliderEntries.findIndex(en => en.collider === dead);
+    if (ei >= 0) {
+      const en = colliderEntries[ei];
+      colliderGroup.remove(en.wf);
+      colliderGroup.remove(en.pick);
+      en.wf.geometry.dispose();
+      en.wf.material.dispose();
+      en.pick.geometry.dispose();
+      en.pick.material.dispose();
+      colliderEntries.splice(ei, 1);
+    }
+  }
+
+  // 3) Tombstone the spec to keep indices stable.
+  list[idx]._removed = true;
+
+  // 4) Update the edits log.
+  const section = kind === 'prop' ? edits.props : edits.buildings;
+  delete section.modified[idx];
+  if (!section.removed.includes(idx)) section.removed.push(idx);
+
+  setDirty();
+  refreshStats();
+  deselect();
+  flashStatus(`− ${kind} #${idx}`, 'clean');
 }
 
 function addAtCursor() {
@@ -1073,15 +1152,21 @@ function serializeEdits() {
   };
   // Only emit props/buildings sections when there's something to save —
   // keeps the JSON clean for levels that haven't been move-edited.
-  const propsModCount = Object.keys(edits.props.modified).length;
+  const propsModCount   = Object.keys(edits.props.modified).length;
   const propsAddedCount = edits.props.added.length;
-  if (propsModCount || propsAddedCount) {
+  const propsRmCount    = edits.props.removed.length;
+  if (propsModCount || propsAddedCount || propsRmCount) {
     out.props = {};
     if (propsModCount)   out.props.modified = edits.props.modified;
     if (propsAddedCount) out.props.added    = edits.props.added.map(a => ({ ...a }));
+    if (propsRmCount)    out.props.removed  = [...edits.props.removed];
   }
-  if (Object.keys(edits.buildings.modified).length) {
-    out.buildings = { modified: edits.buildings.modified };
+  const bModCount = Object.keys(edits.buildings.modified).length;
+  const bRmCount  = edits.buildings.removed.length;
+  if (bModCount || bRmCount) {
+    out.buildings = {};
+    if (bModCount) out.buildings.modified = edits.buildings.modified;
+    if (bRmCount)  out.buildings.removed  = [...edits.buildings.removed];
   }
   return out;
 }

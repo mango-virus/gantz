@@ -19,10 +19,22 @@
 //     },
 //     "props": {
 //       "modified": { "<index>": { x, z, rot } },
-//       "added":    [{ type, x, z, rot, ...type-specific fields }]
+//       "added":    [{ type, x, z, rot, ...type-specific fields }],
+//       "removed":  [<index>, ...]
 //     },
-//     "buildings": { "modified": { "<index>": { x, z, rot } } }
+//     "buildings": {
+//       "modified": { "<index>": { x, z, rot } },
+//       "removed":  [<index>, ...]
+//     }
 //   }
+//
+// Removal semantics: the index refers to the slot in level.props /
+// level.buildings AFTER `added` props have been appended (so editor-added
+// props can also be removed in a later session). Removal tears down the
+// Three.js child group(s) tagged with that editorRef and drops every
+// collider with matching propIndex/buildingIndex. The list slot is left as
+// a `_removed: true` tombstone to keep subsequent indices stable across
+// reloads.
 //
 // Identity:
 //   - Colliders use `editorId`, the build-order index assigned in
@@ -72,10 +84,16 @@ export function applyLevelEdits(level, edits) {
   //   1. Append added props first so the indices used by `modified` resolve.
   //   2. Apply prop/building modifications.
   //   3. Apply collider edits (modifications, removals, additions).
+  //   4. Remove props/buildings last — tearing down meshes and tagged
+  //      colliders. Done after collider-add so editor-added colliders that
+  //      reference a now-removed entity (rare) still go through the same
+  //      tag-based filter.
   applyAddedProps(level, edits.props);
   applyPropOrBuildingEdits(level, 'prop',     edits.props);
   applyPropOrBuildingEdits(level, 'building', edits.buildings);
   applyColliderEdits(level, edits.colliders);
+  applyRemovedEntities(level, 'prop',     edits.props);
+  applyRemovedEntities(level, 'building', edits.buildings);
 
   return level;
 }
@@ -89,6 +107,48 @@ function applyAddedProps(level, section) {
   if (typeof level.appendProp !== 'function') return;
   for (const a of section.added) {
     level.appendProp({ ...a }, { editorAdded: true });
+  }
+}
+
+// ── Removed props / buildings ───────────────────────────────────────────────
+// `kind` = 'prop' | 'building'. We tear down Three.js children tagged with
+// `editorRef.{kind,index}`, drop colliders tagged with the matching index,
+// and tombstone the spec slot so later reloads don't re-shift indices.
+function applyRemovedEntities(level, kind, section) {
+  const removed = section?.removed;
+  if (!removed?.length) return;
+  const list = kind === 'prop' ? level.props : level.buildings;
+  if (!Array.isArray(list)) return;
+  const groupRoot = kind === 'prop' ? level.groups?.props : level.groups?.buildings;
+  const tagKey = kind === 'prop' ? 'propIndex' : 'buildingIndex';
+  const removedSet = new Set(removed);
+
+  // 1) Detach Three.js groups that match a removed index.
+  if (groupRoot) {
+    // Walk children backwards because we splice.
+    for (let i = groupRoot.children.length - 1; i >= 0; i--) {
+      const ch = groupRoot.children[i];
+      const ref = ch.userData?.editorRef;
+      if (!ref || ref.kind !== kind) continue;
+      if (!removedSet.has(ref.index)) continue;
+      groupRoot.remove(ch);
+    }
+  }
+
+  // 2) Drop colliders tagged for removed entities.
+  if (Array.isArray(level.colliders)) {
+    for (let i = level.colliders.length - 1; i >= 0; i--) {
+      const c = level.colliders[i];
+      const idx = c?.[tagKey];
+      if (typeof idx === 'number' && removedSet.has(idx)) {
+        level.colliders.splice(i, 1);
+      }
+    }
+  }
+
+  // 3) Tombstone the spec — keeps array indices stable for future edits.
+  for (const idx of removed) {
+    if (list[idx]) list[idx]._removed = true;
   }
 }
 
