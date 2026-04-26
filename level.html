@@ -93,7 +93,7 @@
 </div>
 <div id="stats"></div>
 <div id="sel">
-  <span class="title"><b>Selected collider</b></span>
+  <span class="title"><b id="sel-title">Selected collider</b></span>
   <div class="row" id="sel-id"></div>
   <div class="row" id="sel-bounds"></div>
   <div class="row">category
@@ -106,6 +106,7 @@
       <option value="passthrough">passthrough</option>
     </select>
   </div>
+  <div id="sel-fields"></div>
 </div>
 <div id="toolbar">
   <a href="levels.html">← Levels</a>
@@ -748,13 +749,141 @@ function findEntityGroup(kind, index) {
 
 function deselect() { select(null); }
 
+// ── Type-specific prop field editor ─────────────────────────────────────────
+//
+// Registry: which spec fields each prop type exposes in the HUD. Adding a
+// new entry here is enough — the renderer reads off this map.
+//
+// Field shape:
+//   { key, type: 'text'|'color'|'number'|'enum', label?, min?, max?, step?, options? }
+//
+// `color` values in the spec are stored as 0xRRGGBB integers. The HTML
+// <input type=color> uses '#rrggbb' strings — convert at the seam.
+const PROP_FIELDS = {
+  verticalSign: [
+    { key: 'text',   type: 'text'  },
+    { key: 'color',  type: 'color' },
+    { key: 'height', type: 'number', min: 1.5, max: 12,  step: 0.1, label: 'height' },
+    { key: 'facing', type: 'enum', options: ['north','south','east','west'] },
+  ],
+  hangingSign: [
+    { key: 'text',   type: 'text'  },
+    { key: 'color',  type: 'color' },
+    { key: 'attach', type: 'enum', options: ['north','south','east','west'] },
+    { key: 'armLen', type: 'number', min: 0.6, max: 4, step: 0.1, label: 'arm length' },
+    { key: 'y',      type: 'number', min: 2,   max: 12, step: 0.1, label: 'mount Y' },
+  ],
+  billboard: [
+    { key: 'text',  type: 'text'  },
+    { key: 'color', type: 'color' },
+    { key: 'w',     type: 'number', min: 3, max: 16, step: 0.5, label: 'width' },
+    { key: 'h',     type: 'number', min: 2, max: 10, step: 0.5, label: 'height' },
+  ],
+  sidewalkSign: [
+    { key: 'text',  type: 'text'  },
+    { key: 'color', type: 'color' },
+    { key: 'h',     type: 'number', min: 1.5, max: 5, step: 0.1, label: 'height' },
+  ],
+  rooftopUnit: [
+    { key: 'y', type: 'number', min: 0, max: 30, step: 0.5, label: 'roof Y' },
+  ],
+  satellite: [
+    { key: 'y', type: 'number', min: 0, max: 30, step: 0.5, label: 'roof Y' },
+  ],
+};
+
+const HEX = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
+const UNHEX = (s) => parseInt(String(s).replace(/^#/, ''), 16) | 0;
+
+function renderEntityFields(spec) {
+  const host = document.getElementById('sel-fields');
+  host.innerHTML = '';
+  if (!spec?.type) return;
+  const fields = PROP_FIELDS[spec.type];
+  if (!fields?.length) return;
+
+  for (const f of fields) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const label = f.label ?? f.key;
+    let input;
+    if (f.type === 'enum') {
+      input = document.createElement('select');
+      for (const opt of f.options) {
+        const o = document.createElement('option');
+        o.value = opt; o.textContent = opt;
+        input.appendChild(o);
+      }
+      input.value = spec[f.key] ?? f.options[0];
+    } else if (f.type === 'color') {
+      input = document.createElement('input');
+      input.type = 'color';
+      input.value = HEX(spec[f.key] ?? 0xffffff);
+    } else if (f.type === 'number') {
+      input = document.createElement('input');
+      input.type = 'number';
+      if (f.min  !== undefined) input.min  = f.min;
+      if (f.max  !== undefined) input.max  = f.max;
+      if (f.step !== undefined) input.step = f.step;
+      input.value = spec[f.key] ?? f.min ?? 0;
+      input.style.width = '6em';
+    } else { // 'text'
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = spec[f.key] ?? '';
+      input.style.width = '8em';
+    }
+    input.addEventListener('change', () => {
+      let v = input.value;
+      if (f.type === 'color') v = UNHEX(v);
+      else if (f.type === 'number') v = Number(v);
+      onPropFieldChange(f.key, v);
+    });
+    row.append(label, ' ', input);
+    host.appendChild(row);
+  }
+}
+
+// Apply a field change live: mutate the spec, ask the level to rebuild
+// just this prop, refresh editor wireframes, and persist into the edits log.
+function onPropFieldChange(key, value) {
+  const sel = selection;
+  if (!sel || sel.kind !== 'prop') return;
+  const spec = sel.spec;
+  if (!spec) return;
+  if (spec[key] === value) return;
+  spec[key] = value;
+  if (typeof level.rebuildProp === 'function') {
+    level.rebuildProp(sel.index);
+  }
+  // Re-resolve the entity group reference (the old one was disposed) and
+  // refresh the outline + the proxy's locked Y.
+  sel.group = findEntityGroup('prop', sel.index);
+  if (sel.group) {
+    sel.proxyY = sel.group.position.y ?? sel.proxyY;
+    refreshEntityOutline(sel.group);
+  }
+  resyncColliderEntries();
+  refreshStats();
+  recordFieldEdit(sel, key, value);
+  refreshSelectedHud();
+}
+
 function refreshSelectedHud() {
   const sel = selection;
   const elId = document.getElementById('sel-id');
   const elBounds = document.getElementById('sel-bounds');
   const elCat = document.getElementById('sel-category');
   const elCatRow = elCat?.parentElement;
+  const elFields = document.getElementById('sel-fields');
+  const elTitle = document.getElementById('sel-title');
+  if (elFields) elFields.innerHTML = '';
   if (!sel) return;
+  if (elTitle) {
+    elTitle.textContent = sel.kind === 'collider' ? 'Selected collider'
+                        : sel.kind === 'prop'     ? 'Selected prop'
+                        :                           'Selected building';
+  }
 
   if (sel.kind === 'collider') {
     const c = sel.entry.collider;
@@ -776,6 +905,7 @@ function refreshSelectedHud() {
       `<b>pos</b> (${(spec.x ?? 0).toFixed(2)}, ${(spec.z ?? 0).toFixed(2)})<br>` +
       `<b>rot</b> ${((spec.rot ?? 0) * 180 / Math.PI).toFixed(1)}°`;
     if (elCatRow) elCatRow.style.display = 'none';
+    if (sel.kind === 'prop') renderEntityFields(spec);
   }
 }
 
@@ -792,11 +922,25 @@ function recordEntityEdit(sel) {
   pushUndo();
   const spec = sel.spec ?? {};
   const section = sel.kind === 'prop' ? edits.props : edits.buildings;
+  // Merge so previously-recorded type-specific fields (text, color, …)
+  // survive a transform edit.
   section.modified[sel.index] = {
+    ...(section.modified[sel.index] ?? {}),
     x: spec.x ?? 0,
     z: spec.z ?? 0,
     rot: spec.rot ?? 0,
   };
+  setDirty();
+}
+
+// Record a single non-transform field change (text/color/height/etc.)
+// onto the modified entry without disturbing x/z/rot.
+function recordFieldEdit(sel, key, value) {
+  if (!sel || sel.kind === 'collider') return;
+  pushUndo();
+  const section = sel.kind === 'prop' ? edits.props : edits.buildings;
+  const cur = section.modified[sel.index] ?? {};
+  section.modified[sel.index] = { ...cur, [key]: value };
   setDirty();
 }
 
@@ -1113,6 +1257,23 @@ function syncColliderEntries() {
     const e = buildEntryFor(c);
     if (e) colliderEntries.push(e);
   }
+}
+
+// After a prop rebuild (or any operation that swaps colliders out from
+// under us) drop entries whose underlying collider is no longer in the
+// level array, then re-add entries for any new colliders.
+function resyncColliderEntries() {
+  const live = new Set(level.colliders ?? []);
+  for (let i = colliderEntries.length - 1; i >= 0; i--) {
+    const en = colliderEntries[i];
+    if (live.has(en.collider)) continue;
+    colliderGroup.remove(en.wf);
+    colliderGroup.remove(en.pick);
+    en.wf.geometry.dispose(); en.wf.material.dispose();
+    en.pick.geometry.dispose(); en.pick.material.dispose();
+    colliderEntries.splice(i, 1);
+  }
+  syncColliderEntries();
 }
 
 let _addedIdCounter = -1000;

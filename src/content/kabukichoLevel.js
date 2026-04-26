@@ -7081,19 +7081,57 @@ export function buildKabukichoLevel(THREE, opts = {}) {
     const stored = { ...spec };
     if (addOpts.editorAdded) stored.editorAdded = true;
     levelProps.push(stored);
+    buildPropAt(propIndex, stored);
+    return propIndex;
+  }
+
+  // Shared inner: (re)build a prop's meshes + colliders for an existing slot.
+  // Used by both `appendProp` and `rebuildProp`. Tags every newly-added child
+  // and collider with the canonical editor identity.
+  function buildPropAt(propIndex, stored) {
+    const fn = propBuilders[stored.type];
+    if (!fn) return;
     const childStart = groups.props.children.length;
     const colStart   = colliders.length;
     fn(THREE, stored, groups.props, colliders);
     for (let c = childStart; c < groups.props.children.length; c++) {
       const ch = groups.props.children[c];
       ch.userData.editorRef = { kind: 'prop', index: propIndex };
-      if (addOpts.editorAdded) ch.userData.editorAdded = true;
+      if (stored.editorAdded) ch.userData.editorAdded = true;
     }
     for (let c = colStart; c < colliders.length; c++) {
       colliders[c].propIndex = propIndex;
-      if (addOpts.editorAdded) colliders[c].editorAdded = true;
+      if (stored.editorAdded) colliders[c].editorAdded = true;
     }
-    return propIndex;
+  }
+
+  // Rebuild the prop at `propIndex` in place. Used by the editor when a
+  // type-specific field changes (text/color/height/etc.) and by the edit
+  // applier on reload. Tears down all meshes + colliders tagged for this
+  // index, then runs the builder again on the (already-mutated) spec.
+  function rebuildProp(propIndex) {
+    const stored = levelProps[propIndex];
+    if (!stored || stored._removed) return;
+    // Tear down old meshes.
+    for (let i = groups.props.children.length - 1; i >= 0; i--) {
+      const ch = groups.props.children[i];
+      const ref = ch.userData?.editorRef;
+      if (ref?.kind === 'prop' && ref.index === propIndex) {
+        groups.props.remove(ch);
+        ch.traverse?.((o) => {
+          o.geometry?.dispose?.();
+          const m = o.material;
+          if (Array.isArray(m)) m.forEach(mat => mat.dispose?.());
+          else m?.dispose?.();
+        });
+      }
+    }
+    // Tear down old colliders.
+    for (let i = colliders.length - 1; i >= 0; i--) {
+      if (colliders[i]?.propIndex === propIndex) colliders.splice(i, 1);
+    }
+    // Rebuild.
+    buildPropAt(propIndex, stored);
   }
 
   const sourcePropList = (opts.props ?? PROPS_INITIAL);
@@ -7583,6 +7621,7 @@ export function buildKabukichoLevel(THREE, opts = {}) {
     props: levelProps,
     propTypes: Object.keys(propBuilders),
     appendProp,
+    rebuildProp,
     update,
     applyAtmosphere: (scene) => buildSky(THREE, scene),
   };

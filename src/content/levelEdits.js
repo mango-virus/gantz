@@ -239,11 +239,32 @@ function applyPropOrBuildingEdits(level, kind, section) {
   const list = kind === 'prop' ? level.props : level.buildings;
   if (!Array.isArray(list)) return;
 
+  // Keys we DON'T treat as type-specific fields — they're position/rotation
+  // and are handled by `applyEntityTransform` at the end of the loop.
+  const TRANSFORM_KEYS = new Set(['x', 'z', 'rot']);
+
   for (const [keyStr, mod] of Object.entries(section.modified)) {
     const i = parseInt(keyStr, 10);
     if (!Number.isFinite(i)) continue;
     const spec = list[i];
     if (!spec) continue;
+
+    // 1) Non-transform fields: copy verbatim onto the spec, then ask the
+    //    level to rebuild this prop's meshes + colliders so the change
+    //    becomes visible. Buildings don't currently support live rebuild.
+    let needsRebuild = false;
+    for (const [k, v] of Object.entries(mod)) {
+      if (TRANSFORM_KEYS.has(k)) continue;
+      spec[k] = v;
+      needsRebuild = true;
+    }
+    if (needsRebuild && kind === 'prop' && typeof level.rebuildProp === 'function') {
+      level.rebuildProp(i);
+    }
+
+    // 2) Transform fields: shift meshes + colliders to the saved absolute
+    //    position. After a rebuild the freshly-built meshes sit at the
+    //    spec's CURRENT x/z/rot, so the delta math still works.
     const newX   = mod.x   ?? spec.x ?? 0;
     const newZ   = mod.z   ?? spec.z ?? 0;
     const newRot = mod.rot ?? spec.rot ?? 0;
