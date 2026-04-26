@@ -81,10 +81,13 @@
   <div class="row"><b>Ops</b>
     · <span class="k">N</span> new collider at cursor
     · <span class="k">P</span> drop selected prop type
-    · <span class="k">X</span> delete (collider)
+    · <span class="k">B</span> drop building
+    · <span class="k">X</span> delete
+    · <span class="k">Ctrl+D</span> duplicate
     · <span class="k">[ / ]</span> cycle category
-    · <span class="k">Ctrl+S</span> save edits
-    · <span class="k">Ctrl+Z</span> undo
+    · <span class="k">Shift+click</span> multi-select
+    · <span class="k">J</span> toggle snap
+    · <span class="k">Ctrl+S</span> save · <span class="k">Ctrl+Z</span> undo
   </div>
   <div class="row"><b>View</b>
     · <span class="k">F</span> reset cam
@@ -117,6 +120,15 @@
   <span class="sep"></span>
   <select id="building-catalog" title="Choose a building type"></select>
   <button id="btn-drop-building" class="add">＋ Drop Building (B)</button>
+  <span class="sep"></span>
+  <button id="btn-snap" title="Toggle grid snap (J)">⊞ Snap: off</button>
+  <select id="snap-size" title="Grid step (m)">
+    <option value="0.25">0.25m</option>
+    <option value="0.5">0.5m</option>
+    <option value="1" selected>1m</option>
+    <option value="2">2m</option>
+    <option value="5">5m</option>
+  </select>
   <span class="sep"></span>
   <button id="btn-delete" class="danger" disabled>− Delete (X)</button>
   <button id="btn-save" class="save">💾 Save (Ctrl+S)</button>
@@ -329,6 +341,90 @@ colliderGroup.name = 'collider_debug';
 colliderGroup.visible = true;
 scene.add(colliderGroup);
 
+// ── Snap-to-grid ────────────────────────────────────────────────────────────
+//
+// Single global toggle + size. When on:
+//   - TransformControls snap drag deltas to multiples of `snapSize`
+//     (translate) and 15° (rotate). Multi-translate inherits the snap
+//     because the proxy's position is what we read deltas off.
+//   - Drop / duplicate / addAtCursor place new entities on grid intersections.
+//   - A semi-transparent GridHelper in the scene shows the grid.
+//
+// `snapVal` is a no-op when disabled, so callers can use it
+// unconditionally without extra branches.
+let snapEnabled = false;
+let snapSize    = 1;
+const ROT_SNAP_RAD = THREE.MathUtils.degToRad(15);
+function snapVal(v) {
+  if (!snapEnabled) return v;
+  return Math.round(v / snapSize) * snapSize;
+}
+
+// Visible grid plane sized to the level bounds, with a fallback when the
+// level didn't declare bounds. Positioned just above the ground so it
+// doesn't z-fight with the floor mesh.
+const _gridSize = (() => {
+  if (!LEVEL_BOUNDS) return 120;
+  const w = LEVEL_BOUNDS.maxX - LEVEL_BOUNDS.minX;
+  const d = LEVEL_BOUNDS.maxZ - LEVEL_BOUNDS.minZ;
+  return Math.max(40, Math.ceil(Math.max(w, d) / 10) * 10);
+})();
+function makeSnapGrid() {
+  const divs = Math.max(8, Math.round(_gridSize / Math.max(0.05, snapSize)));
+  const g = new THREE.GridHelper(_gridSize, divs, 0x00e5ff, 0x244060);
+  g.position.y = 0.02;
+  g.material.transparent = true;
+  g.material.opacity = 0.45;
+  g.visible = snapEnabled;
+  return g;
+}
+let snapGrid = makeSnapGrid();
+scene.add(snapGrid);
+
+// Rebuild the grid mesh when snapSize changes so divisions stay 1-per-step.
+function rebuildSnapGrid() {
+  scene.remove(snapGrid);
+  snapGrid.geometry.dispose();
+  snapGrid.material.dispose();
+  snapGrid = makeSnapGrid();
+  scene.add(snapGrid);
+}
+
+function applySnapToControls() {
+  if (snapEnabled) {
+    transformControls.setTranslationSnap(snapSize);
+    transformControls.setRotationSnap(ROT_SNAP_RAD);
+    transformControls.setScaleSnap(snapSize);
+  } else {
+    transformControls.setTranslationSnap(null);
+    transformControls.setRotationSnap(null);
+    transformControls.setScaleSnap(null);
+  }
+}
+
+function refreshSnapHud() {
+  const b = document.getElementById('btn-snap');
+  if (b) b.textContent = snapEnabled ? `⊞ Snap: ${snapSize}m` : '⊞ Snap: off';
+  const s = document.getElementById('snap-size');
+  if (s && Number(s.value) !== snapSize) s.value = String(snapSize);
+}
+
+function setSnapEnabled(on) {
+  snapEnabled = !!on;
+  applySnapToControls();
+  snapGrid.visible = snapEnabled;
+  refreshSnapHud();
+}
+
+function setSnapSize(s) {
+  const next = Math.max(0.05, Number(s) || 1);
+  if (next === snapSize) return;
+  snapSize = next;
+  rebuildSnapGrid();
+  applySnapToControls();
+  refreshSnapHud();
+}
+
 // One entry per collider currently in the level — mesh, wireframe, source ref.
 let colliderEntries = [];
 
@@ -502,6 +598,7 @@ addEventListener('keydown', (e) => {
   if (k === 'p')             { dropPropFromCatalog(); return; }
   if (k === 'b')             { dropBuildingFromCatalog(); return; }
   if (k === 'x' && selection) { deleteSelected(); return; }
+  if (k === 'j')             { setSnapEnabled(!snapEnabled); flashStatus(snapEnabled ? `snap: ${snapSize}m` : 'snap off', 'clean'); return; }
   if (k === '[' && selectedEntry) { cycleCategory(-1); return; }
   if (k === ']' && selectedEntry) { cycleCategory(+1); return; }
 });
@@ -535,6 +632,10 @@ function flyTick(dt) {
 const transformControls = new TransformControls(camera, renderer.domElement);
 transformControls.size = 0.8;
 scene.add(transformControls);
+// Apply the current snap state (initially off, but cheap and keeps the
+// behavior explicit so future code that flips snapEnabled doesn't have
+// to remember to call this).
+applySnapToControls();
 
 // Proxy object the gizmo manipulates. We sync between proxy ↔ entity transform.
 const proxy = new THREE.Object3D();
@@ -1355,11 +1456,16 @@ function _deleteEntityItem(kind, idx) {
   if (!section.removed.includes(idx)) section.removed.push(idx);
 }
 
-// Duplicate every selected item: each clone is offset by (DUP_OFFSET, 0,
-// DUP_OFFSET) so it doesn't sit on top of the original. The new copies
-// replace the current selection — the first clone becomes the primary,
-// the rest become extras.
-const DUP_OFFSET = 2;
+// Duplicate every selected item: each clone is offset along (+x, +z) so it
+// doesn't sit on top of the original. The new copies replace the current
+// selection — the first clone becomes the primary, the rest become extras.
+// The offset rounds up to a multiple of `snapSize` while snap is on, so
+// duplicates land on the next grid intersection.
+const DUP_BASE = 2;
+function duplicateOffset() {
+  if (!snapEnabled) return DUP_BASE;
+  return Math.max(snapSize, Math.ceil(DUP_BASE / snapSize) * snapSize);
+}
 function duplicateSelection() {
   if (!selection && !selectionExtras.length) return;
   // Snapshot the selection set first because we'll be mutating
@@ -1400,13 +1506,14 @@ function duplicateSelection() {
 // pointing at the new entity, or null if the kind doesn't support
 // appendProp/appendBuilding.
 function duplicateOne(src) {
+  const off = duplicateOffset();
   if (src.kind === 'collider') {
     const c = src.entry.collider;
     const b = c.bounds;
     if (!b) return null;
     const nb = {
-      min: { x: b.min.x + DUP_OFFSET, y: b.min.y, z: b.min.z + DUP_OFFSET },
-      max: { x: b.max.x + DUP_OFFSET, y: b.max.y, z: b.max.z + DUP_OFFSET },
+      min: { x: b.min.x + off, y: b.min.y, z: b.min.z + off },
+      max: { x: b.max.x + off, y: b.max.y, z: b.max.z + off },
     };
     const nc = {
       kind: c.kind ?? 'aabb', type: c.type ?? 'aabb',
@@ -1443,8 +1550,8 @@ function duplicateOne(src) {
     // applyLevelEdits on reload.
     const cloneSpec = { ...spec };
     delete cloneSpec._removed;
-    cloneSpec.x = (spec.x ?? 0) + DUP_OFFSET;
-    cloneSpec.z = (spec.z ?? 0) + DUP_OFFSET;
+    cloneSpec.x = (spec.x ?? 0) + off;
+    cloneSpec.z = (spec.z ?? 0) + off;
     const newIdx = src.kind === 'prop'
       ? level.appendProp(cloneSpec, { editorAdded: true })
       : level.appendBuilding(cloneSpec, { editorAdded: true });
@@ -1460,19 +1567,22 @@ function duplicateOne(src) {
 
 function addAtCursor() {
   pushUndo();
-  // Drop a 2×2×2 box ~6m in front of the camera.
+  // Drop a 2×2×2 box ~6m in front of the camera, snapped to the grid (X/Z)
+  // when snap is on. Y stays at >= 1 (default standing height) so it
+  // doesn't sink into the floor.
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const p = camera.position.clone().addScaledVector(fwd, 6);
-  // Snap Y to floor (>=0) by default.
+  const cx = snapVal(p.x);
+  const cz = snapVal(p.z);
   const cy = Math.max(1, p.y);
   const c = {
     kind: 'aabb', type: 'aabb',
-    x: p.x, y: p.z, w: 2, h: 2,
+    x: cx, y: cz, w: 2, h: 2,
     tier: 'hard', category: 'solid', tag: 'editor',
     minY: cy - 1, maxY: cy + 1,
     bounds: {
-      min: { x: p.x - 1, y: cy - 1, z: p.z - 1 },
-      max: { x: p.x + 1, y: cy + 1, z: p.z + 1 },
+      min: { x: cx - 1, y: cy - 1, z: cz - 1 },
+      max: { x: cx + 1, y: cy + 1, z: cz + 1 },
     },
     jumpable: true, requires_crouch: false, tags: ['editor'],
     editorId: nextAddedId(),
@@ -1574,11 +1684,11 @@ function dropPropFromCatalog() {
   }
   pushUndo();
   // Drop ~8m ahead of the camera, snap to ground (y=0). Type-specific Y
-  // overrides (rooftop props) come from PROP_DEFAULTS.
+  // overrides (rooftop props) come from PROP_DEFAULTS. X/Z snap to grid.
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const p = camera.position.clone().addScaledVector(fwd, 8);
   const defaults = PROP_DEFAULTS[type] ?? {};
-  const spec = { type, x: p.x, z: p.z, rot: 0, ...defaults };
+  const spec = { type, x: snapVal(p.x), z: snapVal(p.z), rot: 0, ...defaults };
   const idx = level.appendProp(spec, { editorAdded: true });
   if (idx < 0) {
     flashStatus(`unknown prop type: ${type}`, 'err');
@@ -1661,11 +1771,11 @@ function dropBuildingFromCatalog() {
     return;
   }
   pushUndo();
-  // Drop ~20m ahead so a 14×14 footprint clears the camera.
+  // Drop ~20m ahead so a 14×14 footprint clears the camera. X/Z snap to grid.
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const p = camera.position.clone().addScaledVector(fwd, 20);
   const defaults = BUILDING_DEFAULTS[type] ?? {};
-  const spec = { type, x: p.x, z: p.z, rot: 0, ...defaults };
+  const spec = { type, x: snapVal(p.x), z: snapVal(p.z), rot: 0, ...defaults };
   const idx = level.appendBuilding(spec, { editorAdded: true });
   if (idx < 0) {
     flashStatus(`unknown building type: ${type}`, 'err');
@@ -1810,6 +1920,12 @@ document.getElementById('btn-new').addEventListener('click', addAtCursor);
 document.getElementById('btn-delete').addEventListener('click', deleteSelected);
 document.getElementById('btn-drop-prop').addEventListener('click', dropPropFromCatalog);
 document.getElementById('btn-drop-building').addEventListener('click', dropBuildingFromCatalog);
+document.getElementById('btn-snap').addEventListener('click', () => setSnapEnabled(!snapEnabled));
+document.getElementById('snap-size').addEventListener('change', (e) => {
+  setSnapSize(Number(e.target.value));
+  // Auto-enable on size change so users can pick a step and immediately work.
+  if (!snapEnabled) setSnapEnabled(true);
+});
 document.getElementById('btn-export').addEventListener('click', () => {
   // The legacy "export collision JSON" dump (full collider table, not edits).
   if (typeof exportColliderJSON !== 'function') {
