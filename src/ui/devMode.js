@@ -2,6 +2,8 @@
 // Sections are registered independently so future features can be added
 // by calling devMode.addSection(id, title, buildFn).
 
+import { LEVELS } from '../content/levelRegistry.js';
+
 const PANEL_W   = 330;
 const CANVAS_W  = 314;
 const CANVAS_H  = 360;
@@ -181,6 +183,52 @@ export function createDevMode(lobbyWalls, lobbyColliders, getPlayer, getScene3d,
   // ─── Shared state ─────────────────────────────────────────────────────────
   let collisionCanvas, collisionCtx;
   let _mapWin = null, _mapVisible = false;
+
+  // ─── Section: Level Previews ─────────────────────────────────────────────
+  // Surfaces the orbit-camera level editor (`level.html`) and the 3D scratch
+  // viewer (`3d.html`) inside the existing DEV TOOLS panel so they don't
+  // need a free-floating link bar in the main UI.  Each registered level in
+  // `levelRegistry.js` gets its own button; clicking opens the preview in a
+  // new tab so the live game session keeps running behind it.
+  addSection('level-previews', 'LEVEL PREVIEWS', (body) => {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'color:#004422;font-size:10px;margin-bottom:6px';
+    hint.textContent = 'Open a hand-authored level in the orbit-camera editor.';
+    body.appendChild(hint);
+
+    if (!LEVELS.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:#006622;font-size:10px;margin-bottom:6px;font-style:italic';
+      empty.textContent = 'No levels registered.';
+      body.appendChild(empty);
+    } else {
+      for (const lvl of LEVELS) {
+        const btn = document.createElement('button');
+        btn.textContent = `▶ ${lvl.title}`;
+        btn.title = lvl.description ?? '';
+        btn.style.cssText = CSS.btn + ';width:100%;text-align:left;margin-bottom:4px';
+        btn.addEventListener('click', () => {
+          window.open(`/level.html?id=${encodeURIComponent(lvl.id)}`, '_blank', 'noopener');
+        });
+        body.appendChild(btn);
+      }
+    }
+
+    // Direct links to the picker page + the standalone 3D scratch viewer.
+    const linksRow = document.createElement('div');
+    linksRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px';
+    const allBtn = document.createElement('button');
+    allBtn.textContent = '☰ All Levels';
+    allBtn.style.cssText = CSS.btn;
+    allBtn.addEventListener('click', () => window.open('/levels.html', '_blank', 'noopener'));
+    const threeBtn = document.createElement('button');
+    threeBtn.textContent = '◈ 3D Scratch';
+    threeBtn.style.cssText = CSS.btn;
+    threeBtn.addEventListener('click', () => window.open('/3d.html', '_blank', 'noopener'));
+    linksRow.appendChild(allBtn);
+    linksRow.appendChild(threeBtn);
+    body.appendChild(linksRow);
+  });
 
   // ─── Section: Collision Map (pop-out window) ─────────────────────────────
   addSection('collision-map', 'COLLISION MAP', (body) => {
