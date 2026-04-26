@@ -3,37 +3,111 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Level Preview</title>
+<title>Level Designer</title>
 <style>
   html, body { margin: 0; padding: 0; background: #05060c; color: #cfd9ec; font-family: ui-monospace, Menlo, Consolas, monospace; height: 100%; overflow: hidden; }
-  #c { display: block; width: 100vw; height: 100vh; }
-  #hud { position: fixed; top: 8px; left: 10px; font-size: 11px; line-height: 1.5; background: rgba(0,0,0,.55); padding: 6px 9px; border: 1px solid #2a3a55; pointer-events: none; }
+  #c { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  #c.locked { cursor: none; }
+  /* Crosshair when in fly mode (pointer locked) */
+  #c.locked + #crosshair { display: block; }
+  #crosshair { display: none; position: fixed; left: 50%; top: 50%; width: 14px; height: 14px; transform: translate(-7px,-7px); pointer-events: none; z-index: 100; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #00e5ff; opacity: 0.85; }
+  #crosshair::before { left: 6px; top: 0;   width: 2px; height: 14px; }
+  #crosshair::after  { left: 0;   top: 6px; width: 14px; height: 2px; }
+
+  #hud { position: fixed; top: 8px; left: 10px; font-size: 11px; line-height: 1.55; background: rgba(0,0,0,.6); padding: 7px 10px; border: 1px solid #2a3a55; pointer-events: none; max-width: 360px; }
   #hud b { color: #00e5ff; }
   #hud span.k { color: #ff2d8a; }
-  #hud .title { font-size: 12px; }
-  #ctrls { position: fixed; bottom: 10px; left: 10px; font-size: 10px; opacity: .8; background: rgba(0,0,0,.45); padding: 5px 8px; border: 1px solid #1d2740; }
-  #stats { position: fixed; top: 8px; right: 10px; font-size: 11px; background: rgba(0,0,0,.55); padding: 6px 9px; border: 1px solid #2a3a55; }
-  #export { position: fixed; bottom: 10px; right: 10px; display: flex; gap: 6px; }
-  #export button, #export a { background: #0e1422; color: #cfd9ec; border: 1px solid #2a3a55; padding: 6px 10px; font: inherit; font-size: 11px; cursor: pointer; text-decoration: none; }
-  #export button:hover, #export a:hover { background: #1a2438; }
+  #hud .title { font-size: 12px; font-weight: bold; color: #ff2d8a; letter-spacing: 0.1em; }
+  #hud .row { margin-top: 3px; }
+
+  #stats { position: fixed; top: 8px; right: 10px; font-size: 11px; background: rgba(0,0,0,.6); padding: 7px 10px; border: 1px solid #2a3a55; min-width: 180px; }
+  #stats b { color: #ff2d8a; }
+
+  #sel { position: fixed; bottom: 56px; left: 10px; font-size: 11px; background: rgba(0,0,0,.65); padding: 7px 10px; border: 1px solid #ff2d8a; min-width: 220px; display: none; }
+  #sel b { color: #00e5ff; }
+  #sel .row { margin-top: 3px; }
+  #sel select { background: #0e1422; color: #cfd9ec; border: 1px solid #2a3a55; font: inherit; font-size: 11px; padding: 2px 4px; }
+
+  #toolbar { position: fixed; bottom: 10px; left: 10px; display: flex; gap: 6px; flex-wrap: wrap; max-width: 60vw; }
+  #toolbar button, #toolbar a {
+    background: #0e1422; color: #cfd9ec; border: 1px solid #2a3a55;
+    padding: 6px 10px; font: inherit; font-size: 11px; cursor: pointer;
+    text-decoration: none; letter-spacing: 0.05em;
+  }
+  #toolbar button:hover, #toolbar a:hover { background: #1a2438; border-color: #00e5ff; color: #00e5ff; }
+  #toolbar button.danger { border-color: #ff2d8a; color: #ff2d8a; }
+  #toolbar button.danger:hover { background: rgba(255,45,138,0.12); }
+  #toolbar button.save { border-color: #00ff44; color: #00ff44; }
+  #toolbar button.save:hover { background: rgba(0,255,68,0.12); }
+  #toolbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #status { position: fixed; bottom: 10px; right: 10px; font-size: 11px; background: rgba(0,0,0,.6); padding: 6px 10px; border: 1px solid #2a3a55; min-width: 180px; text-align: right; }
+  #status .dirty { color: #ffaa00; }
+  #status .clean { color: #00ff44; }
+  #status .err   { color: #ff2d8a; }
+
   #err { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #05060c; color: #ff2d8a; font-size: 14px; padding: 2rem; text-align: center; }
   #err a { color: #00e5ff; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="crosshair"></div>
 <div id="hud">
-  <b class="title" id="hud-title">— LEVEL PREVIEW</b><br>
-  <span class="k">drag</span> rotate · <span class="k">right-drag</span> pan · <span class="k">wheel</span> zoom<br>
-  <span class="k">F</span> reset · <span class="k">G</span> toggle ground · <span class="k">L</span> toggle lights<br>
-  <span class="k">S</span> toggle spawns · <span class="k">H</span> toggle hazards · <span class="k">C</span> toggle colliders<br>
-  <span class="k">O</span> drop obstacle at orbit target · <span class="k">X</span> clear obstacles
+  <span class="title" id="hud-title">— LEVEL DESIGNER</span>
+  <div class="row"><b>Camera</b>
+    · <span class="k">right-click</span> fly mode
+    · <span class="k">WASD</span> move
+    · <span class="k">Q/E</span> down/up
+    · <span class="k">Shift</span> sprint
+    · <span class="k">scroll</span> speed
+  </div>
+  <div class="row"><b>Editing</b>
+    · <span class="k">click</span> select collider
+    · <span class="k">G</span> translate
+    · <span class="k">R</span> rotate (Y)
+    · <span class="k">T</span> scale
+    · <span class="k">Esc</span> deselect
+  </div>
+  <div class="row"><b>Ops</b>
+    · <span class="k">N</span> new at cursor
+    · <span class="k">X</span> delete
+    · <span class="k">[ / ]</span> cycle category
+    · <span class="k">Ctrl+S</span> save edits
+    · <span class="k">Ctrl+Z</span> undo
+  </div>
+  <div class="row"><b>View</b>
+    · <span class="k">F</span> reset cam
+    · <span class="k">G̲</span> ground · <span class="k">L</span> lights · <span class="k">S</span> spawns · <span class="k">H</span> hazards · <span class="k">C</span> colliders
+  </div>
 </div>
 <div id="stats"></div>
-<div id="ctrls"></div>
-<div id="export">
+<div id="sel">
+  <span class="title"><b>Selected collider</b></span>
+  <div class="row" id="sel-id"></div>
+  <div class="row" id="sel-bounds"></div>
+  <div class="row">category
+    <select id="sel-category">
+      <option value="solid">solid</option>
+      <option value="cover">cover</option>
+      <option value="destructible">destructible</option>
+      <option value="trigger">trigger</option>
+      <option value="climbable">climbable</option>
+      <option value="passthrough">passthrough</option>
+    </select>
+  </div>
+</div>
+<div id="toolbar">
   <a href="/levels.html">← Levels</a>
-  <button id="btn-export">Export collision JSON</button>
+  <button id="btn-new">＋ New (N)</button>
+  <button id="btn-delete" class="danger" disabled>− Delete (X)</button>
+  <button id="btn-save" class="save">💾 Save (Ctrl+S)</button>
+  <button id="btn-revert">↶ Revert</button>
+  <button id="btn-export">⇣ Export JSON</button>
+</div>
+<div id="status">
+  <span class="clean" id="status-text">no edits</span>
 </div>
 
 <script type="importmap">
@@ -46,8 +120,9 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { getLevel } from './src/content/levelRegistry.js';
+import { applyLevelEdits, loadLevelEdits } from './src/content/levelEdits.js';
 
 // ── Resolve level from URL ?id=<name> ──────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -62,8 +137,8 @@ if (!entry) {
   throw new Error('Level not found: ' + levelId);
 }
 
-document.title = `${entry.title} — Level Preview`;
-document.getElementById('hud-title').textContent = `${entry.title.toUpperCase()} — LEVEL PREVIEW`;
+document.title = `${entry.title} — Level Designer`;
+document.getElementById('hud-title').textContent = `${entry.title.toUpperCase()} — LEVEL DESIGNER`;
 
 const mod = await entry.load();
 const buildLevel       = mod[entry.exports.build];
@@ -75,7 +150,7 @@ if (typeof buildLevel !== 'function') {
   throw new Error(`Level '${entry.id}' module missing export '${entry.exports.build}'`);
 }
 
-// ── Renderer ────────────────────────────────────────────────────────────────
+// ── Renderer / scene / camera ──────────────────────────────────────────────
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -83,25 +158,68 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.9;
 
-// ── Scene + camera ─────────────────────────────────────────────────────────
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 1000);
-const camPos = entry.camera?.pos ?? [60, 70, 110];
-const camTgt = entry.camera?.target ?? [0, 4, 0];
-camera.position.set(...camPos);
-camera.lookAt(...camTgt);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 2000);
+const camHomePos = entry.camera?.pos ?? [60, 70, 110];
+const camHomeTgt = entry.camera?.target ?? [0, 4, 0];
+camera.position.set(...camHomePos);
+camera.lookAt(...camHomeTgt);
+// Track yaw/pitch independently so the fly cam doesn't accumulate roll.
+const camEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+{
+  const m = new THREE.Matrix4().lookAt(camera.position, new THREE.Vector3(...camHomeTgt), new THREE.Vector3(0, 1, 0));
+  camEuler.setFromRotationMatrix(m);
+  camera.quaternion.setFromEuler(camEuler);
+}
 
-const controls = new OrbitControls(camera, canvas);
-controls.target.set(...camTgt);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.maxDistance = 350;
-controls.minDistance = 4;
-
-// ── Build level ─────────────────────────────────────────────────────────────
+// ── Build level + apply saved edits ────────────────────────────────────────
 const level = buildLevel(THREE);
 scene.add(level.root);
 level.applyAtmosphere?.(scene);
+
+// Pull any persisted edits (404 -> null = unedited level).
+const savedEdits = await loadLevelEdits(entry.id);
+applyLevelEdits(level, savedEdits);
+
+// ── In-memory edit log (mutated as user works; Save serializes this) ───────
+// Shape mirrors the schema in levelEdits.js.
+const edits = {
+  colliders: {
+    modified: { ...(savedEdits?.colliders?.modified ?? {}) },
+    removed:  [...(savedEdits?.colliders?.removed  ?? [])],
+    added:    JSON.parse(JSON.stringify(savedEdits?.colliders?.added ?? [])),
+  },
+};
+// Track dirty since last save.
+let dirty = false;
+const undoStack = [];
+function snapshot() { return JSON.stringify(edits); }
+function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 50) undoStack.shift(); }
+function setDirty() {
+  dirty = true;
+  const el = document.getElementById('status-text');
+  el.className = 'dirty';
+  el.textContent = '● unsaved changes';
+}
+function setClean() {
+  dirty = false;
+  const el = document.getElementById('status-text');
+  el.className = 'clean';
+  el.textContent = 'saved';
+}
+function flashStatus(msg, cls = 'clean') {
+  const el = document.getElementById('status-text');
+  const prevCls = el.className;
+  const prevTxt = el.textContent;
+  el.className = cls;
+  el.textContent = msg;
+  setTimeout(() => {
+    if (el.textContent === msg) {
+      el.className = prevCls;
+      el.textContent = prevTxt;
+    }
+  }, 1800);
+}
 
 // ── Spawn-point markers ────────────────────────────────────────────────────
 function makeMarkerGroup(spawns) {
@@ -165,7 +283,10 @@ function makeHazardOutlines(hazards) {
 const hazardOutlines = makeHazardOutlines(level.hazards);
 scene.add(hazardOutlines);
 
-// ── Collider debug viz (C key) ──────────────────────────────────────────────
+// ── Collider debug viz + selection plumbing ─────────────────────────────────
+// We build one wireframe LineSegments + one invisible solid Box per collider.
+// The invisible box is the raycast target (LineSegments raycast is unreliable
+// because lines are 1px thin in screen space).
 const CATEGORY_COLOR = {
   solid:        0xff3030,
   cover:        0xffd200,
@@ -174,126 +295,531 @@ const CATEGORY_COLOR = {
   climbable:    0x4080ff,
   passthrough:  0x808890,
 };
+const SELECTED_COLOR = 0x00ff88;
+
 const colliderGroup = new THREE.Group();
 colliderGroup.name = 'collider_debug';
-colliderGroup.visible = false;
+colliderGroup.visible = true;
 scene.add(colliderGroup);
-const dynamicWireframes = [];
-function buildColliderDebug() {
+
+// One entry per collider currently in the level — mesh, wireframe, source ref.
+let colliderEntries = [];
+
+function clearColliderDebug() {
   while (colliderGroup.children.length) {
     const c = colliderGroup.children.pop();
     c.geometry?.dispose?.();
+    c.material?.dispose?.();
   }
-  dynamicWireframes.length = 0;
-  for (const c of (level.colliders ?? [])) {
-    if (c.type !== 'aabb' || !c.bounds) continue;
-    const { min, max } = c.bounds;
-    const w = Math.max(0.01, max.x - min.x);
-    const h = Math.max(0.01, max.y - min.y);
-    const d = Math.max(0.01, max.z - min.z);
-    const color = CATEGORY_COLOR[c.category] ?? 0xff00ff;
-    const opacity = c.category === 'passthrough' ? 0.18 : 0.9;
-    const wf = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity })
-    );
-    wf.position.set((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
-    wf.scale.set(w, h, d);
-    colliderGroup.add(wf);
-    if (c.dynamic) dynamicWireframes.push({ wf, collider: c });
-    if (!c.dynamic && (c.category === 'solid' || c.category === 'cover' || c.category === 'destructible')) {
-      const jumpY = min.y + 1.2;
-      if (jumpY < max.y) {
-        const lineGeo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(min.x, jumpY, min.z), new THREE.Vector3(max.x, jumpY, min.z),
-          new THREE.Vector3(max.x, jumpY, min.z), new THREE.Vector3(max.x, jumpY, max.z),
-          new THREE.Vector3(max.x, jumpY, max.z), new THREE.Vector3(min.x, jumpY, max.z),
-          new THREE.Vector3(min.x, jumpY, max.z), new THREE.Vector3(min.x, jumpY, min.z),
-        ]);
-        const line = new THREE.LineSegments(
-          lineGeo,
-          new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 })
-        );
-        colliderGroup.add(line);
-      }
-    }
-  }
+  colliderEntries = [];
 }
-function syncDynamicWireframes() {
-  for (const { wf, collider } of dynamicWireframes) {
-    const { min, max } = collider.bounds;
-    wf.position.set((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
-    wf.scale.set(
-      Math.max(0.01, max.x - min.x),
-      Math.max(0.01, max.y - min.y),
-      Math.max(0.01, max.z - min.z),
-    );
+
+function buildEntryFor(collider) {
+  if (collider.type !== 'aabb' || !collider.bounds) return null;
+  const { min, max } = collider.bounds;
+  const w = Math.max(0.01, max.x - min.x);
+  const h = Math.max(0.01, max.y - min.y);
+  const d = Math.max(0.01, max.z - min.z);
+  const cx = (min.x + max.x) / 2;
+  const cy = (min.y + max.y) / 2;
+  const cz = (min.z + max.z) / 2;
+  const color = CATEGORY_COLOR[collider.category] ?? 0xff00ff;
+  const opacity = collider.category === 'passthrough' ? 0.18 : 0.9;
+
+  const wf = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthTest: true })
+  );
+  wf.position.set(cx, cy, cz);
+  wf.scale.set(w, h, d);
+  colliderGroup.add(wf);
+
+  // Invisible pickable box. We skip raycast on the wireframe itself.
+  const pick = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ visible: false, transparent: true, opacity: 0 })
+  );
+  pick.position.copy(wf.position);
+  pick.scale.copy(wf.scale);
+  pick.userData.colliderEntry = null; // backfilled below
+  colliderGroup.add(pick);
+
+  const entry = { collider, wf, pick };
+  pick.userData.colliderEntry = entry;
+  return entry;
+}
+
+function buildColliderDebug() {
+  clearColliderDebug();
+  for (const c of (level.colliders ?? [])) {
+    const e = buildEntryFor(c);
+    if (e) colliderEntries.push(e);
   }
 }
 buildColliderDebug();
 
-// ── Test obstacle ───────────────────────────────────────────────────────────
-const testObstacles = [];
-const obstacleGroup = new THREE.Group();
-obstacleGroup.name = 'test_obstacles';
-scene.add(obstacleGroup);
-function addObstacleAt(x, z) {
-  const m = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.5, 0.5, 1.8, 12),
-    new THREE.MeshBasicMaterial({ color: 0xff8000 })
-  );
-  m.position.set(x, 0.9, z);
-  obstacleGroup.add(m);
-  testObstacles.push({ x, z, r: 0.5, mesh: m });
+function refreshEntryVisual(entry) {
+  const { collider, wf, pick } = entry;
+  const { min, max } = collider.bounds;
+  const w = Math.max(0.01, max.x - min.x);
+  const h = Math.max(0.01, max.y - min.y);
+  const d = Math.max(0.01, max.z - min.z);
+  const cx = (min.x + max.x) / 2;
+  const cy = (min.y + max.y) / 2;
+  const cz = (min.z + max.z) / 2;
+  wf.position.set(cx, cy, cz);
+  wf.scale.set(w, h, d);
+  pick.position.copy(wf.position);
+  pick.scale.copy(wf.scale);
+  if (entry !== selectedEntry) {
+    const color = CATEGORY_COLOR[collider.category] ?? 0xff00ff;
+    wf.material.color.setHex(color);
+  } else {
+    wf.material.color.setHex(SELECTED_COLOR);
+  }
 }
 
 // ── Stats ───────────────────────────────────────────────────────────────────
 let meshCount = 0;
 level.root.traverse(o => { if (o.isMesh) meshCount++; });
-const stats = document.getElementById('stats');
-const cs = level.colliders ?? [];
-const catCounts = cs.reduce((a, c) => { a[c.category] = (a[c.category] || 0) + 1; return a; }, {});
-const catLine = Object.entries(catCounts).map(([k, v]) => `${k}:${v}`).join(' ');
-const bounds = LEVEL_BOUNDS
-  ? `${LEVEL_BOUNDS.maxX - LEVEL_BOUNDS.minX} × ${LEVEL_BOUNDS.maxZ - LEVEL_BOUNDS.minZ}u`
-  : (entry.bounds ?? '?');
-stats.innerHTML = `
-  <b style="color:#ff2d8a">${entry.title}</b><br>
-  meshes: ${meshCount}<br>
-  buildings: ${level.buildings?.length ?? 0}<br>
-  colliders: ${cs.length}<br>
-  <span style="font-size:10px;opacity:.85">${catLine}</span><br>
-  hazards: ${level.hazards?.length ?? 0}<br>
-  bounds: ${bounds}
-`;
+function refreshStats() {
+  const cs = level.colliders ?? [];
+  const catCounts = cs.reduce((a, c) => { a[c.category] = (a[c.category] || 0) + 1; return a; }, {});
+  const catLine = Object.entries(catCounts).map(([k, v]) => `${k}:${v}`).join(' ');
+  const bounds = LEVEL_BOUNDS
+    ? `${LEVEL_BOUNDS.maxX - LEVEL_BOUNDS.minX} × ${LEVEL_BOUNDS.maxZ - LEVEL_BOUNDS.minZ}u`
+    : (entry.bounds ?? '?');
+  document.getElementById('stats').innerHTML = `
+    <b>${entry.title}</b><br>
+    meshes: ${meshCount}<br>
+    buildings: ${level.buildings?.length ?? 0}<br>
+    colliders: ${cs.length}<br>
+    <span style="font-size:10px;opacity:.85">${catLine}</span><br>
+    hazards: ${level.hazards?.length ?? 0}<br>
+    bounds: ${bounds}
+  `;
+}
+refreshStats();
 
-// ── Hotkeys ─────────────────────────────────────────────────────────────────
-const ground   = level.groups?.decals;
-const lights   = level.groups?.lights;
-const hazardsG = level.groups?.hazards;
+// ── Free-fly camera ─────────────────────────────────────────────────────────
+const FLY = {
+  speed: 25,         // m/s, scrollable
+  speedMin: 2,
+  speedMax: 200,
+  sprintMul: 3,
+  sensitivity: 0.0025,
+  active: false,
+  keys: new Set(),
+};
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 2) {
+    canvas.requestPointerLock();
+  }
+});
+document.addEventListener('pointerlockchange', () => {
+  FLY.active = document.pointerLockElement === canvas;
+  canvas.classList.toggle('locked', FLY.active);
+});
+document.addEventListener('mousemove', (e) => {
+  if (!FLY.active) return;
+  camEuler.y -= e.movementX * FLY.sensitivity;
+  camEuler.x -= e.movementY * FLY.sensitivity;
+  const lim = Math.PI / 2 - 0.001;
+  if (camEuler.x >  lim) camEuler.x =  lim;
+  if (camEuler.x < -lim) camEuler.x = -lim;
+  camera.quaternion.setFromEuler(camEuler);
+});
+canvas.addEventListener('wheel', (e) => {
+  if (!FLY.active) return;
+  e.preventDefault();
+  const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  FLY.speed = Math.max(FLY.speedMin, Math.min(FLY.speedMax, FLY.speed * k));
+}, { passive: false });
 
 addEventListener('keydown', (e) => {
+  // Always-on shortcuts that don't depend on fly mode.
   const k = e.key.toLowerCase();
-  if (k === 'f') {
-    camera.position.set(...camPos);
-    controls.target.set(...camTgt);
+  if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); return; }
+  if (k === 'escape') { deselect(); return; }
+
+  // Single-letter editor verbs (only when not typing in an input).
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+
+  // Hold-keys for fly cam.
+  if (FLY.active || ['w','a','s','d','q','e','shift'].includes(k)) {
+    FLY.keys.add(k);
   }
-  if (k === 'g' && ground)   ground.visible   = !ground.visible;
-  if (k === 'l' && lights)   lights.visible   = !lights.visible;
-  if (k === 's')             markers.visible  = !markers.visible;
-  if (k === 'h' && hazardsG) hazardsG.visible = !hazardsG.visible;
-  if (k === 'c')             colliderGroup.visible = !colliderGroup.visible;
-  if (k === 'o') addObstacleAt(controls.target.x, controls.target.z);
-  if (k === 'x') {
-    while (obstacleGroup.children.length) obstacleGroup.remove(obstacleGroup.children[0]);
-    testObstacles.length = 0;
+
+  if (k === 'g' && (e.shiftKey || e.altKey)) {
+    // Hide ground decals (alternate binding to avoid collision with G=translate)
+    const dg = level.groups?.decals;
+    if (dg) dg.visible = !dg.visible;
+    return;
+  }
+  if (k === 'g')             { setMode('translate'); return; }
+  if (k === 'r')             { setMode('rotate'); return; }
+  if (k === 't')             { setMode('scale'); return; }
+  if (k === 'l' && level.groups?.lights)   { level.groups.lights.visible   = !level.groups.lights.visible; return; }
+  if (k === 's' && !FLY.active) { markers.visible = !markers.visible; return; }
+  if (k === 'h' && level.groups?.hazards)  { level.groups.hazards.visible  = !level.groups.hazards.visible; return; }
+  if (k === 'c')             { colliderGroup.visible = !colliderGroup.visible; return; }
+  if (k === 'f')             { resetCamera(); return; }
+  if (k === 'n')             { addAtCursor(); return; }
+  if (k === 'x' && selectedEntry) { deleteSelected(); return; }
+  if (k === '[' && selectedEntry) { cycleCategory(-1); return; }
+  if (k === ']' && selectedEntry) { cycleCategory(+1); return; }
+});
+addEventListener('keyup', (e) => {
+  FLY.keys.delete(e.key.toLowerCase());
+});
+
+function resetCamera() {
+  camera.position.set(...camHomePos);
+  const m = new THREE.Matrix4().lookAt(camera.position, new THREE.Vector3(...camHomeTgt), new THREE.Vector3(0, 1, 0));
+  camEuler.setFromRotationMatrix(m);
+  camera.quaternion.setFromEuler(camEuler);
+}
+
+function flyTick(dt) {
+  if (!FLY.keys.size) return;
+  let mul = 1;
+  if (FLY.keys.has('shift')) mul *= FLY.sprintMul;
+  const v = FLY.speed * mul * dt;
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  if (FLY.keys.has('w')) camera.position.addScaledVector(fwd,    v);
+  if (FLY.keys.has('s')) camera.position.addScaledVector(fwd,   -v);
+  if (FLY.keys.has('d')) camera.position.addScaledVector(right,  v);
+  if (FLY.keys.has('a')) camera.position.addScaledVector(right, -v);
+  if (FLY.keys.has('e')) camera.position.y += v;
+  if (FLY.keys.has('q')) camera.position.y -= v;
+}
+
+// ── Selection + TransformControls gizmo ────────────────────────────────────
+const transformControls = new TransformControls(camera, renderer.domElement);
+transformControls.size = 0.8;
+scene.add(transformControls);
+
+// Proxy object the gizmo manipulates. We sync between proxy ↔ collider bounds.
+const proxy = new THREE.Object3D();
+proxy.name = 'collider_edit_proxy';
+scene.add(proxy);
+
+let selectedEntry = null;
+let dragStartSnapshot = null;
+
+transformControls.addEventListener('dragging-changed', (e) => {
+  // Don't let the gizmo drag also rotate the camera.
+  if (e.value) {
+    dragStartSnapshot = snapshot();
+  } else if (dragStartSnapshot && dragStartSnapshot !== snapshot()) {
+    undoStack.push(dragStartSnapshot);
+    dragStartSnapshot = null;
+  }
+});
+transformControls.addEventListener('change', () => {
+  if (!selectedEntry) return;
+  // Mirror proxy → collider.bounds. Y rotation is allowed (rebakes AABB to
+  // world-aligned bounds of the rotated box) but tilt around X/Z is clamped
+  // because the collider system is axis-aligned.
+  proxy.rotation.x = 0;
+  proxy.rotation.z = 0;
+  proxy.scale.x = Math.max(0.05, proxy.scale.x);
+  proxy.scale.y = Math.max(0.05, proxy.scale.y);
+  proxy.scale.z = Math.max(0.05, proxy.scale.z);
+
+  const c = selectedEntry.collider;
+  const cx = proxy.position.x;
+  const cy = proxy.position.y;
+  const cz = proxy.position.z;
+  // For yaw: compute rotated half-extents along world X/Z, store as AABB.
+  const sx = proxy.scale.x;
+  const sy = proxy.scale.y;
+  const sz = proxy.scale.z;
+  const cosY = Math.abs(Math.cos(proxy.rotation.y));
+  const sinY = Math.abs(Math.sin(proxy.rotation.y));
+  const halfX = (sx * cosY + sz * sinY) / 2;
+  const halfZ = (sx * sinY + sz * cosY) / 2;
+  c.bounds = {
+    min: { x: cx - halfX, y: cy - sy / 2, z: cz - halfZ },
+    max: { x: cx + halfX, y: cy + sy / 2, z: cz + halfZ },
+  };
+  // Mirror to legacy fields.
+  c.x = cx; c.y = cz;
+  c.w = halfX * 2; c.h = halfZ * 2;
+  c.minY = c.bounds.min.y;
+  c.maxY = c.bounds.max.y;
+
+  refreshEntryVisual(selectedEntry);
+  recordModification(c);
+  refreshSelectedHud();
+});
+
+function setMode(mode) {
+  if (!selectedEntry) return;
+  if (mode === 'rotate') {
+    transformControls.setMode('rotate');
+    transformControls.showX = false;
+    transformControls.showZ = false;
+    transformControls.showY = true;
+  } else if (mode === 'scale') {
+    transformControls.setMode('scale');
+    transformControls.showX = true;
+    transformControls.showY = true;
+    transformControls.showZ = true;
+  } else {
+    transformControls.setMode('translate');
+    transformControls.showX = true;
+    transformControls.showY = true;
+    transformControls.showZ = true;
+  }
+}
+
+function select(entry) {
+  if (selectedEntry === entry) return;
+  if (selectedEntry) refreshEntryVisual(selectedEntry); // restore prev color
+  selectedEntry = entry;
+  if (!entry) {
+    transformControls.detach();
+    document.getElementById('sel').style.display = 'none';
+    document.getElementById('btn-delete').disabled = true;
+    return;
+  }
+  // Sync proxy from current bounds.
+  const { min, max } = entry.collider.bounds;
+  proxy.position.set((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
+  proxy.rotation.set(0, 0, 0);
+  proxy.scale.set(
+    Math.max(0.05, max.x - min.x),
+    Math.max(0.05, max.y - min.y),
+    Math.max(0.05, max.z - min.z),
+  );
+  transformControls.attach(proxy);
+  setMode('translate');
+  refreshEntryVisual(entry); // recolor selected
+  document.getElementById('sel').style.display = 'block';
+  document.getElementById('btn-delete').disabled = false;
+  refreshSelectedHud();
+}
+
+function deselect() { select(null); }
+
+function refreshSelectedHud() {
+  const e = selectedEntry;
+  if (!e) return;
+  const c = e.collider;
+  const { min, max } = c.bounds;
+  document.getElementById('sel-id').innerHTML =
+    `<b>id</b> ${c.editorId}${c.editorAdded ? ' <span style="color:#00ff44">[new]</span>' : ''}`;
+  document.getElementById('sel-bounds').innerHTML =
+    `<b>bounds</b> (${min.x.toFixed(1)}, ${min.y.toFixed(1)}, ${min.z.toFixed(1)}) → ` +
+    `(${max.x.toFixed(1)}, ${max.y.toFixed(1)}, ${max.z.toFixed(1)})<br>` +
+    `<b>size</b> ${(max.x - min.x).toFixed(2)} × ${(max.y - min.y).toFixed(2)} × ${(max.z - min.z).toFixed(2)}`;
+  document.getElementById('sel-category').value = c.category ?? 'solid';
+}
+
+document.getElementById('sel-category').addEventListener('change', (e) => {
+  if (!selectedEntry) return;
+  const c = selectedEntry.collider;
+  c.category = e.target.value;
+  refreshEntryVisual(selectedEntry);
+  recordModification(c);
+});
+
+// Click-to-select via raycast.
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;       // left only
+  if (FLY.active) return;            // selecting while flying is awkward
+  // Avoid stealing clicks meant for the gizmo.
+  if (transformControls.dragging) return;
+  ndc.x = (e.clientX / innerWidth)  * 2 - 1;
+  ndc.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const pickables = colliderEntries.map(en => en.pick);
+  const hits = raycaster.intersectObjects(pickables, false);
+  if (hits.length) {
+    const hit = hits[0].object;
+    select(hit.userData.colliderEntry);
+  } else {
+    deselect();
   }
 });
 
-// ── Export collision JSON ──────────────────────────────────────────────────
+// ── Edit operations ────────────────────────────────────────────────────────
+function recordModification(c) {
+  pushUndo();
+  if (c.editorAdded) {
+    // For added colliders we mutate the entry inside edits.colliders.added.
+    const idx = edits.colliders.added.findIndex(a => a._editorId === c.editorId);
+    const dat = {
+      bounds: { min: { ...c.bounds.min }, max: { ...c.bounds.max } },
+      category: c.category, tier: c.tier, tag: c.tag,
+      _editorId: c.editorId, // internal — stripped on save
+    };
+    if (idx >= 0) edits.colliders.added[idx] = dat;
+    else edits.colliders.added.push(dat);
+  } else {
+    edits.colliders.modified[c.editorId] = {
+      bounds: { min: { ...c.bounds.min }, max: { ...c.bounds.max } },
+      category: c.category, tier: c.tier, tag: c.tag,
+    };
+  }
+  setDirty();
+}
+
+function deleteSelected() {
+  if (!selectedEntry) return;
+  pushUndo();
+  const c = selectedEntry.collider;
+  // Remove from level.colliders + scene + entries.
+  const idxC = level.colliders.indexOf(c);
+  if (idxC >= 0) level.colliders.splice(idxC, 1);
+  colliderGroup.remove(selectedEntry.wf);
+  colliderGroup.remove(selectedEntry.pick);
+  selectedEntry.wf.geometry.dispose();
+  selectedEntry.wf.material.dispose();
+  selectedEntry.pick.geometry.dispose();
+  selectedEntry.pick.material.dispose();
+  const idxE = colliderEntries.indexOf(selectedEntry);
+  if (idxE >= 0) colliderEntries.splice(idxE, 1);
+  // Mark in edits log.
+  if (c.editorAdded) {
+    edits.colliders.added = edits.colliders.added.filter(a => a._editorId !== c.editorId);
+  } else {
+    delete edits.colliders.modified[c.editorId];
+    if (!edits.colliders.removed.includes(c.editorId)) edits.colliders.removed.push(c.editorId);
+  }
+  setDirty();
+  refreshStats();
+  deselect();
+}
+
+function addAtCursor() {
+  pushUndo();
+  // Drop a 2×2×2 box ~6m in front of the camera.
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const p = camera.position.clone().addScaledVector(fwd, 6);
+  // Snap Y to floor (>=0) by default.
+  const cy = Math.max(1, p.y);
+  const c = {
+    kind: 'aabb', type: 'aabb',
+    x: p.x, y: p.z, w: 2, h: 2,
+    tier: 'hard', category: 'solid', tag: 'editor',
+    minY: cy - 1, maxY: cy + 1,
+    bounds: {
+      min: { x: p.x - 1, y: cy - 1, z: p.z - 1 },
+      max: { x: p.x + 1, y: cy + 1, z: p.z + 1 },
+    },
+    jumpable: true, requires_crouch: false, tags: ['editor'],
+    editorId: nextAddedId(),
+    editorAdded: true,
+  };
+  level.colliders.push(c);
+  const e = buildEntryFor(c);
+  colliderEntries.push(e);
+  refreshStats();
+  // Track in edits log.
+  edits.colliders.added.push({
+    bounds: { min: { ...c.bounds.min }, max: { ...c.bounds.max } },
+    category: c.category, tier: c.tier, tag: c.tag,
+    _editorId: c.editorId,
+  });
+  setDirty();
+  select(e);
+}
+
+let _addedIdCounter = -1000;
+function nextAddedId() {
+  // Make sure we don't collide with anything already in edits.added.
+  for (const a of edits.colliders.added) {
+    if (a._editorId !== undefined && a._editorId <= _addedIdCounter) {
+      _addedIdCounter = a._editorId - 1;
+    }
+  }
+  return _addedIdCounter--;
+}
+
+const CATEGORY_CYCLE = ['solid','cover','destructible','trigger','climbable','passthrough'];
+function cycleCategory(dir) {
+  if (!selectedEntry) return;
+  const c = selectedEntry.collider;
+  const idx = CATEGORY_CYCLE.indexOf(c.category);
+  const nxt = CATEGORY_CYCLE[(idx + dir + CATEGORY_CYCLE.length) % CATEGORY_CYCLE.length];
+  c.category = nxt;
+  refreshEntryVisual(selectedEntry);
+  recordModification(c);
+  refreshSelectedHud();
+}
+
+// ── Save / revert / export ─────────────────────────────────────────────────
+function serializeEdits() {
+  const out = {
+    colliders: {
+      modified: edits.colliders.modified,
+      removed:  edits.colliders.removed,
+      added:    edits.colliders.added.map(a => ({
+        bounds: { min: { ...a.bounds.min }, max: { ...a.bounds.max } },
+        category: a.category, tier: a.tier, tag: a.tag,
+      })),
+    },
+  };
+  return out;
+}
+
+async function save() {
+  const data = serializeEdits();
+  try {
+    const res = await fetch('/dev/write-back', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: `level-edit:${entry.id}`, data }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setClean();
+    flashStatus('saved ✓', 'clean');
+  } catch (err) {
+    // No dev server — fall back to download.
+    console.warn('[level-editor] write-back failed; falling back to download:', err);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${entry.id}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    flashStatus('downloaded (no dev server)', 'err');
+  }
+}
+
+function revert() {
+  if (!confirm('Discard all unsaved edits since last save? Page reload required.')) return;
+  // Easiest correct revert is a reload — current edits live in this session.
+  location.reload();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  const prev = undoStack.pop();
+  // Restoring is non-trivial because it would require tearing down + reapplying
+  // edits to the level mesh state. For now we just restore the edits log and
+  // tell the user to reload to see effects.
+  Object.assign(edits, JSON.parse(prev));
+  flashStatus('undo logged — reload to apply', 'err');
+}
+
+document.getElementById('btn-save').addEventListener('click', save);
+document.getElementById('btn-revert').addEventListener('click', revert);
+document.getElementById('btn-new').addEventListener('click', addAtCursor);
+document.getElementById('btn-delete').addEventListener('click', deleteSelected);
 document.getElementById('btn-export').addEventListener('click', () => {
+  // The legacy "export collision JSON" dump (full collider table, not edits).
   if (typeof exportColliderJSON !== 'function') {
-    console.warn(`Level '${entry.id}' has no exportColliderJSON export`);
+    flashStatus('no exporter on this level', 'err');
     return;
   }
   const json = exportColliderJSON(level);
@@ -302,6 +828,11 @@ document.getElementById('btn-export').addEventListener('click', () => {
   a.href = URL.createObjectURL(blob);
   a.download = `${entry.id}-colliders.json`;
   a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+addEventListener('beforeunload', (e) => {
+  if (dirty) { e.preventDefault(); e.returnValue = ''; }
 });
 
 // ── Resize ──────────────────────────────────────────────────────────────────
@@ -318,19 +849,24 @@ const clock = new THREE.Clock();
 function tick() {
   const dt = Math.min(0.05, clock.getDelta());
   const t = clock.elapsedTime;
-  level.update?.(dt, t, { obstacles: testObstacles });
-  if (colliderGroup.visible) syncDynamicWireframes();
-  controls.update();
+  flyTick(dt);
+  level.update?.(dt, t, { obstacles: [] });
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
 }
 tick();
 
-// Expose for devtools — keyed both by generic name and the level-specific
-// shim some tooling expects (e.g. window.__kabukicho).
-window.__levelPreview = { THREE, scene, camera, level, controls, testObstacles, addObstacleAt, entry };
-window[`__${entry.id}`] = window.__levelPreview;
-console.log(`[level:${entry.id}] loaded — meshes: ${meshCount}, colliders: ${cs.length}`);
+// Expose for devtools.
+window.__levelEditor = {
+  THREE, scene, camera, level, entry,
+  edits, save, deselect, addAtCursor, deleteSelected,
+  selectAtId(id) {
+    const e = colliderEntries.find(en => en.collider.editorId === id);
+    if (e) select(e);
+  },
+};
+window[`__${entry.id}`] = window.__levelEditor;
+console.log(`[level-editor:${entry.id}] loaded — meshes: ${meshCount}, colliders: ${level.colliders.length}, savedEdits:`, savedEdits);
 </script>
 </body>
 </html>

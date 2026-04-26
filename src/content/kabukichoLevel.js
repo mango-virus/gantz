@@ -2270,6 +2270,12 @@ function pushAABB(colliders, x, z, w, d, opts = {}) {
     jumpable,
     requires_crouch,
     tags,
+    // ── Editor identity ──
+    // Sequential, build-order index — assigned just below. Stable across
+    // reloads as long as the build is deterministic, so override JSON
+    // entries that target a specific collider keep targeting the right
+    // one without us having to embed string ids in the source.
+    editorId: colliders.length,
   };
   colliders.push(c);
   return c;

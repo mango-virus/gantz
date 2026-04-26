@@ -26,6 +26,7 @@ import {
   LEVEL_BOUNDS as KABUKICHO_BOUNDS_3D,
   SPAWNS as KABUKICHO_SPAWNS,
 } from './src/content/kabukichoLevel.js';
+import { applyLevelEdits, loadLevelEdits } from './src/content/levelEdits.js';
 
 // Game-coords (2D xy) wrapper around the level's 3D bounds (xz).
 // All gameplay/AI/spawn helpers work in 2D, so they expect minY/maxY where
@@ -4452,12 +4453,33 @@ let missionLevel = null; // live kabukichō level instance (root group + collide
 // and reuse forever. Pre-built during BRIEFING so the freeze is masked behind
 // the briefing screen on the first mission of a session.
 let _kabukichoLevelCache = null;
+// Saved-edits overlay (collider tweaks made in the level editor at level.html
+// and persisted to assets/data/level-edits/kabukicho.json). The fetch is
+// kicked off at module load so it's usually resolved before BRIEFING fires.
+// Applied to the level cache exactly once — if the level got built before
+// edits arrived, the promise tail-applies them in place.
+let _kabukichoEdits = null;
+let _kabukichoEditsApplied = false;
+const _kabukichoEditsPromise = loadLevelEdits('kabukicho').then((e) => {
+  _kabukichoEdits = e;
+  if (_kabukichoLevelCache && e && !_kabukichoEditsApplied) {
+    applyLevelEdits(_kabukichoLevelCache, e);
+    _kabukichoEditsApplied = true;
+    console.log('[gantz] applied late kabukichō level edits:', e);
+  }
+}).catch(() => { /* no edits file = unedited level */ });
+
 function ensureKabukichoLevel() {
   if (_kabukichoLevelCache) return _kabukichoLevelCache;
   _kabukichoLevelCache = buildKabukichoLevel(THREE);
   // Tag root so scene3d.clearRoom() removes it from the scene without
   // disposing geometries/materials we'll need on the next mission.
   _kabukichoLevelCache.root.userData.persistent = true;
+  if (_kabukichoEdits && !_kabukichoEditsApplied) {
+    applyLevelEdits(_kabukichoLevelCache, _kabukichoEdits);
+    _kabukichoEditsApplied = true;
+    console.log('[gantz] applied kabukichō level edits at build time');
+  }
   return _kabukichoLevelCache;
 }
 let missionProps = [];
@@ -5231,8 +5253,13 @@ function enterPhase(newPhase) {
     // Pre-build the Kabukichō level on a microtask so the heavy first-build
     // cost is paid while the briefing screen is up rather than during the
     // MISSION transition (where it would freeze gameplay). No-op if cached.
+    // Wait for the edits-overlay fetch first so saved collider tweaks are
+    // baked in before the player ever steps into the map. (Fetch is a
+    // tiny same-origin JSON; in the worst case it falls through fast.)
     if (!_kabukichoLevelCache) {
-      Promise.resolve().then(() => { try { ensureKabukichoLevel(); } catch (e) { console.error(e); } });
+      _kabukichoEditsPromise.then(() => {
+        try { ensureKabukichoLevel(); } catch (e) { console.error(e); }
+      });
     }
     _briefingRevealAt = -1;
     _briefingContentDoneAt = -1;
