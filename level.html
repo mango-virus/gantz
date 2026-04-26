@@ -88,7 +88,7 @@
     · <span class="k">[ / ]</span> cycle category
     · <span class="k">Shift+click</span> multi-select
     · <span class="k">J</span> toggle snap
-    · <span class="k">Ctrl+S</span> save · <span class="k">Ctrl+Z</span> undo
+    · <span class="k">Ctrl+S</span> save · <span class="k">Ctrl+Z</span> undo · <span class="k">Ctrl+Y</span> redo
   </div>
   <div class="row"><b>View</b>
     · <span class="k">F</span> reset cam
@@ -138,6 +138,7 @@
 </div>
 <div id="status">
   <span class="clean" id="status-text">no edits</span>
+  <span id="undo-hud" title="Undo / redo stack" style="margin-left:10px;color:#7da6ff;font-size:11px;">↶0 ↷0</span>
 </div>
 
 <script type="importmap">
@@ -232,9 +233,54 @@ const edits = {
 };
 // Track dirty since last save.
 let dirty = false;
+
+// ── Command stack (real undo/redo) ─────────────────────────────────────────
+//
+// Each user-level action wraps both the live-scene mutation and the edits-log
+// mutation as a Command with do()/undo() callbacks. Ctrl+Z runs the top
+// command's undo() and pushes it onto the redo stack; Ctrl+Y / Ctrl+Shift+Z
+// runs do() and pops back. The `_applying` guard prevents commands from
+// re-pushing during apply (the inner record* helpers also check it). A new
+// push always clears the redo stack.
 const undoStack = [];
-function snapshot() { return JSON.stringify(edits); }
-function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 50) undoStack.shift(); }
+const redoStack = [];
+const MAX_UNDO  = 100;
+let _applying = false;
+
+function pushCmd(cmd) {
+  if (_applying) return;
+  undoStack.push(cmd);
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+  redoStack.length = 0;
+  setDirty();
+  refreshUndoHud();
+}
+function _runCmd(cmd, dir) {
+  _applying = true;
+  try { cmd[dir](); }
+  catch (err) { console.warn('[level-editor] command apply failed:', err); }
+  finally { _applying = false; }
+}
+function undoOne() {
+  const cmd = undoStack.pop();
+  if (!cmd) { flashStatus('nothing to undo', 'err'); return; }
+  _runCmd(cmd, 'undo');
+  redoStack.push(cmd);
+  refreshUndoHud();
+  flashStatus(`undo: ${cmd.label || 'edit'}`, 'clean');
+}
+function redoOne() {
+  const cmd = redoStack.pop();
+  if (!cmd) { flashStatus('nothing to redo', 'err'); return; }
+  _runCmd(cmd, 'do');
+  undoStack.push(cmd);
+  refreshUndoHud();
+  flashStatus(`redo: ${cmd.label || 'edit'}`, 'clean');
+}
+function refreshUndoHud() {
+  const el = document.getElementById('undo-hud');
+  if (el) el.textContent = `↶${undoStack.length} ↷${redoStack.length}`;
+}
 function setDirty() {
   dirty = true;
   const el = document.getElementById('status-text');
@@ -567,7 +613,9 @@ addEventListener('keydown', (e) => {
   // Always-on shortcuts that don't depend on fly mode.
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); return; }
-  if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'z' && e.shiftKey) { e.preventDefault(); redoOne(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undoOne(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); redoOne(); return; }
   if ((e.ctrlKey || e.metaKey) && k === 'd') { e.preventDefault(); duplicateSelection(); return; }
   if (k === 'escape') { deselect(); return; }
 
@@ -670,7 +718,10 @@ let selectedEntry = null;
 // own visual indicator. While extras > 0 we force translate mode.
 const selectionExtras = [];
 
-let dragStartSnapshot = null;
+// Captured state of every selected member at gizmo drag start. On drag end
+// we capture again, diff, and push a single TransformCmd so the entire
+// drag is one undo step.
+let dragStartCaptures = null;
 // Snapshot of every selection-extra's origin captured at drag start, used
 // to apply a stable delta during multi-translate (no accumulated error
 // across many objectChange events).
@@ -819,12 +870,24 @@ function refreshEntityOutline(group) {
 
 transformControls.addEventListener('dragging-changed', (e) => {
   if (e.value) {
-    dragStartSnapshot = snapshot();
+    // Drag start — capture pre-drag state of every selected member so the
+    // entire drag becomes one undoable command.
+    const items = [selection, ...selectionExtras].filter(Boolean);
+    dragStartCaptures = items.map(_captureItemState).filter(Boolean);
     multiDrag = selectionExtras.length ? captureMultiOrigins() : null;
   } else {
-    if (dragStartSnapshot && dragStartSnapshot !== snapshot()) {
-      undoStack.push(dragStartSnapshot);
-      dragStartSnapshot = null;
+    // Drag end — capture after-state (by editorId / index from the before
+    // snapshots) and push a single TransformCmd if anything changed.
+    if (dragStartCaptures && dragStartCaptures.length) {
+      const after = dragStartCaptures.map(b => {
+        if (b.kind === 'collider') {
+          const en = colliderEntries.find(e => e.collider.editorId === b.editorId);
+          return en ? _captureColliderState(en.collider) : null;
+        }
+        return _captureEntityState(b.kind, b.index);
+      }).filter(Boolean);
+      pushTransformCmd(dragStartCaptures, after);
+      dragStartCaptures = null;
     }
     multiDrag = null;
   }
@@ -964,9 +1027,9 @@ function rebuildExtraOutline(item) {
 function translateSelectionBy(dx, dz, dy = 0) {
   if (!selection && !selectionExtras.length) return;
   if (!dx && !dz && !dy) return;
-  pushUndo();
-  for (const item of [selection, ...selectionExtras]) {
-    if (!item) continue;
+  const items = [selection, ...selectionExtras].filter(Boolean);
+  const before = items.map(_captureItemState).filter(Boolean);
+  for (const item of items) {
     if (item.kind === 'collider') {
       const c = item.entry.collider;
       const b = c.bounds;
@@ -1001,16 +1064,21 @@ function translateSelectionBy(dx, dz, dy = 0) {
   }
   syncProxyToPrimary();
   refreshSelectedHud();
+  const after = items.map(_captureItemState).filter(Boolean);
+  pushTransformCmd(before, after);
 }
 
 function rotateSelectionBy(dr) {
   if (!selection && !selectionExtras.length) return;
   if (!dr) return;
-  pushUndo();
-  let rotated = 0;
-  for (const item of [selection, ...selectionExtras]) {
-    if (!item) continue;
-    if (item.kind !== 'prop' && item.kind !== 'building') continue;
+  const items = [selection, ...selectionExtras]
+    .filter(it => it && (it.kind === 'prop' || it.kind === 'building'));
+  if (!items.length) {
+    flashStatus('rotate is for props/buildings only', 'err');
+    return;
+  }
+  const before = items.map(_captureItemState).filter(Boolean);
+  for (const item of items) {
     const list = item.kind === 'prop' ? level.props : level.buildings;
     const spec = list?.[item.index];
     if (!spec) continue;
@@ -1026,14 +1094,11 @@ function rotateSelectionBy(dr) {
     } else {
       rebuildExtraOutline(item);
     }
-    rotated++;
-  }
-  if (!rotated) {
-    flashStatus('rotate is for props/buildings only', 'err');
-    return;
   }
   syncProxyToPrimary();
   refreshSelectedHud();
+  const after = items.map(_captureItemState).filter(Boolean);
+  pushTransformCmd(before, after, `rotate ${items.length} item${items.length === 1 ? '' : 's'}`);
 }
 
 transformControls.addEventListener('objectChange', () => {
@@ -1323,6 +1388,7 @@ function onEntityFieldChange(key, value) {
   const spec = sel.spec;
   if (!spec) return;
   if (spec[key] === value) return;
+  const before = _captureEntityState(sel.kind, sel.index);
   spec[key] = value;
   const rebuild = sel.kind === 'prop' ? level.rebuildProp : level.rebuildBuilding;
   if (typeof rebuild === 'function') rebuild(sel.index);
@@ -1337,6 +1403,8 @@ function onEntityFieldChange(key, value) {
   refreshStats();
   recordFieldEdit(sel, key, value);
   refreshSelectedHud();
+  const after = _captureEntityState(sel.kind, sel.index);
+  pushTransformCmd([before], [after], `edit ${sel.kind} ${key}`);
 }
 
 function refreshSelectedHud() {
@@ -1394,14 +1462,17 @@ function refreshSelectedHud() {
 document.getElementById('sel-category').addEventListener('change', (e) => {
   if (!selection || selection.kind !== 'collider') return;
   const c = selection.entry.collider;
+  if (c.category === e.target.value) return;
+  const before = _captureColliderState(c);
   c.category = e.target.value;
   refreshEntryVisual(selection.entry);
   recordModification(c);
+  const after = _captureColliderState(c);
+  pushTransformCmd([before], [after], `category → ${c.category}`);
 });
 
 function recordEntityEdit(sel) {
   if (!sel || sel.kind === 'collider') return;
-  pushUndo();
   const spec = sel.spec ?? {};
   const section = sel.kind === 'prop' ? edits.props : edits.buildings;
   // Merge so previously-recorded type-specific fields (text, color, …)
@@ -1419,7 +1490,6 @@ function recordEntityEdit(sel) {
 // onto the modified entry without disturbing x/z/rot.
 function recordFieldEdit(sel, key, value) {
   if (!sel || sel.kind === 'collider') return;
-  pushUndo();
   const section = sel.kind === 'prop' ? edits.props : edits.buildings;
   const cur = section.modified[sel.index] ?? {};
   section.modified[sel.index] = { ...cur, [key]: value };
@@ -1473,9 +1543,398 @@ function findEditorRef(obj) {
   return null;
 }
 
+// ── Undo/redo state helpers ────────────────────────────────────────────────
+//
+// `_capture*` functions snapshot just enough live + edits-log state for a
+// command's before/after pair. `_apply*` writes a snapshot back into the
+// live scene. Together they let TransformCmd / FieldCmd / CategoryCmd swap
+// state symmetrically. `_recreateMember` / `_destroyMember` are the heavier
+// lifecycle pair used by Add/Delete commands.
+//
+// Internal markers (`_addId`, `_editorId`) are stripped on save (see
+// `serializeEdits`). They never leave this session.
+
+let _addIdCounter = 1;
+function _nextAddId() { return _addIdCounter++; }
+
+function _stampAddedSlot(section, slot) {
+  // Tag a freshly-pushed edits.<kind>.added entry with a stable id so undo
+  // can find and remove it later. Returns the id.
+  const id = _nextAddId();
+  slot._addId = id;
+  return id;
+}
+
+// ── Live state snapshots (reversible mutations) ────────────────────────────
+function _captureColliderState(c) {
+  if (!c) return null;
+  return {
+    kind: 'collider',
+    editorId: c.editorId,
+    bounds: { min: { ...c.bounds.min }, max: { ...c.bounds.max } },
+    category: c.category, tier: c.tier, tag: c.tag,
+    editorAdded: !!c.editorAdded,
+    modifiedSlot: edits.colliders.modified[c.editorId]
+      ? JSON.parse(JSON.stringify(edits.colliders.modified[c.editorId]))
+      : null,
+    addedSlot: c.editorAdded
+      ? JSON.parse(JSON.stringify(
+          edits.colliders.added.find(a => a._editorId === c.editorId) ?? null))
+      : null,
+  };
+}
+function _applyColliderState(snap) {
+  if (!snap) return;
+  const c = level.colliders.find(x => x.editorId === snap.editorId);
+  if (!c) return;
+  c.bounds = { min: { ...snap.bounds.min }, max: { ...snap.bounds.max } };
+  c.x = (c.bounds.min.x + c.bounds.max.x) / 2;
+  c.y = (c.bounds.min.z + c.bounds.max.z) / 2;
+  c.w = c.bounds.max.x - c.bounds.min.x;
+  c.h = c.bounds.max.z - c.bounds.min.z;
+  c.minY = c.bounds.min.y;
+  c.maxY = c.bounds.max.y;
+  c.category = snap.category;
+  c.tier     = snap.tier;
+  c.tag      = snap.tag;
+  const entry = colliderEntries.find(en => en.collider === c);
+  if (entry) refreshEntryVisual(entry);
+  if (snap.modifiedSlot) {
+    edits.colliders.modified[snap.editorId] = JSON.parse(JSON.stringify(snap.modifiedSlot));
+  } else {
+    delete edits.colliders.modified[snap.editorId];
+  }
+  if (snap.editorAdded) {
+    const idx = edits.colliders.added.findIndex(a => a._editorId === snap.editorId);
+    if (snap.addedSlot) {
+      const dat = JSON.parse(JSON.stringify(snap.addedSlot));
+      if (idx >= 0) edits.colliders.added[idx] = dat;
+      else edits.colliders.added.push(dat);
+    } else if (idx >= 0) {
+      edits.colliders.added.splice(idx, 1);
+    }
+  }
+}
+
+function _captureEntityState(kind, index) {
+  const list = kind === 'prop' ? level.props : level.buildings;
+  const spec = list?.[index];
+  if (!spec) return null;
+  const section = kind === 'prop' ? edits.props : edits.buildings;
+  return {
+    kind, index,
+    spec: JSON.parse(JSON.stringify(spec)),
+    modifiedSlot: index in section.modified
+      ? JSON.parse(JSON.stringify(section.modified[index]))
+      : null,
+  };
+}
+function _applyEntityState(snap) {
+  if (!snap) return;
+  const list = snap.kind === 'prop' ? level.props : level.buildings;
+  const spec = list?.[snap.index];
+  if (!spec) return;
+  // Replace spec contents with snapshot. Wipe extant keys first so removed
+  // fields reset properly.
+  for (const k of Object.keys(spec)) delete spec[k];
+  Object.assign(spec, JSON.parse(JSON.stringify(snap.spec)));
+  // Rebuild mesh + tagged colliders from new spec.
+  const rebuild = snap.kind === 'prop' ? level.rebuildProp : level.rebuildBuilding;
+  if (typeof rebuild === 'function') rebuild(snap.index);
+  resyncColliderEntries();
+  // Restore the modified slot.
+  const section = snap.kind === 'prop' ? edits.props : edits.buildings;
+  if (snap.modifiedSlot) {
+    section.modified[snap.index] = JSON.parse(JSON.stringify(snap.modifiedSlot));
+  } else {
+    delete section.modified[snap.index];
+  }
+}
+
+function _captureItemState(item) {
+  if (!item) return null;
+  if (item.kind === 'collider') return _captureColliderState(item.entry?.collider);
+  return _captureEntityState(item.kind, item.index);
+}
+function _applyItemState(snap) {
+  if (!snap) return;
+  if (snap.kind === 'collider') _applyColliderState(snap);
+  else _applyEntityState(snap);
+}
+
+// ── Lifecycle (add/delete) snapshots ───────────────────────────────────────
+function _captureMemberLifecycle(item) {
+  if (!item) return null;
+  if (item.kind === 'collider') {
+    const c = item.entry?.collider;
+    if (!c) return null;
+    return {
+      kind: 'collider',
+      editorId: c.editorId,
+      bounds: { min: { ...c.bounds.min }, max: { ...c.bounds.max } },
+      category: c.category, tier: c.tier, tag: c.tag,
+      cType: c.type ?? 'aabb',
+      cKind: c.kind ?? 'aabb',
+      jumpable: !!c.jumpable,
+      requires_crouch: !!c.requires_crouch,
+      tags: Array.isArray(c.tags) ? c.tags.slice() : [],
+      propIndex: c.propIndex,
+      buildingIndex: c.buildingIndex,
+      editorAdded: !!c.editorAdded,
+      addedSlot: c.editorAdded
+        ? JSON.parse(JSON.stringify(
+            edits.colliders.added.find(a => a._editorId === c.editorId) ?? null))
+        : null,
+      modifiedSlot: edits.colliders.modified[c.editorId]
+        ? JSON.parse(JSON.stringify(edits.colliders.modified[c.editorId]))
+        : null,
+    };
+  }
+  if (item.kind === 'prop' || item.kind === 'building') {
+    const list = item.kind === 'prop' ? level.props : level.buildings;
+    const spec = list?.[item.index];
+    if (!spec) return null;
+    const section = item.kind === 'prop' ? edits.props : edits.buildings;
+    // Find the matching added-slot via _addId (set when we initially pushed).
+    const addedSlotEntry = spec._addId
+      ? section.added.find(a => a._addId === spec._addId)
+      : null;
+    return {
+      kind: item.kind,
+      index: item.index,
+      spec: JSON.parse(JSON.stringify(spec)),
+      editorAdded: !!spec.editorAdded,
+      addId: spec._addId ?? null,
+      addedSlot: addedSlotEntry ? JSON.parse(JSON.stringify(addedSlotEntry)) : null,
+      modifiedSlot: item.index in section.modified
+        ? JSON.parse(JSON.stringify(section.modified[item.index]))
+        : null,
+    };
+  }
+  return null;
+}
+
+// Re-create a member from its lifecycle snapshot. Used by:
+//   • undo of a delete (bring it back to life)
+//   • redo of an add (re-create after an undo)
+function _recreateMember(snap) {
+  if (!snap) return;
+  if (snap.kind === 'collider') {
+    if (level.colliders.some(c => c.editorId === snap.editorId)) return; // already alive
+    const cx = (snap.bounds.min.x + snap.bounds.max.x) / 2;
+    const cz = (snap.bounds.min.z + snap.bounds.max.z) / 2;
+    const c = {
+      kind: snap.cKind, type: snap.cType,
+      x: cx, y: cz,
+      w: snap.bounds.max.x - snap.bounds.min.x,
+      h: snap.bounds.max.z - snap.bounds.min.z,
+      tier: snap.tier, category: snap.category, tag: snap.tag,
+      minY: snap.bounds.min.y, maxY: snap.bounds.max.y,
+      bounds: { min: { ...snap.bounds.min }, max: { ...snap.bounds.max } },
+      jumpable: snap.jumpable,
+      requires_crouch: snap.requires_crouch,
+      tags: Array.isArray(snap.tags) ? snap.tags.slice() : [],
+      editorId: snap.editorId,
+      editorAdded: snap.editorAdded,
+    };
+    if (snap.propIndex !== undefined)     c.propIndex     = snap.propIndex;
+    if (snap.buildingIndex !== undefined) c.buildingIndex = snap.buildingIndex;
+    level.colliders.push(c);
+    const e = buildEntryFor(c);
+    if (e) colliderEntries.push(e);
+    // Restore edits state.
+    if (snap.editorAdded && snap.addedSlot) {
+      const idx = edits.colliders.added.findIndex(a => a._editorId === snap.editorId);
+      const dat = JSON.parse(JSON.stringify(snap.addedSlot));
+      if (idx >= 0) edits.colliders.added[idx] = dat;
+      else edits.colliders.added.push(dat);
+    }
+    if (snap.modifiedSlot) {
+      edits.colliders.modified[snap.editorId] =
+        JSON.parse(JSON.stringify(snap.modifiedSlot));
+    }
+    // Make sure it's not still flagged removed.
+    const ri = edits.colliders.removed.indexOf(snap.editorId);
+    if (ri >= 0) edits.colliders.removed.splice(ri, 1);
+    return;
+  }
+  if (snap.kind === 'prop' || snap.kind === 'building') {
+    const list = snap.kind === 'prop' ? level.props : level.buildings;
+    while (list.length <= snap.index) list.push(null);
+    const fresh = JSON.parse(JSON.stringify(snap.spec));
+    delete fresh._removed;
+    list[snap.index] = fresh;
+    const rebuild = snap.kind === 'prop' ? level.rebuildProp : level.rebuildBuilding;
+    if (typeof rebuild === 'function') rebuild(snap.index);
+    syncColliderEntries();
+    const section = snap.kind === 'prop' ? edits.props : edits.buildings;
+    // Drop from removed (if listed).
+    const ri = section.removed.indexOf(snap.index);
+    if (ri >= 0) section.removed.splice(ri, 1);
+    // Re-attach the added slot if applicable.
+    if (snap.editorAdded && snap.addedSlot) {
+      const exists = snap.addId != null
+        && section.added.some(a => a._addId === snap.addId);
+      if (!exists) {
+        section.added.push(JSON.parse(JSON.stringify(snap.addedSlot)));
+      }
+    }
+    if (snap.modifiedSlot) {
+      section.modified[snap.index] =
+        JSON.parse(JSON.stringify(snap.modifiedSlot));
+    }
+  }
+}
+
+// Tear down a member. Inverse of `_recreateMember`. Used by:
+//   • undo of an add (remove the new item)
+//   • redo of a delete (re-delete after an undo)
+function _destroyMember(snap) {
+  if (!snap) return;
+  if (snap.kind === 'collider') {
+    const c = level.colliders.find(x => x.editorId === snap.editorId);
+    if (c) {
+      const idxC = level.colliders.indexOf(c);
+      if (idxC >= 0) level.colliders.splice(idxC, 1);
+      const entry = colliderEntries.find(en => en.collider === c);
+      if (entry) {
+        colliderGroup.remove(entry.wf);
+        colliderGroup.remove(entry.pick);
+        entry.wf.geometry.dispose(); entry.wf.material.dispose();
+        entry.pick.geometry.dispose(); entry.pick.material.dispose();
+        const idxE = colliderEntries.indexOf(entry);
+        if (idxE >= 0) colliderEntries.splice(idxE, 1);
+      }
+    }
+    if (snap.editorAdded) {
+      // Synthetic — drop from edits.colliders.added entirely.
+      edits.colliders.added = edits.colliders.added.filter(a => a._editorId !== snap.editorId);
+    } else {
+      // Original level data — record as removed.
+      delete edits.colliders.modified[snap.editorId];
+      if (!edits.colliders.removed.includes(snap.editorId)) {
+        edits.colliders.removed.push(snap.editorId);
+      }
+    }
+    return;
+  }
+  if (snap.kind === 'prop' || snap.kind === 'building') {
+    _deleteEntityItem(snap.kind, snap.index);
+    if (snap.editorAdded) {
+      const section = snap.kind === 'prop' ? edits.props : edits.buildings;
+      // Strip the added entry (identified by _addId) so it doesn't survive
+      // to save. Also drop from .removed (a synthetic entity should never
+      // appear there — it didn't exist in the source level).
+      if (snap.addId != null) {
+        const ri = section.added.findIndex(a => a._addId === snap.addId);
+        if (ri >= 0) section.added.splice(ri, 1);
+      }
+      const rri = section.removed.indexOf(snap.index);
+      if (rri >= 0) section.removed.splice(rri, 1);
+    }
+  }
+}
+
+// After a transform command applies, the live spec/group/bounds of the
+// selected items have shifted. Re-resolve group refs, reattach outlines,
+// resync the gizmo proxy, and refresh HUD — all without clearing the
+// selection (so the user can chain more edits).
+function _postApplyTransform() {
+  if (selection) {
+    if (selection.kind === 'prop' || selection.kind === 'building') {
+      selection.group = findEntityGroup(selection.kind, selection.index);
+      const list = selection.kind === 'prop' ? level.props : level.buildings;
+      selection.spec = list?.[selection.index];
+      if (selection.group) {
+        selection.proxyY = selection.group.position.y ?? 0;
+        refreshEntityOutline(selection.group);
+      }
+    } else if (selection.kind === 'collider') {
+      const e = colliderEntries.find(en => en.collider === selection.entry?.collider);
+      if (e) {
+        selection.entry = e;
+        selectedEntry = e;
+        refreshEntryVisual(e);
+      }
+    }
+    syncProxyToPrimary();
+  }
+  for (const ex of selectionExtras) {
+    if (ex.kind === 'prop' || ex.kind === 'building') {
+      ex.group = findEntityGroup(ex.kind, ex.index);
+      const list = ex.kind === 'prop' ? level.props : level.buildings;
+      ex.spec = list?.[ex.index];
+      rebuildExtraOutline(ex);
+    } else if (ex.kind === 'collider') {
+      // collider extras' .entry is rebuilt by refreshEntryVisual already
+      const e = colliderEntries.find(en => en.collider === ex.entry?.collider);
+      if (e) { ex.entry = e; refreshEntryVisual(e); }
+    }
+  }
+  refreshSelectedHud();
+  refreshStats();
+}
+
+// Push an AddCmd. `snaps` is an array of `_captureMemberLifecycle` results
+// taken AFTER the items were initially created. The cmd's undo() destroys
+// them; do() (used for redo) recreates them.
+function pushAddCmd(snaps, label) {
+  if (!snaps || !snaps.length) return;
+  const list = JSON.parse(JSON.stringify(snaps));
+  pushCmd({
+    label: label || `add ${list.length} item${list.length === 1 ? '' : 's'}`,
+    do()   { for (const s of list) _recreateMember(s); _clearSelectionForCmd(); },
+    undo() { for (const s of list) _destroyMember(s);  _clearSelectionForCmd(); },
+  });
+}
+
+// Push a DeleteCmd. `snaps` are taken BEFORE deletion (the items still
+// existed). The cmd's undo() recreates them; do() (used for redo)
+// re-destroys them.
+function pushDeleteCmd(snaps, label) {
+  if (!snaps || !snaps.length) return;
+  const list = JSON.parse(JSON.stringify(snaps));
+  pushCmd({
+    label: label || `delete ${list.length} item${list.length === 1 ? '' : 's'}`,
+    do()   { for (const s of list) _destroyMember(s);  _clearSelectionForCmd(); },
+    undo() { for (const s of list) _recreateMember(s); _clearSelectionForCmd(); },
+  });
+}
+
+// Push a TransformCmd if `before` and `after` actually differ. Both arrays
+// hold _captureItemState snapshots of the same N members in the same order.
+function pushTransformCmd(before, after, label) {
+  if (!before?.length || !after?.length) return;
+  if (JSON.stringify(before) === JSON.stringify(after)) return; // no-op
+  const beforeCopy = JSON.parse(JSON.stringify(before));
+  const afterCopy  = JSON.parse(JSON.stringify(after));
+  pushCmd({
+    label: label || `move ${beforeCopy.length} item${beforeCopy.length === 1 ? '' : 's'}`,
+    do()   { for (const s of afterCopy)  _applyItemState(s); _postApplyTransform(); },
+    undo() { for (const s of beforeCopy) _applyItemState(s); _postApplyTransform(); },
+  });
+}
+
+// Drop the selection (visual + state). Called by command apply functions
+// because re-created/destroyed items invalidate stale `selection` refs.
+function _clearSelectionForCmd() {
+  clearAllExtras();
+  if (selection?.kind === 'collider') {
+    const e = selection.entry;
+    if (e && colliderEntries.includes(e)) refreshEntryVisual(e);
+  }
+  clearEntityOutline();
+  selection = null;
+  selectedEntry = null;
+  transformControls.detach();
+  document.getElementById('sel').style.display = 'none';
+  document.getElementById('btn-delete').disabled = true;
+  refreshSelectedHud();
+  refreshStats();
+}
+
 // ── Edit operations ────────────────────────────────────────────────────────
 function recordModification(c) {
-  pushUndo();
   if (c.editorAdded) {
     // For added colliders we mutate the entry inside edits.colliders.added.
     const idx = edits.colliders.added.findIndex(a => a._editorId === c.editorId);
@@ -1500,13 +1959,16 @@ function recordModification(c) {
 // dangling outlines or HUD state pointing at deleted entities.
 function deleteSelected() {
   if (!selection && !selectionExtras.length) return;
-  pushUndo();
   // Snapshot members up front — entry/index references stay valid for the
   // life of this call (collider entries are per-instance; prop/building
   // indices are tombstoned, not shifted).
   const items = [];
   if (selection) items.push(selection);
   for (const ex of selectionExtras) items.push(ex);
+
+  // Capture lifecycle snapshots for each member BEFORE deletion so undo can
+  // recreate them exactly.
+  const lifecycleSnaps = items.map(_captureMemberLifecycle).filter(Boolean);
 
   // Clear extras outlines BEFORE we touch the underlying state, since
   // detachExtraOutline calls refreshEntryVisual which reads collider entries.
@@ -1517,6 +1979,19 @@ function deleteSelected() {
   for (const it of items) {
     if (it.kind === 'collider')                          { _deleteColliderItem(it.entry); counts.collider++; }
     else if (it.kind === 'prop' || it.kind === 'building') { _deleteEntityItem(it.kind, it.index); counts[it.kind]++; }
+  }
+  // For added entities, _deleteEntityItem doesn't strip their `added` slot —
+  // do that here so they don't survive to save (and so redo can re-add).
+  for (const snap of lifecycleSnaps) {
+    if ((snap.kind === 'prop' || snap.kind === 'building') && snap.editorAdded && snap.addId != null) {
+      const section = snap.kind === 'prop' ? edits.props : edits.buildings;
+      const ri = section.added.findIndex(a => a._addId === snap.addId);
+      if (ri >= 0) section.added.splice(ri, 1);
+      // The synthetic entity was never in the source level; pop from
+      // .removed since recordEntityRemoval shouldn't apply to it.
+      const rri = section.removed.indexOf(snap.index);
+      if (rri >= 0) section.removed.splice(rri, 1);
+    }
   }
 
   // Tear down primary visuals.
@@ -1540,6 +2015,9 @@ function deleteSelected() {
   if (counts.prop)     parts.push(`${counts.prop} prop${counts.prop === 1 ? '' : 's'}`);
   if (counts.building) parts.push(`${counts.building} building${counts.building === 1 ? '' : 's'}`);
   flashStatus(`− ${parts.join(', ') || total + ' items'}`, 'clean');
+  if (lifecycleSnaps.length) {
+    pushDeleteCmd(lifecycleSnaps, `delete ${lifecycleSnaps.length}`);
+  }
 }
 
 // Tear down one collider entry: remove from level array, scene, entries
@@ -1631,11 +2109,15 @@ function duplicateSelection() {
   if (selection) sources.push(selection);
   for (const ex of selectionExtras) sources.push(ex);
 
-  pushUndo();
   const clones = [];
+  const lifecycleSnaps = [];
   for (const src of sources) {
     const clone = duplicateOne(src);
-    if (clone) clones.push(clone);
+    if (clone) {
+      clones.push(clone);
+      const snap = _captureMemberLifecycle(clone);
+      if (snap) lifecycleSnaps.push(snap);
+    }
   }
   if (!clones.length) {
     flashStatus('nothing duplicable in selection', 'err');
@@ -1657,6 +2139,9 @@ function duplicateSelection() {
   if (clones.length > 1) setMode('translate');
   refreshSelectedHud();
   flashStatus(`+${clones.length} duplicate${clones.length === 1 ? '' : 's'}`, 'clean');
+  if (lifecycleSnaps.length) {
+    pushAddCmd(lifecycleSnaps, `duplicate ${lifecycleSnaps.length}`);
+  }
 }
 
 // Duplicate one selectable. Returns a `selection`-shaped descriptor
@@ -1713,9 +2198,13 @@ function duplicateOne(src) {
       ? level.appendProp(cloneSpec, { editorAdded: true })
       : level.appendBuilding(cloneSpec, { editorAdded: true });
     if (newIdx < 0) return null;
-    // Mirror into edits so it survives reload.
+    // Mirror into edits so it survives reload. Tag with a stable _addId
+    // so undo/redo can find this slot later.
     const section = src.kind === 'prop' ? edits.props : edits.buildings;
-    section.added.push({ ...cloneSpec });
+    const slot = { ...cloneSpec };
+    _stampAddedSlot(section.added, slot);
+    section.added.push(slot);
+    if (list[newIdx]) list[newIdx]._addId = slot._addId;
     return { kind: src.kind, index: newIdx };
   }
 
@@ -1723,7 +2212,6 @@ function duplicateOne(src) {
 }
 
 function addAtCursor() {
-  pushUndo();
   // Drop a 2×2×2 box ~6m in front of the camera, snapped to the grid (X/Z)
   // when snap is on. Y stays at >= 1 (default standing height) so it
   // doesn't sink into the floor.
@@ -1757,6 +2245,9 @@ function addAtCursor() {
   });
   setDirty();
   select({ kind: 'collider', entry: e });
+  // Push undo command capturing the new collider's lifecycle state.
+  const snap = _captureMemberLifecycle({ kind: 'collider', entry: e });
+  if (snap) pushAddCmd([snap], 'add collider');
 }
 
 // ── Prop catalog ────────────────────────────────────────────────────────────
@@ -1839,7 +2330,6 @@ function dropPropFromCatalog() {
     flashStatus('this level does not support prop add', 'err');
     return;
   }
-  pushUndo();
   // Drop ~8m ahead of the camera, snap to ground (y=0). Type-specific Y
   // overrides (rooftop props) come from PROP_DEFAULTS. X/Z snap to grid.
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -1854,10 +2344,17 @@ function dropPropFromCatalog() {
   // Pick up any new colliders this builder emitted.
   syncColliderEntries();
   refreshStats();
-  edits.props.added.push({ ...spec });
+  // Tag both the live spec and the edits.added slot with a stable id so
+  // undo/redo can find and reattach this entry through array mutations.
+  const slot = { ...spec };
+  _stampAddedSlot(edits.props.added, slot);
+  edits.props.added.push(slot);
+  if (level.props[idx]) level.props[idx]._addId = slot._addId;
   setDirty();
   select({ kind: 'prop', index: idx });
   flashStatus(`+ ${type}`, 'clean');
+  const snap = _captureMemberLifecycle({ kind: 'prop', index: idx });
+  if (snap) pushAddCmd([snap], `add ${type}`);
 }
 
 // ── Building catalog ────────────────────────────────────────────────────────
@@ -1927,7 +2424,6 @@ function dropBuildingFromCatalog() {
     flashStatus('this level does not support building add', 'err');
     return;
   }
-  pushUndo();
   // Drop ~20m ahead so a 14×14 footprint clears the camera. X/Z snap to grid.
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   const p = camera.position.clone().addScaledVector(fwd, 20);
@@ -1940,10 +2436,15 @@ function dropBuildingFromCatalog() {
   }
   syncColliderEntries();
   refreshStats();
-  edits.buildings.added.push({ ...spec });
+  const slot = { ...spec };
+  _stampAddedSlot(edits.buildings.added, slot);
+  edits.buildings.added.push(slot);
+  if (level.buildings[idx]) level.buildings[idx]._addId = slot._addId;
   setDirty();
   select({ kind: 'building', index: idx });
   flashStatus(`+ ${type}`, 'clean');
+  const snap = _captureMemberLifecycle({ kind: 'building', index: idx });
+  if (snap) pushAddCmd([snap], `add ${type}`);
 }
 
 // Fast-path: ensure colliderEntries cover any colliders not yet wrapped.
@@ -1988,15 +2489,29 @@ const CATEGORY_CYCLE = ['solid','cover','destructible','trigger','climbable','pa
 function cycleCategory(dir) {
   if (!selectedEntry) return;
   const c = selectedEntry.collider;
+  const before = _captureColliderState(c);
   const idx = CATEGORY_CYCLE.indexOf(c.category);
   const nxt = CATEGORY_CYCLE[(idx + dir + CATEGORY_CYCLE.length) % CATEGORY_CYCLE.length];
   c.category = nxt;
   refreshEntryVisual(selectedEntry);
   recordModification(c);
   refreshSelectedHud();
+  const after = _captureColliderState(c);
+  pushTransformCmd([before], [after], `category → ${nxt}`);
 }
 
 // ── Save / revert / export ─────────────────────────────────────────────────
+// Strip editor-only marker fields (_addId, _editorId) from a serialized
+// added-entry. Without this, internal ids would leak into the saved JSON
+// and re-import as opaque junk.
+function _stripPrivate(obj) {
+  const out = {};
+  for (const k of Object.keys(obj)) {
+    if (k === '_addId' || k === '_editorId') continue;
+    out[k] = obj[k];
+  }
+  return out;
+}
 function serializeEdits() {
   const out = {
     colliders: {
@@ -2016,7 +2531,7 @@ function serializeEdits() {
   if (propsModCount || propsAddedCount || propsRmCount) {
     out.props = {};
     if (propsModCount)   out.props.modified = edits.props.modified;
-    if (propsAddedCount) out.props.added    = edits.props.added.map(a => ({ ...a }));
+    if (propsAddedCount) out.props.added    = edits.props.added.map(_stripPrivate);
     if (propsRmCount)    out.props.removed  = [...edits.props.removed];
   }
   const bModCount   = Object.keys(edits.buildings.modified).length;
@@ -2025,7 +2540,7 @@ function serializeEdits() {
   if (bModCount || bAddedCount || bRmCount) {
     out.buildings = {};
     if (bModCount)   out.buildings.modified = edits.buildings.modified;
-    if (bAddedCount) out.buildings.added    = edits.buildings.added.map(a => ({ ...a }));
+    if (bAddedCount) out.buildings.added    = edits.buildings.added.map(_stripPrivate);
     if (bRmCount)    out.buildings.removed  = [...edits.buildings.removed];
   }
   return out;
@@ -2059,16 +2574,6 @@ function revert() {
   if (!confirm('Discard all unsaved edits since last save? Page reload required.')) return;
   // Easiest correct revert is a reload — current edits live in this session.
   location.reload();
-}
-
-function undo() {
-  if (!undoStack.length) return;
-  const prev = undoStack.pop();
-  // Restoring is non-trivial because it would require tearing down + reapplying
-  // edits to the level mesh state. For now we just restore the edits log and
-  // tell the user to reload to see effects.
-  Object.assign(edits, JSON.parse(prev));
-  flashStatus('undo logged — reload to apply', 'err');
 }
 
 document.getElementById('btn-save').addEventListener('click', save);
