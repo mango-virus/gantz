@@ -113,7 +113,10 @@
   <button id="btn-new">＋ Collider (N)</button>
   <span class="sep"></span>
   <select id="prop-catalog" title="Choose a prop type"></select>
-  <button id="btn-drop-prop" class="add">＋ Drop Prop</button>
+  <button id="btn-drop-prop" class="add">＋ Drop Prop (P)</button>
+  <span class="sep"></span>
+  <select id="building-catalog" title="Choose a building type"></select>
+  <button id="btn-drop-building" class="add">＋ Drop Building (B)</button>
   <span class="sep"></span>
   <button id="btn-delete" class="danger" disabled>− Delete (X)</button>
   <button id="btn-save" class="save">💾 Save (Ctrl+S)</button>
@@ -210,6 +213,7 @@ const edits = {
   },
   buildings: {
     modified: { ...(savedEdits?.buildings?.modified ?? {}) },
+    added:    JSON.parse(JSON.stringify(savedEdits?.buildings?.added ?? [])),
     removed:  [...(savedEdits?.buildings?.removed ?? [])],
   },
 };
@@ -495,6 +499,7 @@ addEventListener('keydown', (e) => {
   if (k === 'f')             { resetCamera(); return; }
   if (k === 'n')             { addAtCursor(); return; }
   if (k === 'p')             { dropPropFromCatalog(); return; }
+  if (k === 'b')             { dropBuildingFromCatalog(); return; }
   if (k === 'x' && selection) { deleteSelected(); return; }
   if (k === '[' && selectedEntry) { cycleCategory(-1); return; }
   if (k === ']' && selectedEntry) { cycleCategory(+1); return; }
@@ -795,11 +800,12 @@ const PROP_FIELDS = {
 const HEX = (n) => '#' + ('000000' + (n >>> 0).toString(16)).slice(-6);
 const UNHEX = (s) => parseInt(String(s).replace(/^#/, ''), 16) | 0;
 
-function renderEntityFields(spec) {
+function renderEntityFields(kind, spec) {
   const host = document.getElementById('sel-fields');
   host.innerHTML = '';
   if (!spec?.type) return;
-  const fields = PROP_FIELDS[spec.type];
+  const registry = kind === 'prop' ? PROP_FIELDS : BUILDING_FIELDS;
+  const fields = registry?.[spec.type];
   if (!fields?.length) return;
 
   for (const f of fields) {
@@ -837,7 +843,7 @@ function renderEntityFields(spec) {
       let v = input.value;
       if (f.type === 'color') v = UNHEX(v);
       else if (f.type === 'number') v = Number(v);
-      onPropFieldChange(f.key, v);
+      onEntityFieldChange(f.key, v);
     });
     row.append(label, ' ', input);
     host.appendChild(row);
@@ -845,20 +851,20 @@ function renderEntityFields(spec) {
 }
 
 // Apply a field change live: mutate the spec, ask the level to rebuild
-// just this prop, refresh editor wireframes, and persist into the edits log.
-function onPropFieldChange(key, value) {
+// just this prop/building, refresh editor wireframes, and persist into
+// the edits log.
+function onEntityFieldChange(key, value) {
   const sel = selection;
-  if (!sel || sel.kind !== 'prop') return;
+  if (!sel || (sel.kind !== 'prop' && sel.kind !== 'building')) return;
   const spec = sel.spec;
   if (!spec) return;
   if (spec[key] === value) return;
   spec[key] = value;
-  if (typeof level.rebuildProp === 'function') {
-    level.rebuildProp(sel.index);
-  }
+  const rebuild = sel.kind === 'prop' ? level.rebuildProp : level.rebuildBuilding;
+  if (typeof rebuild === 'function') rebuild(sel.index);
   // Re-resolve the entity group reference (the old one was disposed) and
   // refresh the outline + the proxy's locked Y.
-  sel.group = findEntityGroup('prop', sel.index);
+  sel.group = findEntityGroup(sel.kind, sel.index);
   if (sel.group) {
     sel.proxyY = sel.group.position.y ?? sel.proxyY;
     refreshEntityOutline(sel.group);
@@ -905,7 +911,7 @@ function refreshSelectedHud() {
       `<b>pos</b> (${(spec.x ?? 0).toFixed(2)}, ${(spec.z ?? 0).toFixed(2)})<br>` +
       `<b>rot</b> ${((spec.rot ?? 0) * 180 / Math.PI).toFixed(1)}°`;
     if (elCatRow) elCatRow.style.display = 'none';
-    if (sel.kind === 'prop') renderEntityFields(spec);
+    if (sel.kind === 'prop' || sel.kind === 'building') renderEntityFields(sel.kind, spec);
   }
 }
 
@@ -1249,6 +1255,92 @@ function dropPropFromCatalog() {
   flashStatus(`+ ${type}`, 'clean');
 }
 
+// ── Building catalog ────────────────────────────────────────────────────────
+//
+// Mirror of the prop catalog above. Building specs need at least { type,
+// x, z, w, d, h, rot } and most types take a `sign` (kanji text) and
+// `neon` (color). Defaults seed sensible values per type so you can drop
+// + tweak rather than hand-typing JSON.
+const BUILDING_DEFAULTS = {
+  pachinko:       { w: 22, d: 20, h: 14, neon: NEON_PINK,   sign: 'パチンコ', enterable: true,  rooftopAccess: true },
+  izakaya:        { w: 16, d: 14, h: 11, neon: NEON_RED,    sign: '居酒屋',   enterable: true,  floors: 3 },
+  capsule:        { w: 18, d: 16, h: 16, neon: NEON_CYAN,   sign: 'カプセル', enterable: true,  rooftopAccess: true },
+  konbini:        { w: 14, d: 10, h:  6, neon: NEON_WHITE,  sign: 'コンビニ' },
+  love:           { w: 18, d: 16, h: 18, neon: NEON_PINK,   sign: 'ラブホ',   rooftopAccess: true },
+  shrine:         { w: 12, d: 12, h:  7, sign: '神社' },
+  midrise:        { w: 18, d: 18, h: 22, neon: NEON_CYAN,   sign: 'タワー' },
+  billboardTower: { w: 14, d: 14, h: 26, neon: NEON_PINK,   sign: '東京' },
+  sento:          { w: 14, d: 12, h:  9, neon: NEON_WHITE,  sign: '銭湯' },
+  gasStation:     { w: 18, d: 16, h:  5 },
+  parkingGarage:  { w: 22, d: 22, h: 18 },
+  koban:          { w:  8, d:  8, h:  4, sign: '交番' },
+  noodleStand:    { w:  8, d:  6, h:  4, sign: 'ラーメン' },
+  grandShrine:    { w: 30, d: 24, h: 12, sign: '大社' },
+};
+
+// Editable type-specific fields per building type (see PROP_FIELDS for shape).
+const BUILDING_FIELDS_COMMON = [
+  { key: 'sign',  type: 'text' },
+  { key: 'neon',  type: 'color' },
+  { key: 'w',     type: 'number', min: 4,  max: 50, step: 0.5, label: 'width' },
+  { key: 'd',     type: 'number', min: 4,  max: 50, step: 0.5, label: 'depth' },
+  { key: 'h',     type: 'number', min: 3,  max: 60, step: 0.5, label: 'height' },
+];
+const BUILDING_FIELDS = {
+  pachinko:       BUILDING_FIELDS_COMMON,
+  izakaya:        BUILDING_FIELDS_COMMON,
+  capsule:        BUILDING_FIELDS_COMMON,
+  konbini:        BUILDING_FIELDS_COMMON,
+  love:           BUILDING_FIELDS_COMMON,
+  shrine:         BUILDING_FIELDS_COMMON,
+  midrise:        BUILDING_FIELDS_COMMON,
+  billboardTower: BUILDING_FIELDS_COMMON,
+  sento:          BUILDING_FIELDS_COMMON,
+  gasStation:     BUILDING_FIELDS_COMMON.filter(f => f.key !== 'sign' && f.key !== 'neon'),
+  parkingGarage:  BUILDING_FIELDS_COMMON.filter(f => f.key !== 'sign' && f.key !== 'neon'),
+  koban:          BUILDING_FIELDS_COMMON,
+  noodleStand:    BUILDING_FIELDS_COMMON,
+  grandShrine:    BUILDING_FIELDS_COMMON,
+};
+
+{
+  const sel = document.getElementById('building-catalog');
+  const types = level.buildingTypes ?? Object.keys(BUILDING_DEFAULTS);
+  types.slice().sort().forEach((t) => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = t;
+    sel.appendChild(opt);
+  });
+  if (sel.querySelector('option[value="midrise"]')) sel.value = 'midrise';
+}
+
+function dropBuildingFromCatalog() {
+  const type = document.getElementById('building-catalog')?.value;
+  if (!type) { flashStatus('pick a building type first', 'err'); return; }
+  if (typeof level.appendBuilding !== 'function') {
+    flashStatus('this level does not support building add', 'err');
+    return;
+  }
+  pushUndo();
+  // Drop ~20m ahead so a 14×14 footprint clears the camera.
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const p = camera.position.clone().addScaledVector(fwd, 20);
+  const defaults = BUILDING_DEFAULTS[type] ?? {};
+  const spec = { type, x: p.x, z: p.z, rot: 0, ...defaults };
+  const idx = level.appendBuilding(spec, { editorAdded: true });
+  if (idx < 0) {
+    flashStatus(`unknown building type: ${type}`, 'err');
+    return;
+  }
+  syncColliderEntries();
+  refreshStats();
+  edits.buildings.added.push({ ...spec });
+  setDirty();
+  select({ kind: 'building', index: idx });
+  flashStatus(`+ ${type}`, 'clean');
+}
+
 // Fast-path: ensure colliderEntries cover any colliders not yet wrapped.
 function syncColliderEntries() {
   const known = new Set(colliderEntries.map(en => en.collider));
@@ -1322,12 +1414,14 @@ function serializeEdits() {
     if (propsAddedCount) out.props.added    = edits.props.added.map(a => ({ ...a }));
     if (propsRmCount)    out.props.removed  = [...edits.props.removed];
   }
-  const bModCount = Object.keys(edits.buildings.modified).length;
-  const bRmCount  = edits.buildings.removed.length;
-  if (bModCount || bRmCount) {
+  const bModCount   = Object.keys(edits.buildings.modified).length;
+  const bAddedCount = edits.buildings.added.length;
+  const bRmCount    = edits.buildings.removed.length;
+  if (bModCount || bAddedCount || bRmCount) {
     out.buildings = {};
-    if (bModCount) out.buildings.modified = edits.buildings.modified;
-    if (bRmCount)  out.buildings.removed  = [...edits.buildings.removed];
+    if (bModCount)   out.buildings.modified = edits.buildings.modified;
+    if (bAddedCount) out.buildings.added    = edits.buildings.added.map(a => ({ ...a }));
+    if (bRmCount)    out.buildings.removed  = [...edits.buildings.removed];
   }
   return out;
 }
@@ -1377,6 +1471,7 @@ document.getElementById('btn-revert').addEventListener('click', revert);
 document.getElementById('btn-new').addEventListener('click', addAtCursor);
 document.getElementById('btn-delete').addEventListener('click', deleteSelected);
 document.getElementById('btn-drop-prop').addEventListener('click', dropPropFromCatalog);
+document.getElementById('btn-drop-building').addEventListener('click', dropBuildingFromCatalog);
 document.getElementById('btn-export').addEventListener('click', () => {
   // The legacy "export collision JSON" dump (full collider table, not edits).
   if (typeof exportColliderJSON !== 'function') {

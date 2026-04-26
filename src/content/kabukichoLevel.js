@@ -7021,16 +7021,63 @@ export function buildKabukichoLevel(THREE, opts = {}) {
   // per-instance positions without poisoning the module-level constant.
   const levelBuildings = BUILDINGS.map(b => ({ ...b }));
   for (let bi = 0; bi < levelBuildings.length; bi++) {
-    const b = levelBuildings[bi];
+    buildBuildingAt(bi, levelBuildings[bi]);
+  }
+
+  // Shared inner: (re)build a building at an existing slot. Tags every
+  // newly-added child + collider with the canonical editor identity.
+  function buildBuildingAt(buildingIndex, stored) {
     const childStart = groups.buildings.children.length;
     const colStart   = colliders.length;
-    buildBuilding(THREE, b, groups.buildings, colliders, sharedMats);
+    buildBuilding(THREE, stored, groups.buildings, colliders, sharedMats);
     for (let c = childStart; c < groups.buildings.children.length; c++) {
-      groups.buildings.children[c].userData.editorRef = { kind: 'building', index: bi };
+      const ch = groups.buildings.children[c];
+      ch.userData.editorRef = { kind: 'building', index: buildingIndex };
+      if (stored.editorAdded) ch.userData.editorAdded = true;
     }
     for (let c = colStart; c < colliders.length; c++) {
-      colliders[c].buildingIndex = bi;
+      colliders[c].buildingIndex = buildingIndex;
+      if (stored.editorAdded) colliders[c].editorAdded = true;
     }
+  }
+
+  // Append a building at runtime (editor "Drop Building" button). Returns
+  // the new index in level.buildings, or -1 if the type is unknown.
+  function appendBuilding(spec, addOpts = {}) {
+    if (typeof spec?.type !== 'string') return -1;
+    const buildingIndex = levelBuildings.length;
+    const stored = { ...spec };
+    if (addOpts.editorAdded) stored.editorAdded = true;
+    // Auto-id editor-added buildings so b.id is always set (used as a
+    // collider tag for the footprint AABB).
+    if (!stored.id) stored.id = `editor_bldg_${buildingIndex}`;
+    levelBuildings.push(stored);
+    buildBuildingAt(buildingIndex, stored);
+    return buildingIndex;
+  }
+
+  // Rebuild a building in place after a type-specific field edit
+  // (sign / neon / w / d / h / type). Mirrors `rebuildProp`.
+  function rebuildBuilding(buildingIndex) {
+    const stored = levelBuildings[buildingIndex];
+    if (!stored || stored._removed) return;
+    for (let i = groups.buildings.children.length - 1; i >= 0; i--) {
+      const ch = groups.buildings.children[i];
+      const ref = ch.userData?.editorRef;
+      if (ref?.kind === 'building' && ref.index === buildingIndex) {
+        groups.buildings.remove(ch);
+        ch.traverse?.((o) => {
+          o.geometry?.dispose?.();
+          const m = o.material;
+          if (Array.isArray(m)) m.forEach(mat => mat.dispose?.());
+          else m?.dispose?.();
+        });
+      }
+    }
+    for (let i = colliders.length - 1; i >= 0; i--) {
+      if (colliders[i]?.buildingIndex === buildingIndex) colliders.splice(i, 1);
+    }
+    buildBuildingAt(buildingIndex, stored);
   }
 
   // Tactical features (ladders, plank, manhole, drain, vault window collider)
@@ -7620,12 +7667,23 @@ export function buildKabukichoLevel(THREE, opts = {}) {
     buildings: levelBuildings,
     props: levelProps,
     propTypes: Object.keys(propBuilders),
+    buildingTypes: BUILDING_TYPES,
     appendProp,
     rebuildProp,
+    appendBuilding,
+    rebuildBuilding,
     update,
     applyAtmosphere: (scene) => buildSky(THREE, scene),
   };
 }
+
+// Catalog of building types the editor can drop. Keep in sync with the
+// switch statement in `buildBuilding`.
+const BUILDING_TYPES = [
+  'pachinko', 'izakaya', 'capsule', 'konbini', 'love',
+  'shrine', 'midrise', 'billboardTower', 'sento',
+  'gasStation', 'parkingGarage', 'koban', 'noodleStand', 'grandShrine',
+];
 
 export function exportColliderJSON(level, pretty = true) {
   // Strip legacy 2D fields from the export — gameplay/AI/bullet code consuming

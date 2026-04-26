@@ -24,6 +24,7 @@
 //     },
 //     "buildings": {
 //       "modified": { "<index>": { x, z, rot } },
+//       "added":    [{ type, x, z, w, d, h, rot, ...type-specific fields }],
 //       "removed":  [<index>, ...]
 //     }
 //   }
@@ -89,6 +90,7 @@ export function applyLevelEdits(level, edits) {
   //      reference a now-removed entity (rare) still go through the same
   //      tag-based filter.
   applyAddedProps(level, edits.props);
+  applyAddedBuildings(level, edits.buildings);
   applyPropOrBuildingEdits(level, 'prop',     edits.props);
   applyPropOrBuildingEdits(level, 'building', edits.buildings);
   applyColliderEdits(level, edits.colliders);
@@ -107,6 +109,17 @@ function applyAddedProps(level, section) {
   if (typeof level.appendProp !== 'function') return;
   for (const a of section.added) {
     level.appendProp({ ...a }, { editorAdded: true });
+  }
+}
+
+// Mirror of applyAddedProps for buildings. The level must expose
+// `appendBuilding(spec, { editorAdded })` and tag its meshes/colliders
+// with editorRef/buildingIndex.
+function applyAddedBuildings(level, section) {
+  if (!section?.added) return;
+  if (typeof level.appendBuilding !== 'function') return;
+  for (const a of section.added) {
+    level.appendBuilding({ ...a }, { editorAdded: true });
   }
 }
 
@@ -250,16 +263,17 @@ function applyPropOrBuildingEdits(level, kind, section) {
     if (!spec) continue;
 
     // 1) Non-transform fields: copy verbatim onto the spec, then ask the
-    //    level to rebuild this prop's meshes + colliders so the change
-    //    becomes visible. Buildings don't currently support live rebuild.
+    //    level to rebuild this entity's meshes + colliders so the change
+    //    becomes visible.
     let needsRebuild = false;
     for (const [k, v] of Object.entries(mod)) {
       if (TRANSFORM_KEYS.has(k)) continue;
       spec[k] = v;
       needsRebuild = true;
     }
-    if (needsRebuild && kind === 'prop' && typeof level.rebuildProp === 'function') {
-      level.rebuildProp(i);
+    if (needsRebuild) {
+      const rebuildFn = kind === 'prop' ? level.rebuildProp : level.rebuildBuilding;
+      if (typeof rebuildFn === 'function') rebuildFn(i);
     }
 
     // 2) Transform fields: shift meshes + colliders to the saved absolute
