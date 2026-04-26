@@ -1,6 +1,15 @@
 import { makeRng } from '../engine/rng.js';
 import { generateAlienSpec, ARCHETYPES } from '../content/alienSpec.js';
 
+function shuffled(arr, rng) {
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = rng.int(0, i);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 // Choose an alien composition for a mission, returning an array of archetype names.
 // Driven by mission index so difficulty ramps.
 export function rollMissionComposition(seed, missionIndex) {
@@ -24,21 +33,34 @@ export function rollBonusBoss(seed, missionIndex) {
   return missionIndex >= 2 && rng.chance(0.3);
 }
 
-export function spawnFromComposition(seed, bounds, composition) {
+// `spawnPoints` (optional): array of `{ x, z, facing? }` from the level's
+// authored enemy spawns. When provided, aliens are placed at deterministic
+// spawn points (shuffled per-seed, cycled if composition outnumbers points).
+// When omitted, fall back to RNG-scattered placement within bounds.
+export function spawnFromComposition(seed, bounds, composition, spawnPoints = null) {
   const rng = makeRng((seed >>> 0) ^ 0x5a17);
   const aliens = [];
+  const points = spawnPoints?.length ? shuffled(spawnPoints, rng) : null;
   composition.forEach((archetype, i) => {
     const a = ARCHETYPES[archetype];
     const spec = generateAlienSpec(`alien-${seed}-${i}-${archetype}`, archetype);
-    const x = rng.range(bounds.minX + 3, bounds.maxX - 3);
-    const y = rng.range(bounds.minY + 6, bounds.maxY - 3);
+    let x, y, facing;
+    if (points) {
+      const sp = points[i % points.length];
+      x = sp.x; y = sp.z;
+      facing = sp.facing ?? rng.range(0, Math.PI * 2);
+    } else {
+      x = rng.range(bounds.minX + 3, bounds.maxX - 3);
+      y = rng.range(bounds.minY + 6, bounds.maxY - 3);
+      facing = rng.range(0, Math.PI * 2);
+    }
     aliens.push({
       id: `alien-${i}`,
       kind: 'alien',
       archetype,
       spec,
       x, y,
-      facing: rng.range(0, Math.PI * 2),
+      facing,
       walkPhase: 0,
       // Hit-radius scales with the visual mesh size so the whole body is
       // shootable, not just a sliver around the collision center. Alien
@@ -64,18 +86,31 @@ export function spawnFromComposition(seed, bounds, composition) {
   return aliens;
 }
 
-export function spawnBonusBoss(seed, bounds, idx) {
+export function spawnBonusBoss(seed, bounds, idx, spawnPoints = null) {
   const rng = makeRng((seed >>> 0) ^ 0xb055 ^ idx);
   const a = ARCHETYPES.boss;
   const spec = generateAlienSpec(`boss-${seed}-${idx}`, 'boss');
+  let x, y, facing;
+  if (spawnPoints?.length) {
+    // Pick the boss spawn deterministically from the seed — prefer rooftop
+    // entries so the boss makes a dramatic entrance.
+    const rooftops = spawnPoints.filter(s => (s.y ?? 0) > 5);
+    const pool = rooftops.length ? rooftops : spawnPoints;
+    const sp = pool[rng.int(0, pool.length - 1)];
+    x = sp.x; y = sp.z;
+    facing = sp.facing ?? rng.range(0, Math.PI * 2);
+  } else {
+    x = rng.range(bounds.minX + 5, bounds.maxX - 5);
+    y = rng.range(bounds.minY + 6, bounds.maxY - 6);
+    facing = rng.range(0, Math.PI * 2);
+  }
   return {
     id: `boss-${idx}`,
     kind: 'alien',
     archetype: 'boss',
     spec,
-    x: rng.range(bounds.minX + 5, bounds.maxX - 5),
-    y: rng.range(bounds.minY + 6, bounds.maxY - 6),
-    facing: rng.range(0, Math.PI * 2),
+    x, y,
+    facing,
     walkPhase: 0,
     radius: a.radius * (spec.size || 1),
     speed: a.speed,

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Gantz · Level Picker</title>
+<style>
+  :root { --accent: #c8142b; --ink: #cfd9ec; --bg: #05060c; --card: #0c1020; --border: #2a3a55; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: ui-monospace, Menlo, Consolas, monospace; min-height: 100%; }
+  header { padding: 1.5rem 2rem 0.5rem; }
+  header .title { font-weight: 900; letter-spacing: 0.4em; color: var(--accent); font-size: 1.4rem; text-shadow: 0 0 10px rgba(200,20,43,0.6); }
+  header .sub { opacity: 0.6; font-size: 0.78rem; letter-spacing: 0.2em; margin-top: 0.3rem; }
+  header a.back { display: inline-block; margin-top: 0.6rem; color: var(--accent); text-decoration: none; font-size: 0.78rem; letter-spacing: 0.15em; padding: 0.3rem 0.7rem; border: 1px solid var(--accent); }
+  header a.back:hover { background: rgba(200,20,43,0.15); }
+  main { padding: 1.5rem 2rem 2rem; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--border); padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.45rem; transition: border-color 120ms; text-decoration: none; color: inherit; }
+  .card:hover { border-color: var(--accent); }
+  .card h2 { margin: 0; font-size: 1rem; color: #00e5ff; letter-spacing: 0.1em; }
+  .card .id { font-size: 0.7rem; opacity: 0.55; letter-spacing: 0.15em; }
+  .card .desc { font-size: 0.78rem; line-height: 1.45; opacity: 0.85; }
+  .card .meta { margin-top: auto; font-size: 0.7rem; opacity: 0.55; padding-top: 0.45rem; border-top: 1px dashed var(--border); }
+  .empty { padding: 2rem; opacity: 0.6; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">LEVEL PREVIEW</div>
+  <div class="sub">DEV TOOLS · author + iterate hand-built levels</div>
+  <a class="back" href="/">← back to game</a>
+</header>
+<main id="grid"></main>
+<script type="module">
+import { LEVELS } from './src/content/levelRegistry.js';
+
+const grid = document.getElementById('grid');
+if (!LEVELS.length) {
+  grid.innerHTML = `<div class="empty">No levels registered. Add one to <code>src/content/levelRegistry.js</code>.</div>`;
+} else {
+  for (const lvl of LEVELS) {
+    const a = document.createElement('a');
+    a.className = 'card';
+    a.href = `/level.html?id=${encodeURIComponent(lvl.id)}`;
+    a.innerHTML = `
+      <h2>${lvl.title}</h2>
+      <div class="id">id: ${lvl.id}</div>
+      <div class="desc">${lvl.description ?? ''}</div>
+      <div class="meta">${lvl.bounds ? `bounds ${lvl.bounds}` : ''}</div>
+    `;
+    grid.appendChild(a);
+  }
+}
+</script>
+</body>
+</html>

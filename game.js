@@ -1,3 +1,4 @@
+import * as THREE from 'https://esm.sh/three@0.160.0';
 import { makeRng } from './src/engine/rng.js';
 import {
   initInput, moveAxis, getMouse, setMouseWorld, endFrameInput,
@@ -18,10 +19,21 @@ import {
   buildLobbyProps, buildLobbyWalls, getGantzBallCollider,
   planWanderer, checkStuckWanderer, drawLobby,
 } from './src/scenes/lobby.js';
+import { missionSpawn } from './src/scenes/mission.js';
+import { planCivilian } from './src/content/mapGen.js';
 import {
-  MISSION_BOUNDS, buildMissionWalls, missionSpawn, drawMissionGround,
-} from './src/scenes/mission.js';
-import { generateMissionMap, planCivilian } from './src/content/mapGen.js';
+  buildKabukichoLevel,
+  LEVEL_BOUNDS as KABUKICHO_BOUNDS_3D,
+  SPAWNS as KABUKICHO_SPAWNS,
+} from './src/content/kabukichoLevel.js';
+
+// Game-coords (2D xy) wrapper around the level's 3D bounds (xz).
+// All gameplay/AI/spawn helpers work in 2D, so they expect minY/maxY where
+// the level exposes minZ/maxZ.
+const MISSION_BOUNDS = {
+  minX: KABUKICHO_BOUNDS_3D.minX, maxX: KABUKICHO_BOUNDS_3D.maxX,
+  minY: KABUKICHO_BOUNDS_3D.minZ, maxY: KABUKICHO_BOUNDS_3D.maxZ,
+};
 import { drawBuilding } from './src/render/drawBuilding.js';
 import { drawAlien } from './src/render/drawAlien.js';
 import { drawAlienPortrait } from './src/render/drawAlienPortrait.js';
@@ -61,7 +73,7 @@ let   _portalBusy    = false; // prevent double-trigger before redirect navigate
 
 // Phase timings (chunk 5 values; mission duration scales per alien load in Chunk 7)
 const BRIEFING_MS = 16000;
-const MISSION_BASE_MS = 30000;
+const MISSION_BASE_MS = 180000;
 const DEBRIEF_MS = 25000;
 const SESSION_REBROADCAST_MS = 1500;
 const READY_COUNTDOWN_MS = 6000;
@@ -4432,9 +4444,22 @@ const lobbyColliders = [
   gantzRodBackA,  gantzRodBackB,  gantzSlabBack,
 ];
 const devMode = createDevMode(lobbyWalls, lobbyColliders, () => player, () => scene3d, props);
-const missionBoundaryWalls = buildMissionWalls();
 
 let missionMap = null;
+let missionLevel = null; // live kabukichō level instance (root group + colliders + update)
+// The Kabukichō level is heavy (~7000 line builder, hundreds of meshes) and
+// content-deterministic — every mission reuses the same geometry. Build once
+// and reuse forever. Pre-built during BRIEFING so the freeze is masked behind
+// the briefing screen on the first mission of a session.
+let _kabukichoLevelCache = null;
+function ensureKabukichoLevel() {
+  if (_kabukichoLevelCache) return _kabukichoLevelCache;
+  _kabukichoLevelCache = buildKabukichoLevel(THREE);
+  // Tag root so scene3d.clearRoom() removes it from the scene without
+  // disposing geometries/materials we'll need on the next mission.
+  _kabukichoLevelCache.root.userData.persistent = true;
+  return _kabukichoLevelCache;
+}
 let missionProps = [];
 let civilians = [];
 let aliens = [];
@@ -4988,9 +5013,68 @@ function teleportToLobby() {
   player.walkPhase = 0;
 }
 
+// Seed civilian wanderers across the kabukichō level. Behaviours mirror the
+// old shopping-street generator: mostly patrollers, plus filmers/freezers/heroes.
+function seedKabukichoCivilians(seed, rng, bounds, count) {
+  const list = [];
+  const xMin = bounds.minX + 6, xMax = bounds.maxX - 6;
+  const yMin = bounds.minY + 6, yMax = bounds.maxY - 6;
+  const BEH = [
+    { value: 'patrol',  weight: 5 },
+    { value: 'filmer',  weight: 2 },
+    { value: 'freezer', weight: 1 },
+    { value: 'hero',    weight: 1 },
+  ];
+  for (let i = 0; i < count; i++) {
+    list.push({
+      id: `civ-${i}`,
+      kind: 'civilian',
+      spec: generateHumanSpec(`civ-${seed}-${i}`),
+      x: rng.range(xMin, xMax),
+      y: rng.range(yMin, yMax),
+      facing: rng.range(0, Math.PI * 2),
+      walkPhase: 0,
+      radius: 0.5,
+      speed: rng.range(0.7, 1.1),
+      alive: true,
+      behavior: rng.weighted(BEH),
+      wanderTarget: null,
+      wanderRest: rng.range(0, 3),
+      stuckTime: 0,
+      freezeTimer: 0,
+    });
+  }
+  return list;
+}
+
 function teleportToMission() {
-  const sp = missionMap?.spawnPoint || { x: 0, y: MISSION_BOUNDS.minY + 2, facing: Math.PI / 2 };
-  const ps = missionSpawn(sp, 0);
+  // Distribute participants across the level's authored player spawn points.
+  // The spawn list is shuffled deterministically from the mission seed so:
+  //   - every peer agrees on placement (no host broadcast needed),
+  //   - the same mission seed produces stable assignments,
+  //   - solo plays still cycle through different quadrants each mission
+  //     (instead of always spawning at the first NE point).
+  const playerSpawns = missionMap?.spawns?.player ?? [];
+  const localId = net.selfId || 'local';
+  const ordered = session.participants?.length ? session.participants : [localId];
+  const myIdx = Math.max(0, ordered.indexOf(localId));
+  let sp = null;
+  if (playerSpawns.length) {
+    const shufRng = makeRng((session.missionSeed >>> 0) ^ 0x9e3779b9);
+    const order = playerSpawns.slice();
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = shufRng.int(0, i);
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    const p = order[myIdx % order.length];
+    sp = { x: p.x, y: p.z, facing: p.facing ?? 0 };
+  } else {
+    sp = missionMap?.spawnPoint || { x: 0, y: MISSION_BOUNDS.minY + 2, facing: Math.PI / 2 };
+  }
+  // missionSpawn still adds a small intra-cell offset for any extra peers
+  // that share the same spawn point (when participants > spawns).
+  const overflow = Math.floor(myIdx / Math.max(1, playerSpawns.length));
+  const ps = missionSpawn(sp, overflow);
   player.x = ps.x; player.y = ps.y; player.facing = ps.facing;
   player.walkPhase = 0;
   // Align first-person camera to face into the level.
@@ -5003,8 +5087,28 @@ let _wasInMission = false; // true only if local player was teleported into the 
 
 function enterPhase(newPhase) {
   if (newPhase === Phase.MISSION) {
-    missionMap = generateMissionMap(session.missionSeed >>> 0, MISSION_BOUNDS);
-    missionMap._seed = session.missionSeed; // stamp seed so scene3d knows when to rebuild the room
+    // Build the hand-authored Kabukichō level. This produces a Three.js scene
+    // group, an authoritative collider list (with legacy 2D fields for the
+    // existing collision engine), and an `update(dt, time, opts)` animator.
+    missionLevel = ensureKabukichoLevel();
+    const playerSpawns = (missionLevel.spawns?.player) || KABUKICHO_SPAWNS.player;
+    const sp0 = playerSpawns[0];
+    const civSeed = session.missionSeed >>> 0;
+    const civRng = makeRng(civSeed);
+    const civilianAgents = seedKabukichoCivilians(civSeed, civRng, MISSION_BOUNDS, 12);
+    missionMap = {
+      _seed: session.missionSeed,
+      theme: 'kabukicho',
+      root: missionLevel.root,
+      colliders: missionLevel.colliders,
+      buildings: missionLevel.buildings,
+      spawns: missionLevel.spawns,
+      hazards: missionLevel.hazards,
+      props: [],
+      civilians: civilianAgents,
+      spawnPoint: { x: sp0.x, y: sp0.z, facing: sp0.facing ?? 0 },
+      applyAtmosphere: missionLevel.applyAtmosphere,
+    };
     missionProps = missionMap.props;
     civilians = missionMap.civilians;
     missionPointsEarned = 0;
@@ -5016,16 +5120,13 @@ function enterPhase(newPhase) {
 
     _wasInMission = localIsParticipant();
     if (_wasInMission) {
-      activeColliders = [
-        ...missionBoundaryWalls,
-        ...missionProps.map(p => p.collider).filter(Boolean),
-        ...missionMap.buildings.map(b => ({
-          kind: 'aabb', x: b.x, y: b.y, w: b.w, h: b.h, tier: 'hard',
-        })),
-      ];
+      // Collider list comes straight from the level — pushAABB stamps both
+      // legacy ({kind,x,y,w,h,tier}) and spec ({type,bounds,category}) fields,
+      // so the existing 2D collision engine consumes it directly.
+      activeColliders = missionMap.colliders;
       if (net.isHost) {
         const comp = session.composition || ['patroller'];
-        aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp);
+        aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp, missionLevel.spawns?.enemies);
         _bonusBossSpawned = false;
         _missionClearAt = -1;
         broadcastAliens();
@@ -5053,7 +5154,7 @@ function enterPhase(newPhase) {
       // but the non-participant player sees the lobby room and can't interact with mission.
       if (net.isHost) {
         const comp = session.composition || ['patroller'];
-        aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp);
+        aliens = spawnFromComposition(session.missionSeed, MISSION_BOUNDS, comp, missionLevel.spawns?.enemies);
         _bonusBossSpawned = false;
         _missionClearAt = -1;
         broadcastAliens();
@@ -5079,6 +5180,7 @@ function enterPhase(newPhase) {
     }
     _wasInMission = false;
     missionMap = null;
+    missionLevel = null;
     missionProps = [];
     civilians = [];
     aliens = [];
@@ -5091,10 +5193,12 @@ function enterPhase(newPhase) {
     player.afkReady = false;
   }
   if (newPhase === Phase.DEBRIEF) {
-    // On a wipe (mission failed or timer ran out), non-host peers must also
-    // reset their own points + loadout locally — the host zeros its own copy
-    // in hostEndMission but can't reach into peer state. Mirror that here.
-    if (!net.isHost && session.missionResult === 'wiped') {
+    // On a wipe (mission failed or timer ran out), non-host peers who were
+    // PARTICIPANTS must also reset their own points + loadout locally — the
+    // host zeros its own copy in hostEndMission but can't reach into peer
+    // state. Mirror that here. Bystanders in the lobby are unaffected.
+    const wasParticipant = !session.participants || session.participants.includes(net.selfId);
+    if (!net.isHost && session.missionResult === 'wiped' && wasParticipant) {
       player.hp = 0;
       player.points = 0;
       player.loadout = baseLoadout();
@@ -5124,6 +5228,12 @@ function enterPhase(newPhase) {
     _debriefPlayers.sort((a, b) => b.pts - a.pts);
   }
   if (newPhase === Phase.BRIEFING) {
+    // Pre-build the Kabukichō level on a microtask so the heavy first-build
+    // cost is paid while the briefing screen is up rather than during the
+    // MISSION transition (where it would freeze gameplay). No-op if cached.
+    if (!_kabukichoLevelCache) {
+      Promise.resolve().then(() => { try { ensureKabukichoLevel(); } catch (e) { console.error(e); } });
+    }
     _briefingRevealAt = -1;
     _briefingContentDoneAt = -1;
     _briefingSnappedTIdx = -1;
@@ -5207,7 +5317,7 @@ function hostStartBriefing(nowMs) {
 }
 
 function hostPickMissionDuration() {
-  return MISSION_BASE_MS + (session.alienCount || 3) * 10000;
+  return MISSION_BASE_MS + (session.alienCount || 3) * 30000;
 }
 
 function hostStartMission(nowMs) {
@@ -5365,15 +5475,21 @@ function hostTick(nowMs) {
     if (allHumansDead) {
       _hostOpenEndMissionGate(nowMs, 'wiped');
     } else if (nowMs >= session.missionEndsAt) {
-      // Timer ran out — kill every participant (host + peers) then wipe.
-      if (player.alive) applyDamageToPlayer(player.hp || 999);
-      for (const [, pr] of net.peers) pr.alive = false;
+      // Timer ran out — kill every PARTICIPANT (host + peers) then wipe.
+      // Non-participants (still in the lobby) are bystanders and must not be
+      // hit by the timer wipe.
+      const parts = session.participants;
+      const hostIsParticipant = !parts || parts.includes(net.selfId);
+      if (hostIsParticipant && player.alive) applyDamageToPlayer(player.hp || 999);
+      for (const [id, pr] of net.peers) {
+        if (!parts || parts.includes(id)) pr.alive = false;
+      }
       net.sendSession?.({ timerWipe: true });
       _hostOpenEndMissionGate(nowMs, 'wiped');
     } else if (aliens.length > 0 && aliens.every(a => !a.alive)) {
       if (session.bonusBossRolled && !_bonusBossSpawned) {
         _bonusBossSpawned = true;
-        const boss = spawnBonusBoss(session.missionSeed, MISSION_BOUNDS, session.missionIndex);
+        const boss = spawnBonusBoss(session.missionSeed, MISSION_BOUNDS, session.missionIndex, missionLevel?.spawns?.enemies);
         aliens = [...aliens, boss];
         _sphereSay('bossAppearance', { forceShow: true, dwellMs: 4200, rateLimitMs: 1500 });
         broadcastAliens();
@@ -6729,6 +6845,22 @@ function update(dt) {
   setMouseWorld(player.x + fwd.x * 20, player.y + fwd.y * 20);
 
   world.time += dt;
+
+  // Animate the kabukichō level (traffic, club spotlights, bird flocks,
+  // sign flickers, hanging-sign sway, steam grates, electric arcs, etc.).
+  // Vehicles brake for any character within braking distance — pass all
+  // active hunters and civilians as obstacles.
+  if (missionLevel && session.phase === Phase.MISSION) {
+    const obstacles = [];
+    if (player.alive !== false) obstacles.push({ x: player.x, z: player.y, r: 0.6 });
+    for (const c of civilians) if (c.alive !== false) obstacles.push({ x: c.x, z: c.y, r: 0.5 });
+    for (const a of aliens)    if (a.alive !== false) obstacles.push({ x: a.x, z: a.y, r: 0.7 });
+    for (const [, p] of net.peers) {
+      if (p.alive !== false) obstacles.push({ x: p.x, z: p.y, r: 0.6 });
+    }
+    missionLevel.update(dt, world.time, { obstacles });
+  }
+
   endFrameInput();
 }
 
@@ -7071,6 +7203,7 @@ window.__gantz = {
   },
   roster: () => roster,
   missionMap: () => missionMap,
+  missionLevel: () => missionLevel,
   civilians: () => civilians,
   aliens: () => aliens,
   tryFire,
@@ -7109,7 +7242,7 @@ window.__gantz = {
       hostStartMission(now);
       // Fallback: directly spawn aliens if net host election hasn't resolved yet
       if (!aliens.length) {
-        aliens = spawnFromComposition(session.missionSeed >>> 0, MISSION_BOUNDS, session.composition);
+        aliens = spawnFromComposition(session.missionSeed >>> 0, MISSION_BOUNDS, session.composition, missionLevel?.spawns?.enemies);
         broadcastAliens();
       }
     }

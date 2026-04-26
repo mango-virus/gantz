@@ -4,7 +4,7 @@ import { FBXLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/FBX
 import { clone as skeletonClone } from 'https://esm.sh/three@0.160.0/examples/jsm/utils/SkeletonUtils.js';
 import {
   buildAlienMesh, buildPropMesh, buildBuildingMesh,
-  buildLobbyRoom, buildMissionRoom, buildGantzBallMesh,
+  buildLobbyRoom, buildGantzBallMesh,
   buildGantzBallDisplay, animateAlienMesh, buildWeatherGroup,
 } from './factories.js';
 import { createScanController } from './transferScan.js';
@@ -648,7 +648,9 @@ export function createScene3d({ canvas }) {
   function clearRoom() {
     if (currentRoomGroup) {
       scene.remove(currentRoomGroup);
-      disposeGroup(currentRoomGroup);
+      // Persistent groups (e.g. the Kabukichō mission level) are cached by the
+      // owner and reused across phase transitions — only detach, don't dispose.
+      if (!currentRoomGroup.userData?.persistent) disposeGroup(currentRoomGroup);
       currentRoomGroup = null;
     }
     for (const [id, m] of buildingMeshes) {
@@ -766,14 +768,16 @@ export function createScene3d({ canvas }) {
         });
       }
     } else if (kind === 'mission') {
-      currentRoomGroup = buildMissionRoom(missionMap);
-      // buildings
-      if (missionMap?.buildings) {
-        for (const b of missionMap.buildings) {
-          const mesh = buildBuildingMesh(b);
-          scene.add(mesh);
-          buildingMeshes.set(`${b.x},${b.y},${b.w},${b.h}`, mesh);
+      // Hand-authored Kabukichō level — game.js builds it (via buildKabukichoLevel)
+      // and passes the root group through on `missionMap.root`. Skybox + atmospheric
+      // setup is wired into the level builder via applyAtmosphere(scene).
+      if (missionMap?.root) {
+        currentRoomGroup = missionMap.root;
+        if (typeof missionMap.applyAtmosphere === 'function') {
+          missionMap.applyAtmosphere(scene);
         }
+      } else {
+        currentRoomGroup = new THREE.Group(); // safety net
       }
     }
     if (currentRoomGroup) {
