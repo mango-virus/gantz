@@ -73,9 +73,10 @@
   </div>
   <div class="row"><b>Editing</b>
     · <span class="k">click</span> select prop / building / collider
-    · <span class="k">G</span> translate
-    · <span class="k">R</span> rotate (Y)
-    · <span class="k">T</span> scale (collider only)
+    · <span class="k">G</span> translate · <span class="k">R</span> rotate (Y) · <span class="k">T</span> scale (collider)
+    · <span class="k">←↑↓→</span> nudge by snap step (Ctrl 5× · Shift 0.1m)
+    · <span class="k">PgUp/Dn</span> Y-nudge collider
+    · <span class="k">, / .</span> rotate selection ±15° (Ctrl 90° · Shift 5°)
     · <span class="k">Esc</span> deselect
   </div>
   <div class="row"><b>Ops</b>
@@ -601,6 +602,21 @@ addEventListener('keydown', (e) => {
   if (k === 'j')             { setSnapEnabled(!snapEnabled); flashStatus(snapEnabled ? `snap: ${snapSize}m` : 'snap off', 'clean'); return; }
   if (k === '[' && selectedEntry) { cycleCategory(-1); return; }
   if (k === ']' && selectedEntry) { cycleCategory(+1); return; }
+
+  // Keyboard nudge — translate selection by one snap step (or 1m default).
+  // Modifiers: Ctrl = 5×, Shift = a fine-tune absolute 0.1m. Arrow keys also
+  // suppress the browser's default page-scroll behavior.
+  if (selection || selectionExtras.length) {
+    const s = nudgeStep(e);
+    if (k === 'arrowleft')  { e.preventDefault(); translateSelectionBy(-s, 0); return; }
+    if (k === 'arrowright') { e.preventDefault(); translateSelectionBy(+s, 0); return; }
+    if (k === 'arrowup')    { e.preventDefault(); translateSelectionBy(0, -s); return; }
+    if (k === 'arrowdown')  { e.preventDefault(); translateSelectionBy(0, +s); return; }
+    if (k === 'pageup')     { e.preventDefault(); translateSelectionBy(0, 0, +s); return; }
+    if (k === 'pagedown')   { e.preventDefault(); translateSelectionBy(0, 0, -s); return; }
+    if (k === ',')          { rotateSelectionBy(-rotStep(e)); return; }
+    if (k === '.')          { rotateSelectionBy(+rotStep(e)); return; }
+  }
 });
 addEventListener('keyup', (e) => {
   FLY.keys.delete(e.key.toLowerCase());
@@ -877,6 +893,147 @@ function applyMultiDeltaToMember(m, dx, dz) {
     }
     recordEntityEdit(m.ref);
   }
+}
+
+// ── Keyboard nudge + rotate ─────────────────────────────────────────────────
+//
+// Arrow keys translate the whole selection by one grid step; comma/period
+// rotate entity selections by 15°. Each keybind goes through the same
+// shared helpers (`translateSelectionBy`, `rotateSelectionBy`) so multi-
+// select Just Works — every primary + extra moves identically. After the
+// nudge we re-sync the gizmo proxy so the next drag starts from the new
+// position rather than snapping back to the stale proxy.
+const ROT_STEP_RAD = THREE.MathUtils.degToRad(15);
+
+// Pick a translate step from the modifier state. Default = snap step (or
+// 1m when snap off); Ctrl = 5×; Shift = a fine-tune absolute 0.1m.
+function nudgeStep(e) {
+  if (e?.shiftKey) return 0.1;
+  const base = snapEnabled ? snapSize : 1;
+  if (e?.ctrlKey || e?.metaKey) return base * 5;
+  return base;
+}
+function rotStep(e) {
+  if (e?.shiftKey) return THREE.MathUtils.degToRad(5);
+  if (e?.ctrlKey || e?.metaKey) return THREE.MathUtils.degToRad(90);
+  return ROT_STEP_RAD;
+}
+
+// Re-sync the gizmo proxy from the primary's authoritative source (collider
+// bounds or entity spec). Called after every keyboard nudge so a follow-up
+// gizmo drag starts from the right place.
+function syncProxyToPrimary() {
+  if (!selection) return;
+  _suppressChange = true;
+  if (selection.kind === 'collider') {
+    const { min, max } = selection.entry.collider.bounds;
+    proxy.position.set((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
+    proxy.rotation.set(0, 0, 0);
+    proxy.scale.set(
+      Math.max(0.05, max.x - min.x),
+      Math.max(0.05, max.y - min.y),
+      Math.max(0.05, max.z - min.z),
+    );
+  } else {
+    const list = selection.kind === 'prop' ? level.props : level.buildings;
+    const spec = list?.[selection.index];
+    if (spec) {
+      proxy.position.set(spec.x ?? 0, selection.proxyY ?? 0, spec.z ?? 0);
+      proxy.rotation.set(0, spec.rot ?? 0, 0);
+      proxy.scale.set(1, 1, 1);
+    }
+  }
+  _suppressChange = false;
+}
+
+// Refresh the bounds outline on a non-primary member after its underlying
+// group moved. Disposing the old outline + rebuilding from the live group
+// keeps the AABB tight.
+function rebuildExtraOutline(item) {
+  if (!item._outline) return;
+  item._outline.parent?.remove(item._outline);
+  item._outline.geometry.dispose();
+  item._outline.material.dispose();
+  item._outline = null;
+  if (item.group) {
+    const wf = makeEntityOutline(item.group);
+    if (wf) { scene.add(wf); item._outline = wf; }
+  }
+}
+
+function translateSelectionBy(dx, dz, dy = 0) {
+  if (!selection && !selectionExtras.length) return;
+  if (!dx && !dz && !dy) return;
+  pushUndo();
+  for (const item of [selection, ...selectionExtras]) {
+    if (!item) continue;
+    if (item.kind === 'collider') {
+      const c = item.entry.collider;
+      const b = c.bounds;
+      c.bounds = {
+        min: { x: b.min.x + dx, y: b.min.y + dy, z: b.min.z + dz },
+        max: { x: b.max.x + dx, y: b.max.y + dy, z: b.max.z + dz },
+      };
+      c.x = (c.bounds.min.x + c.bounds.max.x) / 2;
+      c.y = (c.bounds.min.z + c.bounds.max.z) / 2;
+      c.minY = c.bounds.min.y;
+      c.maxY = c.bounds.max.y;
+      refreshEntryVisual(item.entry);
+      recordModification(c);
+    } else if (item.kind === 'prop' || item.kind === 'building') {
+      // Y-translate is meaningless for grounded entities; ignore dy.
+      const list = item.kind === 'prop' ? level.props : level.buildings;
+      const spec = list?.[item.index];
+      if (!spec) continue;
+      applyEntityTransform(level, item.kind, item.index,
+        (spec.x ?? 0) + dx, (spec.z ?? 0) + dz, (spec.rot ?? 0));
+      const tagKey = item.kind === 'prop' ? 'propIndex' : 'buildingIndex';
+      for (const en of colliderEntries) {
+        if (en.collider[tagKey] === item.index) refreshEntryVisual(en);
+      }
+      recordEntityEdit(item);
+      if (item === selection) {
+        if (selection.group) refreshEntityOutline(selection.group);
+      } else {
+        rebuildExtraOutline(item);
+      }
+    }
+  }
+  syncProxyToPrimary();
+  refreshSelectedHud();
+}
+
+function rotateSelectionBy(dr) {
+  if (!selection && !selectionExtras.length) return;
+  if (!dr) return;
+  pushUndo();
+  let rotated = 0;
+  for (const item of [selection, ...selectionExtras]) {
+    if (!item) continue;
+    if (item.kind !== 'prop' && item.kind !== 'building') continue;
+    const list = item.kind === 'prop' ? level.props : level.buildings;
+    const spec = list?.[item.index];
+    if (!spec) continue;
+    applyEntityTransform(level, item.kind, item.index,
+      spec.x ?? 0, spec.z ?? 0, (spec.rot ?? 0) + dr);
+    const tagKey = item.kind === 'prop' ? 'propIndex' : 'buildingIndex';
+    for (const en of colliderEntries) {
+      if (en.collider[tagKey] === item.index) refreshEntryVisual(en);
+    }
+    recordEntityEdit(item);
+    if (item === selection) {
+      if (selection.group) refreshEntityOutline(selection.group);
+    } else {
+      rebuildExtraOutline(item);
+    }
+    rotated++;
+  }
+  if (!rotated) {
+    flashStatus('rotate is for props/buildings only', 'err');
+    return;
+  }
+  syncProxyToPrimary();
+  refreshSelectedHud();
 }
 
 transformControls.addEventListener('objectChange', () => {
