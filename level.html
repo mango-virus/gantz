@@ -65,10 +65,10 @@
     · <span class="k">scroll</span> speed
   </div>
   <div class="row"><b>Editing</b>
-    · <span class="k">click</span> select collider
+    · <span class="k">click</span> select prop / building / collider
     · <span class="k">G</span> translate
     · <span class="k">R</span> rotate (Y)
-    · <span class="k">T</span> scale
+    · <span class="k">T</span> scale (collider only)
     · <span class="k">Esc</span> deselect
   </div>
   <div class="row"><b>Ops</b>
@@ -123,7 +123,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { getLevel } from './src/content/levelRegistry.js';
-import { applyLevelEdits, loadLevelEdits } from './src/content/levelEdits.js';
+import { applyEntityTransform, applyLevelEdits, loadLevelEdits } from './src/content/levelEdits.js';
 
 // ── Resolve level from URL ?id=<name> ──────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -190,6 +190,8 @@ const edits = {
     removed:  [...(savedEdits?.colliders?.removed  ?? [])],
     added:    JSON.parse(JSON.stringify(savedEdits?.colliders?.added ?? [])),
   },
+  props:     { modified: { ...(savedEdits?.props?.modified     ?? {}) } },
+  buildings: { modified: { ...(savedEdits?.buildings?.modified ?? {}) } },
 };
 // Track dirty since last save.
 let dirty = false;
@@ -507,16 +509,57 @@ const transformControls = new TransformControls(camera, renderer.domElement);
 transformControls.size = 0.8;
 scene.add(transformControls);
 
-// Proxy object the gizmo manipulates. We sync between proxy ↔ collider bounds.
+// Proxy object the gizmo manipulates. We sync between proxy ↔ entity transform.
 const proxy = new THREE.Object3D();
-proxy.name = 'collider_edit_proxy';
+proxy.name = 'edit_proxy';
 scene.add(proxy);
 
+// Selection: discriminated union.
+//   { kind: 'collider', entry }
+//   { kind: 'prop'|'building', index, spec }
+let selection = null;
+// Backwards-compat alias used by the rest of the editor.
 let selectedEntry = null;
+
 let dragStartSnapshot = null;
+// Suppress the gizmo 'change' event we cause ourselves while syncing the proxy
+// from a freshly-selected entity (prevents an infinite loop and spurious edits).
+let _suppressChange = false;
+
+// Outline mesh that highlights the currently selected prop/building.
+let _entityOutline = null;
+function clearEntityOutline() {
+  if (!_entityOutline) return;
+  _entityOutline.parent?.remove(_entityOutline);
+  _entityOutline.geometry?.dispose();
+  _entityOutline.material?.dispose();
+  _entityOutline = null;
+}
+function makeEntityOutline(group) {
+  // World-space AABB → local box on the entity group, so it follows translation.
+  const bbox = new THREE.Box3().setFromObject(group);
+  if (bbox.isEmpty()) return null;
+  const size = bbox.getSize(new THREE.Vector3());
+  const center = bbox.getCenter(new THREE.Vector3());
+  const wf = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(
+      Math.max(0.05, size.x),
+      Math.max(0.05, size.y),
+      Math.max(0.05, size.z))),
+    new THREE.LineBasicMaterial({ color: SELECTED_COLOR, transparent: true, opacity: 0.95 })
+  );
+  // Position in world space (added to scene root, not group, so rotation
+  // doesn't tilt the AABB outline).
+  wf.position.copy(center);
+  return wf;
+}
+function refreshEntityOutline(group) {
+  clearEntityOutline();
+  const wf = makeEntityOutline(group);
+  if (wf) { scene.add(wf); _entityOutline = wf; }
+}
 
 transformControls.addEventListener('dragging-changed', (e) => {
-  // Don't let the gizmo drag also rotate the camera.
   if (e.value) {
     dragStartSnapshot = snapshot();
   } else if (dragStartSnapshot && dragStartSnapshot !== snapshot()) {
@@ -524,52 +567,87 @@ transformControls.addEventListener('dragging-changed', (e) => {
     dragStartSnapshot = null;
   }
 });
-transformControls.addEventListener('change', () => {
-  if (!selectedEntry) return;
-  // Mirror proxy → collider.bounds. Y rotation is allowed (rebakes AABB to
-  // world-aligned bounds of the rotated box) but tilt around X/Z is clamped
-  // because the collider system is axis-aligned.
+
+transformControls.addEventListener('objectChange', () => {
+  if (_suppressChange || !selection) return;
+
+  if (selection.kind === 'collider') {
+    // Mirror proxy → collider.bounds. Y rotation rebakes AABB to world-aligned
+    // bounds of the rotated box; X/Z tilt is clamped (collider system is
+    // axis-aligned).
+    proxy.rotation.x = 0;
+    proxy.rotation.z = 0;
+    proxy.scale.x = Math.max(0.05, proxy.scale.x);
+    proxy.scale.y = Math.max(0.05, proxy.scale.y);
+    proxy.scale.z = Math.max(0.05, proxy.scale.z);
+
+    const c = selection.entry.collider;
+    const cx = proxy.position.x;
+    const cy = proxy.position.y;
+    const cz = proxy.position.z;
+    const sx = proxy.scale.x;
+    const sy = proxy.scale.y;
+    const sz = proxy.scale.z;
+    const cosY = Math.abs(Math.cos(proxy.rotation.y));
+    const sinY = Math.abs(Math.sin(proxy.rotation.y));
+    const halfX = (sx * cosY + sz * sinY) / 2;
+    const halfZ = (sx * sinY + sz * cosY) / 2;
+    c.bounds = {
+      min: { x: cx - halfX, y: cy - sy / 2, z: cz - halfZ },
+      max: { x: cx + halfX, y: cy + sy / 2, z: cz + halfZ },
+    };
+    c.x = cx; c.y = cz;
+    c.w = halfX * 2; c.h = halfZ * 2;
+    c.minY = c.bounds.min.y;
+    c.maxY = c.bounds.max.y;
+
+    refreshEntryVisual(selection.entry);
+    recordModification(c);
+    refreshSelectedHud();
+    return;
+  }
+
+  // Prop / building selection: gizmo only does translate (X/Z) + Y rotate.
+  // Lock Y position and X/Z rotation so the entity stays grounded and upright.
+  proxy.position.y = selection.proxyY;
   proxy.rotation.x = 0;
   proxy.rotation.z = 0;
-  proxy.scale.x = Math.max(0.05, proxy.scale.x);
-  proxy.scale.y = Math.max(0.05, proxy.scale.y);
-  proxy.scale.z = Math.max(0.05, proxy.scale.z);
+  proxy.scale.set(1, 1, 1);
 
-  const c = selectedEntry.collider;
-  const cx = proxy.position.x;
-  const cy = proxy.position.y;
-  const cz = proxy.position.z;
-  // For yaw: compute rotated half-extents along world X/Z, store as AABB.
-  const sx = proxy.scale.x;
-  const sy = proxy.scale.y;
-  const sz = proxy.scale.z;
-  const cosY = Math.abs(Math.cos(proxy.rotation.y));
-  const sinY = Math.abs(Math.sin(proxy.rotation.y));
-  const halfX = (sx * cosY + sz * sinY) / 2;
-  const halfZ = (sx * sinY + sz * cosY) / 2;
-  c.bounds = {
-    min: { x: cx - halfX, y: cy - sy / 2, z: cz - halfZ },
-    max: { x: cx + halfX, y: cy + sy / 2, z: cz + halfZ },
-  };
-  // Mirror to legacy fields.
-  c.x = cx; c.y = cz;
-  c.w = halfX * 2; c.h = halfZ * 2;
-  c.minY = c.bounds.min.y;
-  c.maxY = c.bounds.max.y;
-
-  refreshEntryVisual(selectedEntry);
-  recordModification(c);
+  const newX   = proxy.position.x;
+  const newZ   = proxy.position.z;
+  const newRot = proxy.rotation.y;
+  // applyEntityTransform: translate group, shift colliders, mutate spec.
+  applyEntityTransform(level, selection.kind, selection.index, newX, newZ, newRot);
+  // Refresh wireframes on any colliders affected by the move.
+  const tagKey = selection.kind === 'prop' ? 'propIndex' : 'buildingIndex';
+  for (const en of colliderEntries) {
+    if (en.collider[tagKey] === selection.index) refreshEntryVisual(en);
+  }
+  // Update outline to track new bounds.
+  if (selection.group) refreshEntityOutline(selection.group);
+  recordEntityEdit(selection);
   refreshSelectedHud();
 });
 
 function setMode(mode) {
-  if (!selectedEntry) return;
+  if (!selection) return;
+  const isEntity = selection.kind === 'prop' || selection.kind === 'building';
   if (mode === 'rotate') {
     transformControls.setMode('rotate');
     transformControls.showX = false;
     transformControls.showZ = false;
     transformControls.showY = true;
   } else if (mode === 'scale') {
+    if (isEntity) {
+      // Scale doesn't make sense for prop/building selection — fall back.
+      flashStatus('scale not supported for prop/building', 'err');
+      transformControls.setMode('translate');
+      transformControls.showX = true;
+      transformControls.showY = false;
+      transformControls.showZ = true;
+      return;
+    }
     transformControls.setMode('scale');
     transformControls.showX = true;
     transformControls.showY = true;
@@ -577,61 +655,130 @@ function setMode(mode) {
   } else {
     transformControls.setMode('translate');
     transformControls.showX = true;
-    transformControls.showY = true;
+    // Lock Y for entity translate so the user stays on the ground plane.
+    transformControls.showY = !isEntity;
     transformControls.showZ = true;
   }
 }
 
-function select(entry) {
-  if (selectedEntry === entry) return;
-  if (selectedEntry) refreshEntryVisual(selectedEntry); // restore prev color
-  selectedEntry = entry;
-  if (!entry) {
+function select(sel) {
+  // Same-selection guard.
+  if (sel && selection &&
+      sel.kind === selection.kind &&
+      ((sel.kind === 'collider' && sel.entry === selection.entry) ||
+       (sel.kind !== 'collider' && sel.index === selection.index))) {
+    return;
+  }
+  // Tear down previous.
+  if (selection?.kind === 'collider') refreshEntryVisual(selection.entry);
+  clearEntityOutline();
+
+  selection = sel;
+  selectedEntry = (sel && sel.kind === 'collider') ? sel.entry : null;
+
+  if (!sel) {
     transformControls.detach();
     document.getElementById('sel').style.display = 'none';
     document.getElementById('btn-delete').disabled = true;
     return;
   }
-  // Sync proxy from current bounds.
-  const { min, max } = entry.collider.bounds;
-  proxy.position.set((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
-  proxy.rotation.set(0, 0, 0);
-  proxy.scale.set(
-    Math.max(0.05, max.x - min.x),
-    Math.max(0.05, max.y - min.y),
-    Math.max(0.05, max.z - min.z),
-  );
-  transformControls.attach(proxy);
+
+  _suppressChange = true;
+  if (sel.kind === 'collider') {
+    const { min, max } = sel.entry.collider.bounds;
+    proxy.position.set((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
+    proxy.rotation.set(0, 0, 0);
+    proxy.scale.set(
+      Math.max(0.05, max.x - min.x),
+      Math.max(0.05, max.y - min.y),
+      Math.max(0.05, max.z - min.z),
+    );
+    transformControls.attach(proxy);
+    refreshEntryVisual(sel.entry);
+  } else {
+    const list = sel.kind === 'prop' ? level.props : level.buildings;
+    const spec = list?.[sel.index];
+    sel.spec = spec;
+    sel.group = sel.group ?? findEntityGroup(sel.kind, sel.index);
+    // Use the tagged group's Y as the proxy's locked vertical position.
+    sel.proxyY = sel.group?.position.y ?? 0;
+    proxy.position.set(spec?.x ?? 0, sel.proxyY, spec?.z ?? 0);
+    proxy.rotation.set(0, spec?.rot ?? 0, 0);
+    proxy.scale.set(1, 1, 1);
+    transformControls.attach(proxy);
+    if (sel.group) refreshEntityOutline(sel.group);
+  }
+  _suppressChange = false;
+
   setMode('translate');
-  refreshEntryVisual(entry); // recolor selected
   document.getElementById('sel').style.display = 'block';
-  document.getElementById('btn-delete').disabled = false;
+  document.getElementById('btn-delete').disabled = (sel.kind !== 'collider');
   refreshSelectedHud();
+}
+
+function findEntityGroup(kind, index) {
+  const root = kind === 'prop' ? level.groups?.props : level.groups?.buildings;
+  if (!root) return null;
+  for (const child of root.children) {
+    const ref = child.userData?.editorRef;
+    if (ref && ref.kind === kind && ref.index === index) return child;
+  }
+  return null;
 }
 
 function deselect() { select(null); }
 
 function refreshSelectedHud() {
-  const e = selectedEntry;
-  if (!e) return;
-  const c = e.collider;
-  const { min, max } = c.bounds;
-  document.getElementById('sel-id').innerHTML =
-    `<b>id</b> ${c.editorId}${c.editorAdded ? ' <span style="color:#00ff44">[new]</span>' : ''}`;
-  document.getElementById('sel-bounds').innerHTML =
-    `<b>bounds</b> (${min.x.toFixed(1)}, ${min.y.toFixed(1)}, ${min.z.toFixed(1)}) → ` +
-    `(${max.x.toFixed(1)}, ${max.y.toFixed(1)}, ${max.z.toFixed(1)})<br>` +
-    `<b>size</b> ${(max.x - min.x).toFixed(2)} × ${(max.y - min.y).toFixed(2)} × ${(max.z - min.z).toFixed(2)}`;
-  document.getElementById('sel-category').value = c.category ?? 'solid';
+  const sel = selection;
+  const elId = document.getElementById('sel-id');
+  const elBounds = document.getElementById('sel-bounds');
+  const elCat = document.getElementById('sel-category');
+  const elCatRow = elCat?.parentElement;
+  if (!sel) return;
+
+  if (sel.kind === 'collider') {
+    const c = sel.entry.collider;
+    const { min, max } = c.bounds;
+    elId.innerHTML =
+      `<b>collider id</b> ${c.editorId}${c.editorAdded ? ' <span style="color:#00ff44">[new]</span>' : ''}`;
+    elBounds.innerHTML =
+      `<b>bounds</b> (${min.x.toFixed(1)}, ${min.y.toFixed(1)}, ${min.z.toFixed(1)}) → ` +
+      `(${max.x.toFixed(1)}, ${max.y.toFixed(1)}, ${max.z.toFixed(1)})<br>` +
+      `<b>size</b> ${(max.x - min.x).toFixed(2)} × ${(max.y - min.y).toFixed(2)} × ${(max.z - min.z).toFixed(2)}`;
+    elCat.value = c.category ?? 'solid';
+    if (elCatRow) elCatRow.style.display = '';
+  } else {
+    const spec = sel.spec ?? {};
+    const label = spec.id ?? spec.type ?? sel.kind;
+    elId.innerHTML =
+      `<b>${sel.kind}</b> #${sel.index} <span style="color:#00e5ff">${label}</span>`;
+    elBounds.innerHTML =
+      `<b>pos</b> (${(spec.x ?? 0).toFixed(2)}, ${(spec.z ?? 0).toFixed(2)})<br>` +
+      `<b>rot</b> ${((spec.rot ?? 0) * 180 / Math.PI).toFixed(1)}°`;
+    if (elCatRow) elCatRow.style.display = 'none';
+  }
 }
 
 document.getElementById('sel-category').addEventListener('change', (e) => {
-  if (!selectedEntry) return;
-  const c = selectedEntry.collider;
+  if (!selection || selection.kind !== 'collider') return;
+  const c = selection.entry.collider;
   c.category = e.target.value;
-  refreshEntryVisual(selectedEntry);
+  refreshEntryVisual(selection.entry);
   recordModification(c);
 });
+
+function recordEntityEdit(sel) {
+  if (!sel || sel.kind === 'collider') return;
+  pushUndo();
+  const spec = sel.spec ?? {};
+  const section = sel.kind === 'prop' ? edits.props : edits.buildings;
+  section.modified[sel.index] = {
+    x: spec.x ?? 0,
+    z: spec.z ?? 0,
+    rot: spec.rot ?? 0,
+  };
+  setDirty();
+}
 
 // Click-to-select via raycast.
 const raycaster = new THREE.Raycaster();
@@ -639,20 +786,45 @@ const ndc = new THREE.Vector2();
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;       // left only
   if (FLY.active) return;            // selecting while flying is awkward
-  // Avoid stealing clicks meant for the gizmo.
-  if (transformControls.dragging) return;
+  if (transformControls.dragging) return; // gizmo handles its own clicks
+
   ndc.x = (e.clientX / innerWidth)  * 2 - 1;
   ndc.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(ndc, camera);
-  const pickables = colliderEntries.map(en => en.pick);
-  const hits = raycaster.intersectObjects(pickables, false);
-  if (hits.length) {
-    const hit = hits[0].object;
-    select(hit.userData.colliderEntry);
-  } else {
-    deselect();
+
+  // Order matters: first try the level's prop/building meshes (so clicking
+  // a prop selects the prop, not a coincident invisible collider pick box).
+  // If nothing meaningful is hit, fall back to colliders.
+  const levelHits = raycaster.intersectObjects([level.groups.props, level.groups.buildings], true);
+  for (const hit of levelHits) {
+    const ref = findEditorRef(hit.object);
+    if (ref) {
+      select({ kind: ref.kind, index: ref.index });
+      return;
+    }
   }
+
+  // No prop/building hit — fall back to collider picks.
+  const pickables = colliderEntries.map(en => en.pick);
+  const colHits = raycaster.intersectObjects(pickables, false);
+  if (colHits.length) {
+    const hit = colHits[0].object;
+    select({ kind: 'collider', entry: hit.userData.colliderEntry });
+    return;
+  }
+
+  deselect();
 });
+
+function findEditorRef(obj) {
+  let cur = obj;
+  while (cur) {
+    const ref = cur.userData?.editorRef;
+    if (ref) return ref;
+    cur = cur.parent;
+  }
+  return null;
+}
 
 // ── Edit operations ────────────────────────────────────────────────────────
 function recordModification(c) {
@@ -772,6 +944,14 @@ function serializeEdits() {
       })),
     },
   };
+  // Only emit props/buildings sections when there's something to save —
+  // keeps the JSON clean for levels that haven't been move-edited.
+  if (Object.keys(edits.props.modified).length) {
+    out.props = { modified: edits.props.modified };
+  }
+  if (Object.keys(edits.buildings.modified).length) {
+    out.buildings = { modified: edits.buildings.modified };
+  }
   return out;
 }
 
@@ -863,10 +1043,13 @@ tick();
 window.__levelEditor = {
   THREE, scene, camera, level, entry,
   edits, save, deselect, addAtCursor, deleteSelected,
+  get selection() { return selection; },
   selectAtId(id) {
     const e = colliderEntries.find(en => en.collider.editorId === id);
-    if (e) select(e);
+    if (e) select({ kind: 'collider', entry: e });
   },
+  selectProp(i)     { select({ kind: 'prop', index: i }); },
+  selectBuilding(i) { select({ kind: 'building', index: i }); },
 };
 window[`__${entry.id}`] = window.__levelEditor;
 console.log(`[level-editor:${entry.id}] loaded — meshes: ${meshCount}, colliders: ${level.colliders.length}, savedEdits:`, savedEdits);

@@ -7015,9 +7015,22 @@ export function buildKabukichoLevel(THREE, opts = {}) {
   // Elevated expressway ring around map edge
   buildExpressway(THREE, groups.buildings, colliders);
 
-  // Buildings
-  for (const b of BUILDINGS) {
+  // Buildings — build with per-iteration tagging so the level editor can
+  // identify which Three.js group + colliders belong to which BUILDINGS entry.
+  // We copy BUILDINGS into `levelBuildings` so applyLevelEdits can mutate
+  // per-instance positions without poisoning the module-level constant.
+  const levelBuildings = BUILDINGS.map(b => ({ ...b }));
+  for (let bi = 0; bi < levelBuildings.length; bi++) {
+    const b = levelBuildings[bi];
+    const childStart = groups.buildings.children.length;
+    const colStart   = colliders.length;
     buildBuilding(THREE, b, groups.buildings, colliders, sharedMats);
+    for (let c = childStart; c < groups.buildings.children.length; c++) {
+      groups.buildings.children[c].userData.editorRef = { kind: 'building', index: bi };
+    }
+    for (let c = colStart; c < colliders.length; c++) {
+      colliders[c].buildingIndex = bi;
+    }
   }
 
   // Tactical features (ladders, plank, manhole, drain, vault window collider)
@@ -7055,12 +7068,24 @@ export function buildKabukichoLevel(THREE, opts = {}) {
     }
   }
 
-  // Props
+  // Props — same tagging scheme as buildings. Per-prop copy so editor edits
+  // don't mutate the source PROPS_INITIAL constant.
   const propBuilders = makePropBuilders(animated);
-  const propList = (opts.props ?? PROPS_INITIAL);
-  for (const p of propList) {
+  const sourcePropList = (opts.props ?? PROPS_INITIAL);
+  const levelProps = sourcePropList.map(p => ({ ...p }));
+  for (let pi = 0; pi < levelProps.length; pi++) {
+    const p = levelProps[pi];
     const fn = propBuilders[p.type];
-    if (fn) fn(THREE, p, groups.props, colliders);
+    if (!fn) continue;
+    const childStart = groups.props.children.length;
+    const colStart   = colliders.length;
+    fn(THREE, p, groups.props, colliders);
+    for (let c = childStart; c < groups.props.children.length; c++) {
+      groups.props.children[c].userData.editorRef = { kind: 'prop', index: pi };
+    }
+    for (let c = colStart; c < colliders.length; c++) {
+      colliders[c].propIndex = pi;
+    }
   }
 
   // Power cables — connect adjacent poles in each declared sequence.
@@ -7543,7 +7568,8 @@ export function buildKabukichoLevel(THREE, opts = {}) {
     hazards,
     spawns: opts.spawns ?? SPAWNS,
     bounds: LEVEL_BOUNDS,
-    buildings: BUILDINGS,
+    buildings: levelBuildings,
+    props: levelProps,
     update,
     applyAtmosphere: (scene) => buildSky(THREE, scene),
   };
