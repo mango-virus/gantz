@@ -398,11 +398,11 @@ function refreshEntryVisual(entry) {
   wf.scale.set(w, h, d);
   pick.position.copy(wf.position);
   pick.scale.copy(wf.scale);
-  if (entry !== selectedEntry) {
+  if (isColliderEntrySelected(entry)) {
+    wf.material.color.setHex(SELECTED_COLOR);
+  } else {
     const color = CATEGORY_COLOR[collider.category] ?? 0xff00ff;
     wf.material.color.setHex(color);
-  } else {
-    wf.material.color.setHex(SELECTED_COLOR);
   }
 }
 
@@ -471,6 +471,7 @@ addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); return; }
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'd') { e.preventDefault(); duplicateSelection(); return; }
   if (k === 'escape') { deselect(); return; }
 
   // Single-letter editor verbs (only when not typing in an input).
@@ -546,11 +547,125 @@ scene.add(proxy);
 let selection = null;
 // Backwards-compat alias used by the rest of the editor.
 let selectedEntry = null;
+// Additional members of a multi-selection. Primary stays in `selection`
+// (it's what drives the gizmo + HUD field editor). Each extra carries
+// the same shape as `selection` plus `_outline` / `_outlineWf` for its
+// own visual indicator. While extras > 0 we force translate mode.
+const selectionExtras = [];
 
 let dragStartSnapshot = null;
+// Snapshot of every selection-extra's origin captured at drag start, used
+// to apply a stable delta during multi-translate (no accumulated error
+// across many objectChange events).
+//   { proxyOrigin: {x,z}, members: [{ ref, kind, originX?, originZ?,
+//       originRot?, originBounds? }, ...] }
+let multiDrag = null;
 // Suppress the gizmo 'change' event we cause ourselves while syncing the proxy
 // from a freshly-selected entity (prevents an infinite loop and spurious edits).
 let _suppressChange = false;
+
+// Returns true if `a` and `b` describe the same selectable entity.
+function sameItem(a, b) {
+  if (!a || !b) return false;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'collider') return a.entry === b.entry;
+  return a.index === b.index;
+}
+
+// True if a collider entry is selected (primary OR in extras). Used by
+// `refreshEntryVisual` to tint the wireframe.
+function isColliderEntrySelected(entry) {
+  if (selection?.kind === 'collider' && selection.entry === entry) return true;
+  for (const ex of selectionExtras) {
+    if (ex.kind === 'collider' && ex.entry === entry) return true;
+  }
+  return false;
+}
+
+// Iterator over the full selection set (primary first, then extras).
+function* iterSelection() {
+  if (selection) yield selection;
+  for (const ex of selectionExtras) yield ex;
+}
+function selectionCount() {
+  return (selection ? 1 : 0) + selectionExtras.length;
+}
+
+// Add a prop / building outline mesh and stash it on the item so we can
+// detach it later. Colliders get their wireframe tinted instead.
+function attachExtraOutline(item) {
+  if (item.kind === 'collider') {
+    refreshEntryVisual(item.entry);
+    return;
+  }
+  const list = item.kind === 'prop' ? level.props : level.buildings;
+  const spec = list?.[item.index];
+  if (!spec) return;
+  item.spec = spec;
+  item.group = item.group ?? findEntityGroup(item.kind, item.index);
+  if (!item.group) return;
+  const wf = makeEntityOutline(item.group);
+  if (!wf) return;
+  scene.add(wf);
+  item._outline = wf;
+}
+function detachExtraOutline(item) {
+  if (item.kind === 'collider') {
+    refreshEntryVisual(item.entry);
+    return;
+  }
+  if (item._outline) {
+    item._outline.parent?.remove(item._outline);
+    item._outline.geometry.dispose();
+    item._outline.material.dispose();
+    item._outline = null;
+  }
+}
+function clearAllExtras() {
+  // Empty the array FIRST so refreshEntryVisual() reads the post-clear
+  // membership when re-tinting collider wireframes.
+  const olds = selectionExtras.slice();
+  selectionExtras.length = 0;
+  for (const ex of olds) detachExtraOutline(ex);
+}
+
+// Toggle `hit` in the selection set. If the user shift-clicks the
+// primary, demote it (extras[0] takes its place); shift-clicking an
+// already-extra removes it; shift-clicking a fresh item adds an extra.
+// If nothing is selected yet, shift-click acts like a regular select.
+function toggleSelectionMember(hit) {
+  if (!selection) { select(hit); return; }
+  if (sameItem(selection, hit)) {
+    // Demote primary.
+    if (selectionExtras.length) {
+      const promoted = selectionExtras.shift();
+      detachExtraOutline(promoted);
+      // Refresh the previously-primary visual back to "unselected".
+      if (selection.kind === 'collider') refreshEntryVisual(selection.entry);
+      else clearEntityOutline();
+      selection = null;
+      select(promoted);
+      // The promoted item's outline was just recreated by select(); now
+      // re-attach outlines for the remaining extras (already attached).
+      refreshSelectedHud();
+    } else {
+      deselect();
+    }
+    return;
+  }
+  const exi = selectionExtras.findIndex(ex => sameItem(ex, hit));
+  if (exi >= 0) {
+    const ex = selectionExtras.splice(exi, 1)[0];
+    detachExtraOutline(ex);
+    refreshSelectedHud();
+    return;
+  }
+  // Add new extra. First-time multi: lock to translate mode.
+  selectionExtras.push(hit);
+  attachExtraOutline(hit);
+  setMode('translate');
+  refreshSelectedHud();
+}
 
 // Outline mesh that highlights the currently selected prop/building.
 let _entityOutline = null;
@@ -588,11 +703,80 @@ function refreshEntityOutline(group) {
 transformControls.addEventListener('dragging-changed', (e) => {
   if (e.value) {
     dragStartSnapshot = snapshot();
-  } else if (dragStartSnapshot && dragStartSnapshot !== snapshot()) {
-    undoStack.push(dragStartSnapshot);
-    dragStartSnapshot = null;
+    multiDrag = selectionExtras.length ? captureMultiOrigins() : null;
+  } else {
+    if (dragStartSnapshot && dragStartSnapshot !== snapshot()) {
+      undoStack.push(dragStartSnapshot);
+      dragStartSnapshot = null;
+    }
+    multiDrag = null;
   }
 });
+
+// Snapshot every extra's origin so multi-translate can apply an
+// origin-relative delta each frame instead of compounding incremental
+// deltas (which drift under fast drags).
+function captureMultiOrigins() {
+  const proxyOrigin = { x: proxy.position.x, z: proxy.position.z };
+  const members = [];
+  for (const ex of selectionExtras) {
+    if (ex.kind === 'collider') {
+      const b = ex.entry.collider.bounds;
+      members.push({
+        ref: ex, kind: 'collider',
+        originBounds: { min: { ...b.min }, max: { ...b.max } },
+      });
+    } else {
+      members.push({
+        ref: ex, kind: ex.kind,
+        originX:   ex.spec?.x   ?? 0,
+        originZ:   ex.spec?.z   ?? 0,
+        originRot: ex.spec?.rot ?? 0,
+      });
+    }
+  }
+  return { proxyOrigin, members };
+}
+
+// Translate one extra by (dx, dz) from its captured origin.
+function applyMultiDeltaToMember(m, dx, dz) {
+  if (m.kind === 'collider') {
+    const c = m.ref.entry.collider;
+    const b = m.originBounds;
+    c.bounds = {
+      min: { x: b.min.x + dx, y: b.min.y, z: b.min.z + dz },
+      max: { x: b.max.x + dx, y: b.max.y, z: b.max.z + dz },
+    };
+    c.x = (c.bounds.min.x + c.bounds.max.x) / 2;
+    c.y = (c.bounds.min.z + c.bounds.max.z) / 2;
+    c.w = c.bounds.max.x - c.bounds.min.x;
+    c.h = c.bounds.max.z - c.bounds.min.z;
+    c.minY = c.bounds.min.y;
+    c.maxY = c.bounds.max.y;
+    refreshEntryVisual(m.ref.entry);
+    recordModification(c);
+  } else {
+    applyEntityTransform(level, m.kind, m.ref.index,
+      m.originX + dx, m.originZ + dz, m.originRot);
+    // Refresh tagged-collider wireframes that move with this entity.
+    const tagKey = m.kind === 'prop' ? 'propIndex' : 'buildingIndex';
+    for (const en of colliderEntries) {
+      if (en.collider[tagKey] === m.ref.index) refreshEntryVisual(en);
+    }
+    // Re-AABB the extra's outline so it tracks the moved bounds.
+    if (m.ref._outline) {
+      m.ref._outline.parent?.remove(m.ref._outline);
+      m.ref._outline.geometry.dispose();
+      m.ref._outline.material.dispose();
+      m.ref._outline = null;
+    }
+    if (m.ref.group) {
+      const wf = makeEntityOutline(m.ref.group);
+      if (wf) { scene.add(wf); m.ref._outline = wf; }
+    }
+    recordEntityEdit(m.ref);
+  }
+}
 
 transformControls.addEventListener('objectChange', () => {
   if (_suppressChange || !selection) return;
@@ -629,6 +813,13 @@ transformControls.addEventListener('objectChange', () => {
 
     refreshEntryVisual(selection.entry);
     recordModification(c);
+    // Multi-translate: shift each extra by the same world-space delta from
+    // the proxy's drag-start origin.
+    if (multiDrag) {
+      const dx = proxy.position.x - multiDrag.proxyOrigin.x;
+      const dz = proxy.position.z - multiDrag.proxyOrigin.z;
+      for (const m of multiDrag.members) applyMultiDeltaToMember(m, dx, dz);
+    }
     refreshSelectedHud();
     return;
   }
@@ -653,11 +844,23 @@ transformControls.addEventListener('objectChange', () => {
   // Update outline to track new bounds.
   if (selection.group) refreshEntityOutline(selection.group);
   recordEntityEdit(selection);
+  // Multi-translate: shift every extra by the same delta from drag origin.
+  if (multiDrag) {
+    const dx = proxy.position.x - multiDrag.proxyOrigin.x;
+    const dz = proxy.position.z - multiDrag.proxyOrigin.z;
+    for (const m of multiDrag.members) applyMultiDeltaToMember(m, dx, dz);
+  }
   refreshSelectedHud();
 });
 
 function setMode(mode) {
   if (!selection) return;
+  // Multi-select supports translate only — rotating/scaling N items
+  // independently isn't well-defined yet.
+  if (selectionExtras.length > 0 && mode !== 'translate') {
+    flashStatus('multi-select supports translate only', 'err');
+    mode = 'translate';
+  }
   const isEntity = selection.kind === 'prop' || selection.kind === 'building';
   if (mode === 'rotate') {
     transformControls.setMode('rotate');
@@ -688,14 +891,17 @@ function setMode(mode) {
 }
 
 function select(sel) {
-  // Same-selection guard.
-  if (sel && selection &&
+  // Same-selection guard — but only when there are no extras (otherwise
+  // selecting the existing primary should clear the extras).
+  if (sel && selection && !selectionExtras.length &&
       sel.kind === selection.kind &&
       ((sel.kind === 'collider' && sel.entry === selection.entry) ||
        (sel.kind !== 'collider' && sel.index === selection.index))) {
     return;
   }
-  // Tear down previous.
+  // Tear down extras (regular `select` is "replace whole selection").
+  clearAllExtras();
+  // Tear down previous primary.
   if (selection?.kind === 'collider') refreshEntryVisual(selection.entry);
   clearEntityOutline();
 
@@ -885,6 +1091,18 @@ function refreshSelectedHud() {
   const elTitle = document.getElementById('sel-title');
   if (elFields) elFields.innerHTML = '';
   if (!sel) return;
+
+  // Multi-select: collapse the HUD into a count + a hint, hide field
+  // editor and category row (they only make sense for a single item).
+  const total = selectionCount();
+  if (total > 1) {
+    if (elTitle) elTitle.textContent = `Selected (${total})`;
+    elId.innerHTML = `<b>${total} items</b> &mdash; shift+click to toggle, X to delete, D to duplicate`;
+    elBounds.innerHTML = '';
+    if (elCatRow) elCatRow.style.display = 'none';
+    return;
+  }
+
   if (elTitle) {
     elTitle.textContent = sel.kind === 'collider' ? 'Selected collider'
                         : sel.kind === 'prop'     ? 'Selected prop'
@@ -965,25 +1183,26 @@ canvas.addEventListener('mousedown', (e) => {
   // Order matters: first try the level's prop/building meshes (so clicking
   // a prop selects the prop, not a coincident invisible collider pick box).
   // If nothing meaningful is hit, fall back to colliders.
+  let hitItem = null;
   const levelHits = raycaster.intersectObjects([level.groups.props, level.groups.buildings], true);
   for (const hit of levelHits) {
     const ref = findEditorRef(hit.object);
-    if (ref) {
-      select({ kind: ref.kind, index: ref.index });
-      return;
+    if (ref) { hitItem = { kind: ref.kind, index: ref.index }; break; }
+  }
+  if (!hitItem) {
+    const pickables = colliderEntries.map(en => en.pick);
+    const colHits = raycaster.intersectObjects(pickables, false);
+    if (colHits.length) {
+      hitItem = { kind: 'collider', entry: colHits[0].object.userData.colliderEntry };
     }
   }
 
-  // No prop/building hit — fall back to collider picks.
-  const pickables = colliderEntries.map(en => en.pick);
-  const colHits = raycaster.intersectObjects(pickables, false);
-  if (colHits.length) {
-    const hit = colHits[0].object;
-    select({ kind: 'collider', entry: hit.userData.colliderEntry });
+  if (!hitItem) {
+    if (!e.shiftKey) deselect();
     return;
   }
-
-  deselect();
+  if (e.shiftKey) toggleSelectionMember(hitItem);
+  else            select(hitItem);
 });
 
 function findEditorRef(obj) {
@@ -1018,59 +1237,85 @@ function recordModification(c) {
   setDirty();
 }
 
+// Delete the entire selection (primary + any extras). Each item is torn
+// down by kind. Selection is fully cleared at the end so we don't leave
+// dangling outlines or HUD state pointing at deleted entities.
 function deleteSelected() {
-  if (!selection) return;
-  if (selection.kind === 'collider') { deleteSelectedCollider(); return; }
-  if (selection.kind === 'prop' || selection.kind === 'building') {
-    deleteSelectedEntity();
-    return;
+  if (!selection && !selectionExtras.length) return;
+  pushUndo();
+  // Snapshot members up front — entry/index references stay valid for the
+  // life of this call (collider entries are per-instance; prop/building
+  // indices are tombstoned, not shifted).
+  const items = [];
+  if (selection) items.push(selection);
+  for (const ex of selectionExtras) items.push(ex);
+
+  // Clear extras outlines BEFORE we touch the underlying state, since
+  // detachExtraOutline calls refreshEntryVisual which reads collider entries.
+  for (const ex of selectionExtras) detachExtraOutline(ex);
+  selectionExtras.length = 0;
+
+  let counts = { collider: 0, prop: 0, building: 0 };
+  for (const it of items) {
+    if (it.kind === 'collider')                          { _deleteColliderItem(it.entry); counts.collider++; }
+    else if (it.kind === 'prop' || it.kind === 'building') { _deleteEntityItem(it.kind, it.index); counts[it.kind]++; }
   }
+
+  // Tear down primary visuals.
+  if (selection?.kind === 'collider') {
+    // entry already removed inside _deleteColliderItem.
+  } else if (selection?.kind === 'prop' || selection?.kind === 'building') {
+    clearEntityOutline();
+  }
+  selection = null;
+  selectedEntry = null;
+  transformControls.detach();
+  document.getElementById('sel').style.display = 'none';
+  document.getElementById('btn-delete').disabled = true;
+
+  setDirty();
+  refreshStats();
+  refreshSelectedHud();
+  const total = items.length;
+  const parts = [];
+  if (counts.collider) parts.push(`${counts.collider} collider${counts.collider === 1 ? '' : 's'}`);
+  if (counts.prop)     parts.push(`${counts.prop} prop${counts.prop === 1 ? '' : 's'}`);
+  if (counts.building) parts.push(`${counts.building} building${counts.building === 1 ? '' : 's'}`);
+  flashStatus(`− ${parts.join(', ') || total + ' items'}`, 'clean');
 }
 
-function deleteSelectedCollider() {
-  if (!selectedEntry) return;
-  pushUndo();
-  const c = selectedEntry.collider;
-  // Remove from level.colliders + scene + entries.
+// Tear down one collider entry: remove from level array, scene, entries
+// list, and update the edits overlay (added → drop, modified → mark removed).
+function _deleteColliderItem(entry) {
+  if (!entry) return;
+  const c = entry.collider;
   const idxC = level.colliders.indexOf(c);
   if (idxC >= 0) level.colliders.splice(idxC, 1);
-  colliderGroup.remove(selectedEntry.wf);
-  colliderGroup.remove(selectedEntry.pick);
-  selectedEntry.wf.geometry.dispose();
-  selectedEntry.wf.material.dispose();
-  selectedEntry.pick.geometry.dispose();
-  selectedEntry.pick.material.dispose();
-  const idxE = colliderEntries.indexOf(selectedEntry);
+  colliderGroup.remove(entry.wf);
+  colliderGroup.remove(entry.pick);
+  entry.wf.geometry.dispose();
+  entry.wf.material.dispose();
+  entry.pick.geometry.dispose();
+  entry.pick.material.dispose();
+  const idxE = colliderEntries.indexOf(entry);
   if (idxE >= 0) colliderEntries.splice(idxE, 1);
-  // Mark in edits log.
   if (c.editorAdded) {
     edits.colliders.added = edits.colliders.added.filter(a => a._editorId !== c.editorId);
   } else {
     delete edits.colliders.modified[c.editorId];
     if (!edits.colliders.removed.includes(c.editorId)) edits.colliders.removed.push(c.editorId);
   }
-  setDirty();
-  refreshStats();
-  deselect();
 }
 
-// Delete the currently-selected prop or building. Tears down meshes +
-// tagged colliders live, leaves a tombstone in level.props/buildings to
-// keep array indices stable, and writes to edits.<kind>.removed so the
-// removal survives reload.
-function deleteSelectedEntity() {
-  const sel = selection;
-  if (!sel || (sel.kind !== 'prop' && sel.kind !== 'building')) return;
-  const kind = sel.kind;
-  const idx = sel.index;
+// Tear down one prop/building: detach its scene group(s), drop tagged
+// colliders + editor entries, tombstone the spec slot to keep indices
+// stable, write the removal to the edits overlay.
+function _deleteEntityItem(kind, idx) {
   const list = kind === 'prop' ? level.props : level.buildings;
   if (!Array.isArray(list) || !list[idx]) return;
-
-  pushUndo();
   const groupRoot = kind === 'prop' ? level.groups?.props : level.groups?.buildings;
   const tagKey = kind === 'prop' ? 'propIndex' : 'buildingIndex';
 
-  // 1) Detach matching Three.js children and dispose them.
   if (groupRoot) {
     for (let i = groupRoot.children.length - 1; i >= 0; i--) {
       const ch = groupRoot.children[i];
@@ -1086,13 +1331,11 @@ function deleteSelectedEntity() {
     }
   }
 
-  // 2) Drop tagged colliders (and their editor wireframe entries).
   const cs = level.colliders ?? [];
   for (let i = cs.length - 1; i >= 0; i--) {
     if (cs[i]?.[tagKey] !== idx) continue;
     const dead = cs[i];
     cs.splice(i, 1);
-    // Tear down the matching collider entry, if any.
     const ei = colliderEntries.findIndex(en => en.collider === dead);
     if (ei >= 0) {
       const en = colliderEntries[ei];
@@ -1106,18 +1349,113 @@ function deleteSelectedEntity() {
     }
   }
 
-  // 3) Tombstone the spec to keep indices stable.
   list[idx]._removed = true;
-
-  // 4) Update the edits log.
   const section = kind === 'prop' ? edits.props : edits.buildings;
   delete section.modified[idx];
   if (!section.removed.includes(idx)) section.removed.push(idx);
+}
 
-  setDirty();
+// Duplicate every selected item: each clone is offset by (DUP_OFFSET, 0,
+// DUP_OFFSET) so it doesn't sit on top of the original. The new copies
+// replace the current selection — the first clone becomes the primary,
+// the rest become extras.
+const DUP_OFFSET = 2;
+function duplicateSelection() {
+  if (!selection && !selectionExtras.length) return;
+  // Snapshot the selection set first because we'll be mutating
+  // selection state (and possibly the underlying arrays).
+  const sources = [];
+  if (selection) sources.push(selection);
+  for (const ex of selectionExtras) sources.push(ex);
+
+  pushUndo();
+  const clones = [];
+  for (const src of sources) {
+    const clone = duplicateOne(src);
+    if (clone) clones.push(clone);
+  }
+  if (!clones.length) {
+    flashStatus('nothing duplicable in selection', 'err');
+    return;
+  }
+
+  // Pick up any new colliders the prop/building builders emitted.
+  syncColliderEntries();
   refreshStats();
-  deselect();
-  flashStatus(`− ${kind} #${idx}`, 'clean');
+  setDirty();
+
+  // Replace the selection with the freshly-cloned items.
+  // `select()` clears extras itself; then push the rest.
+  select(clones[0]);
+  for (let i = 1; i < clones.length; i++) {
+    selectionExtras.push(clones[i]);
+    attachExtraOutline(clones[i]);
+  }
+  if (clones.length > 1) setMode('translate');
+  refreshSelectedHud();
+  flashStatus(`+${clones.length} duplicate${clones.length === 1 ? '' : 's'}`, 'clean');
+}
+
+// Duplicate one selectable. Returns a `selection`-shaped descriptor
+// pointing at the new entity, or null if the kind doesn't support
+// appendProp/appendBuilding.
+function duplicateOne(src) {
+  if (src.kind === 'collider') {
+    const c = src.entry.collider;
+    const b = c.bounds;
+    if (!b) return null;
+    const nb = {
+      min: { x: b.min.x + DUP_OFFSET, y: b.min.y, z: b.min.z + DUP_OFFSET },
+      max: { x: b.max.x + DUP_OFFSET, y: b.max.y, z: b.max.z + DUP_OFFSET },
+    };
+    const nc = {
+      kind: c.kind ?? 'aabb', type: c.type ?? 'aabb',
+      x: (nb.min.x + nb.max.x) / 2,
+      y: (nb.min.z + nb.max.z) / 2,
+      w: nb.max.x - nb.min.x,
+      h: nb.max.z - nb.min.z,
+      tier: c.tier, category: c.category, tag: c.tag,
+      minY: nb.min.y, maxY: nb.max.y,
+      bounds: nb,
+      jumpable: c.jumpable, requires_crouch: c.requires_crouch,
+      tags: Array.isArray(c.tags) ? c.tags.slice() : (c.tag ? [c.tag] : []),
+      editorId: nextAddedId(),
+      editorAdded: true,
+    };
+    level.colliders.push(nc);
+    const e = buildEntryFor(nc);
+    if (e) colliderEntries.push(e);
+    edits.colliders.added.push({
+      bounds: { min: { ...nb.min }, max: { ...nb.max } },
+      category: nc.category, tier: nc.tier, tag: nc.tag,
+      _editorId: nc.editorId,
+    });
+    return { kind: 'collider', entry: e };
+  }
+
+  if (src.kind === 'prop' || src.kind === 'building') {
+    const list = src.kind === 'prop' ? level.props : level.buildings;
+    const spec = list?.[src.index];
+    if (!spec) return null;
+    if (typeof level.appendProp !== 'function' || typeof level.appendBuilding !== 'function') return null;
+    // Shallow clone is enough — builders read primitive fields. Strip
+    // any tombstone flag so the clone isn't immediately removed by
+    // applyLevelEdits on reload.
+    const cloneSpec = { ...spec };
+    delete cloneSpec._removed;
+    cloneSpec.x = (spec.x ?? 0) + DUP_OFFSET;
+    cloneSpec.z = (spec.z ?? 0) + DUP_OFFSET;
+    const newIdx = src.kind === 'prop'
+      ? level.appendProp(cloneSpec, { editorAdded: true })
+      : level.appendBuilding(cloneSpec, { editorAdded: true });
+    if (newIdx < 0) return null;
+    // Mirror into edits so it survives reload.
+    const section = src.kind === 'prop' ? edits.props : edits.buildings;
+    section.added.push({ ...cloneSpec });
+    return { kind: src.kind, index: newIdx };
+  }
+
+  return null;
 }
 
 function addAtCursor() {
