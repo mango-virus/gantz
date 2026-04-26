@@ -17,7 +17,10 @@
 //       "removed":  [<editorId>, ...],
 //       "added":    [{ kind, type, bounds, category, tier, tag, ... }]
 //     },
-//     "props":     { "modified": { "<index>": { x, z, rot } } },
+//     "props": {
+//       "modified": { "<index>": { x, z, rot } },
+//       "added":    [{ type, x, z, rot, ...type-specific fields }]
+//     },
 //     "buildings": { "modified": { "<index>": { x, z, rot } } }
 //   }
 //
@@ -65,11 +68,28 @@ export async function loadLevelEdits(levelId) {
 export function applyLevelEdits(level, edits) {
   if (!level || !edits) return level;
 
-  applyColliderEdits(level, edits.colliders);
+  // Order matters:
+  //   1. Append added props first so the indices used by `modified` resolve.
+  //   2. Apply prop/building modifications.
+  //   3. Apply collider edits (modifications, removals, additions).
+  applyAddedProps(level, edits.props);
   applyPropOrBuildingEdits(level, 'prop',     edits.props);
   applyPropOrBuildingEdits(level, 'building', edits.buildings);
+  applyColliderEdits(level, edits.colliders);
 
   return level;
+}
+
+// ── Added props (catalog) ───────────────────────────────────────────────────
+// Each entry in `edits.props.added` is a full prop spec (type + position +
+// any type-specific fields). We call level.appendProp to build the meshes
+// and tag them with editorAdded = true.
+function applyAddedProps(level, section) {
+  if (!section?.added) return;
+  if (typeof level.appendProp !== 'function') return;
+  for (const a of section.added) {
+    level.appendProp({ ...a }, { editorAdded: true });
+  }
 }
 
 // ── Colliders ───────────────────────────────────────────────────────────────

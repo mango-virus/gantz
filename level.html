@@ -29,7 +29,7 @@
   #sel .row { margin-top: 3px; }
   #sel select { background: #0e1422; color: #cfd9ec; border: 1px solid #2a3a55; font: inherit; font-size: 11px; padding: 2px 4px; }
 
-  #toolbar { position: fixed; bottom: 10px; left: 10px; display: flex; gap: 6px; flex-wrap: wrap; max-width: 60vw; }
+  #toolbar { position: fixed; bottom: 10px; left: 10px; display: flex; gap: 6px; flex-wrap: wrap; max-width: 60vw; align-items: center; }
   #toolbar button, #toolbar a {
     background: #0e1422; color: #cfd9ec; border: 1px solid #2a3a55;
     padding: 6px 10px; font: inherit; font-size: 11px; cursor: pointer;
@@ -40,7 +40,14 @@
   #toolbar button.danger:hover { background: rgba(255,45,138,0.12); }
   #toolbar button.save { border-color: #00ff44; color: #00ff44; }
   #toolbar button.save:hover { background: rgba(0,255,68,0.12); }
+  #toolbar button.add { border-color: #ffd200; color: #ffd200; }
+  #toolbar button.add:hover { background: rgba(255,210,0,0.12); }
   #toolbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #toolbar select {
+    background: #0e1422; color: #cfd9ec; border: 1px solid #2a3a55;
+    padding: 5px 6px; font: inherit; font-size: 11px;
+  }
+  #toolbar .sep { width: 1px; align-self: stretch; background: #2a3a55; margin: 0 2px; }
 
   #status { position: fixed; bottom: 10px; right: 10px; font-size: 11px; background: rgba(0,0,0,.6); padding: 6px 10px; border: 1px solid #2a3a55; min-width: 180px; text-align: right; }
   #status .dirty { color: #ffaa00; }
@@ -72,8 +79,9 @@
     · <span class="k">Esc</span> deselect
   </div>
   <div class="row"><b>Ops</b>
-    · <span class="k">N</span> new at cursor
-    · <span class="k">X</span> delete
+    · <span class="k">N</span> new collider at cursor
+    · <span class="k">P</span> drop selected prop type
+    · <span class="k">X</span> delete (collider)
     · <span class="k">[ / ]</span> cycle category
     · <span class="k">Ctrl+S</span> save edits
     · <span class="k">Ctrl+Z</span> undo
@@ -101,7 +109,11 @@
 </div>
 <div id="toolbar">
   <a href="levels.html">← Levels</a>
-  <button id="btn-new">＋ New (N)</button>
+  <button id="btn-new">＋ Collider (N)</button>
+  <span class="sep"></span>
+  <select id="prop-catalog" title="Choose a prop type"></select>
+  <button id="btn-drop-prop" class="add">＋ Drop Prop</button>
+  <span class="sep"></span>
   <button id="btn-delete" class="danger" disabled>− Delete (X)</button>
   <button id="btn-save" class="save">💾 Save (Ctrl+S)</button>
   <button id="btn-revert">↶ Revert</button>
@@ -190,7 +202,10 @@ const edits = {
     removed:  [...(savedEdits?.colliders?.removed  ?? [])],
     added:    JSON.parse(JSON.stringify(savedEdits?.colliders?.added ?? [])),
   },
-  props:     { modified: { ...(savedEdits?.props?.modified     ?? {}) } },
+  props: {
+    modified: { ...(savedEdits?.props?.modified ?? {}) },
+    added:    JSON.parse(JSON.stringify(savedEdits?.props?.added ?? [])),
+  },
   buildings: { modified: { ...(savedEdits?.buildings?.modified ?? {}) } },
 };
 // Track dirty since last save.
@@ -474,6 +489,7 @@ addEventListener('keydown', (e) => {
   if (k === 'c')             { colliderGroup.visible = !colliderGroup.visible; return; }
   if (k === 'f')             { resetCamera(); return; }
   if (k === 'n')             { addAtCursor(); return; }
+  if (k === 'p')             { dropPropFromCatalog(); return; }
   if (k === 'x' && selectedEntry) { deleteSelected(); return; }
   if (k === '[' && selectedEntry) { cycleCategory(-1); return; }
   if (k === ']' && selectedEntry) { cycleCategory(+1); return; }
@@ -906,7 +922,118 @@ function addAtCursor() {
     _editorId: c.editorId,
   });
   setDirty();
-  select(e);
+  select({ kind: 'collider', entry: e });
+}
+
+// ── Prop catalog ────────────────────────────────────────────────────────────
+//
+// Drop a new prop (vending machine, sign, bicycle, …) at the camera focus.
+// The defaults map seeds the type-specific fields so every prop renders
+// without hand-typing JSON. After dropping, the user moves/rotates with the
+// gizmo. Type-specific fields (text, color, count) can still be edited by
+// hand-tweaking the saved JSON until the catalog grows a richer panel.
+const NEON_CYAN   = 0x00e5ff;
+const NEON_PINK   = 0xff2d8a;
+const NEON_RED    = 0xff2030;
+const NEON_YELLOW = 0xffd200;
+const NEON_ORANGE = 0xff8a1a;
+const NEON_GREEN  = 0x32ff7a;
+const NEON_PURPLE = 0xa040ff;
+const NEON_WHITE  = 0xfff7e0;
+
+const PROP_DEFAULTS = {
+  vendingCluster: { count: 2, color: NEON_CYAN },
+  verticalSign:   { height: 8, text: 'ネオン', color: NEON_PINK, facing: 'east' },
+  powerPole:      {},
+  bicycle:        {},
+  keiTruck:       {},
+  scooter:        {},
+  trashPile:      { count: 5 },
+  crateStack:     { count: 4 },
+  lanternRow:     { count: 4, axis: 'z', spacing: 1.5, color: NEON_RED },
+  aFrame:         { color: NEON_PINK },
+  acUnit:         { y: 5 },
+  steamVent:      {},
+  puddle:         { w: 2.5, d: 1.5 },
+  foodCart:       { color: NEON_ORANGE, label: 'たい焼' },
+  sakeBarrels:    { count: 5 },
+  waterTank:      { y: 12 },
+  duct:           { y: 12, length: 4, axis: 'x' },
+  stoneLantern:   {},
+  offeringBox:    {},
+  bollardLine:    { count: 4, axis: 'x', spacing: 1.4 },
+  billboard:      { w: 5, h: 3, text: 'NEON', color: NEON_CYAN },
+  hangingSign:    { height: 6, w: 1.5, h: 0.9, text: '焼鳥', color: NEON_RED, attach: 'east', armLen: 1.8 },
+  gasMain:        {},
+  crashedCar:     { color: 0x404048 },
+  tippedDumpster: { tipped: false },
+  phoneBooth:     {},
+  gachapon:       {},
+  postBox:        {},
+  parkingMeter:   {},
+  utilityBox:     {},
+  cardboardBoxes: { count: 5, seed: 1 },
+  trafficCones:   { axis: 'x', count: 4, spacing: 1.5 },
+  roadBarrier:    { len: 3 },
+  posterStrip:    { y: 2, w: 4, h: 1.6, count: 5, seed: 1 },
+  graffitiDecal:  { y: 2, w: 3, h: 1.8, seed: 1 },
+  benchPair:      {},
+  sidewalkSign:   { text: 'OPEN', color: NEON_CYAN },
+  satellite:      { y: 12 },
+  rooftopUnit:    { y: 12 },
+};
+
+// Populate the catalog dropdown from the level's registered prop types.
+{
+  const sel = document.getElementById('prop-catalog');
+  const types = level.propTypes ?? Object.keys(PROP_DEFAULTS);
+  // Sort alphabetically for findability.
+  types.slice().sort().forEach((t) => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = t;
+    sel.appendChild(opt);
+  });
+  // Default to vendingCluster — common cover prop.
+  if (sel.querySelector('option[value="vendingCluster"]')) sel.value = 'vendingCluster';
+}
+
+function dropPropFromCatalog() {
+  const type = document.getElementById('prop-catalog')?.value;
+  if (!type) { flashStatus('pick a prop type first', 'err'); return; }
+  if (typeof level.appendProp !== 'function') {
+    flashStatus('this level does not support prop add', 'err');
+    return;
+  }
+  pushUndo();
+  // Drop ~8m ahead of the camera, snap to ground (y=0). Type-specific Y
+  // overrides (rooftop props) come from PROP_DEFAULTS.
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const p = camera.position.clone().addScaledVector(fwd, 8);
+  const defaults = PROP_DEFAULTS[type] ?? {};
+  const spec = { type, x: p.x, z: p.z, rot: 0, ...defaults };
+  const idx = level.appendProp(spec, { editorAdded: true });
+  if (idx < 0) {
+    flashStatus(`unknown prop type: ${type}`, 'err');
+    return;
+  }
+  // Pick up any new colliders this builder emitted.
+  syncColliderEntries();
+  refreshStats();
+  edits.props.added.push({ ...spec });
+  setDirty();
+  select({ kind: 'prop', index: idx });
+  flashStatus(`+ ${type}`, 'clean');
+}
+
+// Fast-path: ensure colliderEntries cover any colliders not yet wrapped.
+function syncColliderEntries() {
+  const known = new Set(colliderEntries.map(en => en.collider));
+  for (const c of (level.colliders ?? [])) {
+    if (known.has(c)) continue;
+    const e = buildEntryFor(c);
+    if (e) colliderEntries.push(e);
+  }
 }
 
 let _addedIdCounter = -1000;
@@ -946,8 +1073,12 @@ function serializeEdits() {
   };
   // Only emit props/buildings sections when there's something to save —
   // keeps the JSON clean for levels that haven't been move-edited.
-  if (Object.keys(edits.props.modified).length) {
-    out.props = { modified: edits.props.modified };
+  const propsModCount = Object.keys(edits.props.modified).length;
+  const propsAddedCount = edits.props.added.length;
+  if (propsModCount || propsAddedCount) {
+    out.props = {};
+    if (propsModCount)   out.props.modified = edits.props.modified;
+    if (propsAddedCount) out.props.added    = edits.props.added.map(a => ({ ...a }));
   }
   if (Object.keys(edits.buildings.modified).length) {
     out.buildings = { modified: edits.buildings.modified };
@@ -999,6 +1130,7 @@ document.getElementById('btn-save').addEventListener('click', save);
 document.getElementById('btn-revert').addEventListener('click', revert);
 document.getElementById('btn-new').addEventListener('click', addAtCursor);
 document.getElementById('btn-delete').addEventListener('click', deleteSelected);
+document.getElementById('btn-drop-prop').addEventListener('click', dropPropFromCatalog);
 document.getElementById('btn-export').addEventListener('click', () => {
   // The legacy "export collision JSON" dump (full collider table, not edits).
   if (typeof exportColliderJSON !== 'function') {

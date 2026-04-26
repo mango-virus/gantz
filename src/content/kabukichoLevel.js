@@ -7069,24 +7069,35 @@ export function buildKabukichoLevel(THREE, opts = {}) {
   }
 
   // Props — same tagging scheme as buildings. Per-prop copy so editor edits
-  // don't mutate the source PROPS_INITIAL constant.
+  // don't mutate the source PROPS_INITIAL constant. Builds go through
+  // appendProp so the editor can reuse the same path for runtime adds.
   const propBuilders = makePropBuilders(animated);
-  const sourcePropList = (opts.props ?? PROPS_INITIAL);
-  const levelProps = sourcePropList.map(p => ({ ...p }));
-  for (let pi = 0; pi < levelProps.length; pi++) {
-    const p = levelProps[pi];
-    const fn = propBuilders[p.type];
-    if (!fn) continue;
+  const levelProps = [];
+
+  function appendProp(spec, addOpts = {}) {
+    const fn = propBuilders[spec.type];
+    if (!fn) return -1;
+    const propIndex = levelProps.length;
+    const stored = { ...spec };
+    if (addOpts.editorAdded) stored.editorAdded = true;
+    levelProps.push(stored);
     const childStart = groups.props.children.length;
     const colStart   = colliders.length;
-    fn(THREE, p, groups.props, colliders);
+    fn(THREE, stored, groups.props, colliders);
     for (let c = childStart; c < groups.props.children.length; c++) {
-      groups.props.children[c].userData.editorRef = { kind: 'prop', index: pi };
+      const ch = groups.props.children[c];
+      ch.userData.editorRef = { kind: 'prop', index: propIndex };
+      if (addOpts.editorAdded) ch.userData.editorAdded = true;
     }
     for (let c = colStart; c < colliders.length; c++) {
-      colliders[c].propIndex = pi;
+      colliders[c].propIndex = propIndex;
+      if (addOpts.editorAdded) colliders[c].editorAdded = true;
     }
+    return propIndex;
   }
+
+  const sourcePropList = (opts.props ?? PROPS_INITIAL);
+  for (const p of sourcePropList) appendProp(p);
 
   // Power cables — connect adjacent poles in each declared sequence.
   buildPowerCables(THREE, opts.cables ?? POWER_CABLE_SEQUENCES, groups.props);
@@ -7570,6 +7581,8 @@ export function buildKabukichoLevel(THREE, opts = {}) {
     bounds: LEVEL_BOUNDS,
     buildings: levelBuildings,
     props: levelProps,
+    propTypes: Object.keys(propBuilders),
+    appendProp,
     update,
     applyAtmosphere: (scene) => buildSky(THREE, scene),
   };
